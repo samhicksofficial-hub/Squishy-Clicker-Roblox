@@ -1,0 +1,15 @@
+# Built place/model files (generated from source, don't commit)
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+
+# Rojo build lock
+*.lock
+
+# Editor
+.vscode/
+.DS_Store
+
+# Rokit-installed tool binaries (rokit.toml is the source of truth)
+# (Rokit stores tools globally, not in-project, so nothing to ignore here by default)
