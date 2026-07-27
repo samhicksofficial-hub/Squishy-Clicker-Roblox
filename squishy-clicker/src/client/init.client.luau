@@ -15,8 +15,11 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local Squishies = require(Shared:WaitForChild("Squishies"))
-local Format = require(Shared:WaitForChild("Format"))
+local SquishiesModule = Shared:WaitForChild("Squishies") :: ModuleScript
+local FormatModule = Shared:WaitForChild("Format") :: ModuleScript
+-- Cast ModuleScript to any to satisfy static analysis that rejects require on ModuleScript path
+local Squishies = require(SquishiesModule :: any)
+local Format = require(FormatModule :: any)
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local ClickSquishy = Remotes:WaitForChild("ClickSquishy") :: RemoteEvent
@@ -134,11 +137,13 @@ local baseSize = squishyButton.Size
 local squashed = UDim2.new(0, 210, 0, 210)
 
 local function playSquish()
-	TweenService:Create(
-		squishyButton,
-		TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Size = squashed }
-	):Play()
+	TweenService
+		:Create(
+			squishyButton,
+			TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Size = squashed }
+		)
+		:Play()
 	task.delay(0.08, function()
 		TweenService:Create(
 			squishyButton,
