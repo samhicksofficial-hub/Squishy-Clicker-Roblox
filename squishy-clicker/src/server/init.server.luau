@@ -1,9 +1,9 @@
 --!strict
 -- ============================================================
 --  SERVER  —  the authority for everything that matters.
---  Clients can ASK to click or buy; only this script decides
---  what actually happens to a player's Squish. That's what
---  stops exploiters from handing themselves a billion currency.
+--  The client ASKS to click or prestige. The server counts the
+--  clicks, rolls the squishy, owns the inventory, and applies
+--  star-ups. Exploiters can't fake a Mythical.
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -13,21 +13,47 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
-local Squishies = require(Shared:WaitForChild("Squishies"))
+
+-- Find the Squishies module whether it sits directly in Shared OR inside a
+-- Shared/Classes folder, so moving the file never silently hangs the game.
+local function requireSquishies()
+	local elapsed = 0
+	while elapsed < 10 do
+		local direct = Shared:FindFirstChild("Squishies")
+		if direct and direct:IsA("ModuleScript") then
+			return require(direct)
+		end
+		local classes = Shared:FindFirstChild("Classes")
+		if classes then
+			local nested = classes:FindFirstChild("Squishies")
+			if nested and nested:IsA("ModuleScript") then
+				return require(nested)
+			end
+		end
+		task.wait(0.1)
+		elapsed += 0.1
+	end
+	error("[SquishyClicker] Could not find a 'Squishies' ModuleScript in Shared or Shared/Classes")
+end
+local Squishies = requireSquishies()
 
 -- ---------- Remotes ----------
--- Created here at runtime so the whole network layer lives in one place.
 local Remotes = Instance.new("Folder")
 Remotes.Name = "Remotes"
 Remotes.Parent = ReplicatedStorage
 
-local ClickSquishy = Instance.new("RemoteEvent")
-ClickSquishy.Name = "ClickSquishy"
-ClickSquishy.Parent = Remotes
+local ClickSteamer = Instance.new("RemoteEvent")
+ClickSteamer.Name = "ClickSteamer"
+ClickSteamer.Parent = Remotes
 
-local BuySquishy = Instance.new("RemoteEvent")
-BuySquishy.Name = "BuySquishy"
-BuySquishy.Parent = Remotes
+local PrestigeSquishy = Instance.new("RemoteEvent")
+PrestigeSquishy.Name = "PrestigeSquishy"
+PrestigeSquishy.Parent = Remotes
+
+-- Fired at ONE client when their steamer opens: (squishyId)
+local SteamerOpened = Instance.new("RemoteEvent")
+SteamerOpened.Name = "SteamerOpened"
+SteamerOpened.Parent = Remotes
 
 local SyncData = Instance.new("RemoteEvent")
 SyncData.Name = "SyncData"
@@ -35,59 +61,77 @@ SyncData.Parent = Remotes
 
 -- ---------- Data types ----------
 type PlayerData = {
-	squish: number,
-	owned: { [string]: boolean },
-	perClick: number,  -- derived from owned squishies
-	perSecond: number, -- derived from owned squishies
-	lastSecondBucket: number, -- for click rate limiting
+	counts: { [string]: number }, -- copies of each squishy currently held
+	stars: { [string]: number },  -- star level (0-5) per squishy
+	clickProgress: number,        -- clicks toward the next open
+	totalOpens: number,           -- lifetime steamers opened (for leaderboard)
+	lastSecondBucket: number,     -- click rate limiting
 	clicksThisSecond: number,
 }
 
 local store = DataStoreService:GetDataStore(Config.DataStoreName)
 local dataByPlayer: { [Player]: PlayerData } = {}
+local rng = Random.new()
 
--- Never process more than this many clicks per second, per player.
 local MAX_CLICKS_PER_SECOND = 25
 
 -- ---------- Helpers ----------
 
--- Recompute perClick / perSecond from the set of owned squishies.
-local function recompute(data: PlayerData)
-	local perClick = Config.BasePerClick
-	local perSecond = 0
-	for id in data.owned do
-		local squishy = Squishies.byId[id]
-		if squishy then
-			perClick += squishy.perClick
-			perSecond += squishy.perSecond
-		end
+local function totalStars(data: PlayerData): number
+	local total = 0
+	for _, star in data.stars do
+		total += star
 	end
-	data.perClick = perClick
-	data.perSecond = perSecond
+	return total
 end
 
--- Push the current state to one player's client so their UI updates.
+-- How many clicks this player needs to open the steamer right now.
+-- Stars from prestiging make it faster — that's the payoff loop.
+local function clicksToOpen(data: PlayerData): number
+	local reduction = math.floor(totalStars(data) * Config.ClickReductionPerStar)
+	return math.max(Config.MinClicksToOpen, Config.BaseClicksToOpen - reduction)
+end
+
+-- Copies needed for a squishy's NEXT star, given its rarity and current star.
+-- Base amount comes from the rarity (Common 10 ... Mythical 3), doubling per star.
+local function prestigeCost(squishyId: string, currentStar: number): number?
+	local squishy = Squishies.byId[squishyId]
+	if not squishy then
+		return nil
+	end
+	local rarity = Squishies.rarityByName[squishy.rarity]
+	if not rarity then
+		return nil
+	end
+	return rarity.baseCopies * (Config.PrestigeGrowth ^ currentStar)
+end
+
 local function sync(player: Player)
 	local data = dataByPlayer[player]
 	if not data then
 		return
 	end
 	SyncData:FireClient(player, {
-		squish = data.squish,
-		owned = data.owned,
-		perClick = data.perClick,
-		perSecond = data.perSecond,
+		counts = data.counts,
+		stars = data.stars,
+		clickProgress = data.clickProgress,
+		clicksToOpen = clicksToOpen(data),
+		totalOpens = data.totalOpens,
+		totalStars = totalStars(data),
 	})
 end
 
--- Keep the native leaderboard number in step with our real value.
-local function updateLeaderstat(player: Player)
+local function updateLeaderstats(player: Player)
 	local data = dataByPlayer[player]
 	local leaderstats = player:FindFirstChild("leaderstats")
 	if data and leaderstats then
-		local squishValue = leaderstats:FindFirstChild("Squish") :: IntValue?
-		if squishValue then
-			squishValue.Value = math.floor(data.squish)
+		local opens = leaderstats:FindFirstChild("Opens") :: IntValue?
+		if opens then
+			opens.Value = data.totalOpens
+		end
+		local stars = leaderstats:FindFirstChild("Stars") :: IntValue?
+		if stars then
+			stars.Value = totalStars(data)
 		end
 	end
 end
@@ -95,10 +139,8 @@ end
 -- ---------- Join / leave ----------
 
 local function loadData(player: Player): PlayerData
-	local loaded: { squish: number, owned: { [string]: boolean } }? = nil
+	local loaded: { counts: { [string]: number }?, stars: { [string]: number }?, totalOpens: number? }? = nil
 
-	-- pcall so a DataStore hiccup (or Studio API access being off)
-	-- doesn't crash the game — the player just starts fresh.
 	local ok, result = pcall(function()
 		return store:GetAsync("player_" .. player.UserId)
 	end)
@@ -108,16 +150,14 @@ local function loadData(player: Player): PlayerData
 		warn("[SquishyClicker] Could not load data for", player.Name, "-", result)
 	end
 
-	local data: PlayerData = {
-		squish = loaded and loaded.squish or Config.StartingSquish,
-		owned = loaded and loaded.owned or {},
-		perClick = Config.BasePerClick,
-		perSecond = 0,
+	return {
+		counts = loaded and loaded.counts or {},
+		stars = loaded and loaded.stars or {},
+		clickProgress = 0,
+		totalOpens = loaded and loaded.totalOpens or 0,
 		lastSecondBucket = 0,
 		clicksThisSecond = 0,
 	}
-	recompute(data)
-	return data
 end
 
 local function saveData(player: Player)
@@ -127,8 +167,9 @@ local function saveData(player: Player)
 	end
 	local ok, err = pcall(function()
 		store:SetAsync("player_" .. player.UserId, {
-			squish = data.squish,
-			owned = data.owned,
+			counts = data.counts,
+			stars = data.stars,
+			totalOpens = data.totalOpens,
 		})
 	end)
 	if not ok then
@@ -140,15 +181,19 @@ Players.PlayerAdded:Connect(function(player)
 	local data = loadData(player)
 	dataByPlayer[player] = data
 
-	-- Native leaderboard (top-right) — a free bonus from naming a folder "leaderstats".
 	local leaderstats = Instance.new("Folder")
 	leaderstats.Name = "leaderstats"
 	leaderstats.Parent = player
 
-	local squishValue = Instance.new("IntValue")
-	squishValue.Name = "Squish"
-	squishValue.Value = math.floor(data.squish)
-	squishValue.Parent = leaderstats
+	local opens = Instance.new("IntValue")
+	opens.Name = "Opens"
+	opens.Value = data.totalOpens
+	opens.Parent = leaderstats
+
+	local stars = Instance.new("IntValue")
+	stars.Name = "Stars"
+	stars.Value = totalStars(data)
+	stars.Parent = leaderstats
 
 	sync(player)
 end)
@@ -158,15 +203,15 @@ Players.PlayerRemoving:Connect(function(player)
 	dataByPlayer[player] = nil
 end)
 
--- ---------- Clicking ----------
+-- ---------- Clicking the steamer ----------
 
-ClickSquishy.OnServerEvent:Connect(function(player)
+ClickSteamer.OnServerEvent:Connect(function(player)
 	local data = dataByPlayer[player]
 	if not data then
 		return
 	end
 
-	-- Simple rate limit: bucket clicks per whole second.
+	-- Rate limit: bucket clicks per whole second.
 	local bucket = math.floor(os.clock())
 	if bucket ~= data.lastSecondBucket then
 		data.lastSecondBucket = bucket
@@ -174,17 +219,29 @@ ClickSquishy.OnServerEvent:Connect(function(player)
 	end
 	data.clicksThisSecond += 1
 	if data.clicksThisSecond > MAX_CLICKS_PER_SECOND then
-		return -- ignore spam beyond the cap
+		return
 	end
 
-	data.squish += data.perClick
-	updateLeaderstat(player)
+	data.clickProgress += 1
+
+	if data.clickProgress >= clicksToOpen(data) then
+		-- The steamer opens! Roll the squishy server-side.
+		data.clickProgress = 0
+		data.totalOpens += 1
+
+		local squishy = Squishies.roll(rng)
+		data.counts[squishy.id] = (data.counts[squishy.id] or 0) + 1
+
+		SteamerOpened:FireClient(player, squishy.id)
+		updateLeaderstats(player)
+	end
+
 	sync(player)
 end)
 
--- ---------- Buying ----------
+-- ---------- Prestiging a squishy ----------
 
-BuySquishy.OnServerEvent:Connect(function(player, squishyId)
+PrestigeSquishy.OnServerEvent:Connect(function(player, squishyId)
 	local data = dataByPlayer[player]
 	if not data then
 		return
@@ -195,35 +252,31 @@ BuySquishy.OnServerEvent:Connect(function(player, squishyId)
 
 	local squishy = Squishies.byId[squishyId]
 	if not squishy then
-		return -- unknown id, ignore
-	end
-	if data.owned[squishyId] then
-		return -- already owned
-	end
-	if data.squish < squishy.cost then
-		return -- can't afford; server says no
+		return -- unknown id
 	end
 
-	data.squish -= squishy.cost
-	data.owned[squishyId] = true
-	recompute(data)
-	updateLeaderstat(player)
+	local currentStar = data.stars[squishyId] or 0
+	if currentStar >= Config.MaxStars then
+		return -- already maxed
+	end
+
+	local cost = prestigeCost(squishyId, currentStar)
+	if not cost then
+		return
+	end
+
+	local held = data.counts[squishyId] or 0
+	if held < cost then
+		return -- not enough copies; server says no
+	end
+
+	-- Spend the copies, grant the star.
+	data.counts[squishyId] = held - cost
+	data.stars[squishyId] = currentStar + 1
+
+	updateLeaderstats(player)
 	sync(player)
-end)
-
--- ---------- Idle income ----------
-
-task.spawn(function()
-	while true do
-		task.wait(Config.AutoIncomeInterval)
-		for player, data in dataByPlayer do
-			if data.perSecond > 0 then
-				data.squish += data.perSecond * Config.AutoIncomeInterval
-				updateLeaderstat(player)
-				sync(player)
-			end
-		end
-	end
+	print(("[SquishyClicker] %s prestiged %s to %d star(s)"):format(player.Name, squishy.name, currentStar + 1))
 end)
 
 -- ---------- Autosave ----------
@@ -237,7 +290,6 @@ task.spawn(function()
 	end
 end)
 
--- Best-effort save when the server shuts down (also runs when you stop Play in Studio).
 game:BindToClose(function()
 	if RunService:IsStudio() then
 		return
@@ -245,7 +297,7 @@ game:BindToClose(function()
 	for player in dataByPlayer do
 		saveData(player)
 	end
-	task.wait(2) -- give SetAsync calls a moment to finish
+	task.wait(2)
 end)
 
 print("[SquishyClicker] Server ready.")

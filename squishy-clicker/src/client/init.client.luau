@@ -1,10 +1,8 @@
 --!strict
 -- ============================================================
---  CLIENT  —  everything the player sees and touches.
---  It never decides the numbers itself; it asks the server
---  and redraws whatever the server sends back via SyncData.
---  The whole UI is built in code so it lives in Git with the
---  rest of the project (no manually-placed GUI to lose).
+--  CLIENT  —  the steamer, the reveal, and the collection.
+--  All numbers come from the server via SyncData; this script
+--  only draws them and sends requests.
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -15,32 +13,64 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local SquishiesModule = Shared:WaitForChild("Squishies") :: ModuleScript
-local FormatModule = Shared:WaitForChild("Format") :: ModuleScript
--- Cast ModuleScript to any to satisfy static analysis that rejects require on ModuleScript path
-local Squishies = require(SquishiesModule :: any)
-local Format = require(FormatModule :: any)
+local Config = require(Shared:WaitForChild("Config"))
+
+-- Find the Squishies module whether it sits directly in Shared OR inside a
+-- Shared/Classes folder, so moving the file never silently hangs the game.
+local function requireSquishies()
+	local elapsed = 0
+	while elapsed < 10 do
+		local direct = Shared:FindFirstChild("Squishies")
+		if direct and direct:IsA("ModuleScript") then
+			return require(direct)
+		end
+		local classes = Shared:FindFirstChild("Classes")
+		if classes then
+			local nested = classes:FindFirstChild("Squishies")
+			if nested and nested:IsA("ModuleScript") then
+				return require(nested)
+			end
+		end
+		task.wait(0.1)
+		elapsed += 0.1
+	end
+	error("[SquishyClicker] Could not find a 'Squishies' ModuleScript in Shared or Shared/Classes")
+end
+local Squishies = requireSquishies()
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
-local ClickSquishy = Remotes:WaitForChild("ClickSquishy") :: RemoteEvent
-local BuySquishy = Remotes:WaitForChild("BuySquishy") :: RemoteEvent
+local ClickSteamer = Remotes:WaitForChild("ClickSteamer") :: RemoteEvent
+local PrestigeSquishy = Remotes:WaitForChild("PrestigeSquishy") :: RemoteEvent
+local SteamerOpened = Remotes:WaitForChild("SteamerOpened") :: RemoteEvent
 local SyncData = Remotes:WaitForChild("SyncData") :: RemoteEvent
 
 -- ---------- palette ----------
 local COLOR = {
-	pink = Color3.fromRGB(255, 143, 177),
-	purple = Color3.fromRGB(182, 146, 246),
-	mint = Color3.fromRGB(126, 224, 192),
+	bg = Color3.fromRGB(255, 244, 236),
+	bambooLight = Color3.fromRGB(222, 184, 135),
+	bambooDark = Color3.fromRGB(196, 154, 108),
+	bambooLine = Color3.fromRGB(176, 134, 90),
 	panel = Color3.fromRGB(255, 255, 255),
-	text = Color3.fromRGB(58, 46, 74),
-	dim = Color3.fromRGB(140, 130, 155),
-	locked = Color3.fromRGB(210, 205, 215),
+	text = Color3.fromRGB(74, 52, 38),
+	dim = Color3.fromRGB(150, 130, 118),
+	mint = Color3.fromRGB(126, 224, 192),
+	locked = Color3.fromRGB(228, 222, 216),
+	gold = Color3.fromRGB(255, 199, 92),
+	white = Color3.fromRGB(255, 255, 255),
+	progressBg = Color3.fromRGB(238, 224, 212),
 }
 
--- Latest snapshot from the server. Everything on screen reads from this.
-local state = { squish = 0, owned = {}, perClick = 1, perSecond = 0 }
+-- Latest snapshot from the server.
+local state = {
+	counts = {} :: { [string]: number },
+	stars = {} :: { [string]: number },
+	clickProgress = 0,
+	clicksToOpen = Config.BaseClicksToOpen,
+	totalOpens = 0,
+	totalStars = 0,
+}
 
--- ---------- tiny UI helper ----------
+-- ---------- tiny UI helpers ----------
 local function make(className: string, props: { [string]: any }): any
 	local inst = Instance.new(className)
 	for key, value in props do
@@ -53,6 +83,20 @@ local function corner(radius: number, parent: Instance)
 	make("UICorner", { CornerRadius = UDim.new(0, radius), Parent = parent })
 end
 
+local function starString(stars: number): string
+	return string.rep("★", stars) .. string.rep("☆", Config.MaxStars - stars)
+end
+
+-- Copies needed for a squishy's next star (mirrors the server's math for display).
+local function prestigeCost(squishyId: string, currentStar: number): number
+	local squishy = Squishies.byId[squishyId]
+	local rarity = squishy and Squishies.rarityByName[squishy.rarity]
+	if not rarity then
+		return math.huge
+	end
+	return rarity.baseCopies * (Config.PrestigeGrowth ^ currentStar)
+end
+
 -- ---------- root gui ----------
 local gui = make("ScreenGui", {
 	Name = "SquishyClickerUI",
@@ -62,148 +106,216 @@ local gui = make("ScreenGui", {
 	Parent = playerGui,
 })
 
--- Soft background wash so it reads as its own screen, not the baseplate.
 make("Frame", {
 	Size = UDim2.fromScale(1, 1),
-	BackgroundColor3 = Color3.fromRGB(255, 241, 247),
+	BackgroundColor3 = COLOR.bg,
 	BorderSizePixel = 0,
 	ZIndex = 0,
 	Parent = gui,
 })
 
--- ---------- currency panel (top) ----------
-local topPanel = make("Frame", {
-	Size = UDim2.new(0, 320, 0, 84),
-	Position = UDim2.new(0.5, 0, 0, 24),
+-- ---------- header ----------
+local header = make("Frame", {
+	Size = UDim2.new(0, 340, 0, 64),
+	Position = UDim2.new(0.5, -160, 0, 20),
 	AnchorPoint = Vector2.new(0.5, 0),
 	BackgroundColor3 = COLOR.panel,
 	BackgroundTransparency = 0.05,
 	Parent = gui,
 })
-corner(20, topPanel)
+corner(18, header)
 
-local squishLabel = make("TextLabel", {
-	Size = UDim2.new(1, 0, 0, 44),
-	Position = UDim2.new(0, 0, 0, 8),
+local headerLabel = make("TextLabel", {
+	Size = UDim2.new(1, 0, 1, 0),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.FredokaOne,
-	Text = "🫧 0",
+	Text = "🥟 Opens: 0    ⭐ Stars: 0",
 	TextColor3 = COLOR.text,
-	TextSize = 34,
-	Parent = topPanel,
+	TextSize = 22,
+	Parent = header,
 })
 
-local rateLabel = make("TextLabel", {
-	Size = UDim2.new(1, 0, 0, 22),
-	Position = UDim2.new(0, 0, 0, 52),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamMedium,
-	Text = "",
-	TextColor3 = COLOR.dim,
-	TextSize = 14,
-	Parent = topPanel,
-})
-
--- ---------- the big squishy (center) ----------
-local squishyButton = make("TextButton", {
-	Size = UDim2.new(0, 240, 0, 240),
-	Position = UDim2.new(0.5, 0, 0.5, 10),
+-- ---------- the bamboo steamer (center-left) ----------
+-- Built from layered rounded frames: a lid that pops off on reveal,
+-- and a base that stays put.
+local steamerRoot = make("Frame", {
+	Size = UDim2.new(0, 300, 0, 260),
+	Position = UDim2.new(0.5, -160, 0.5, 20),
 	AnchorPoint = Vector2.new(0.5, 0.5),
-	BackgroundColor3 = COLOR.purple,
-	BackgroundTransparency = 0.15,
-	AutoButtonColor = false,
-	Font = Enum.Font.FredokaOne,
-	Text = "🍑",
-	TextSize = 130,
-	TextColor3 = COLOR.text,
+	BackgroundTransparency = 1,
 	Parent = gui,
 })
-make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = squishyButton })
+
+-- Base bowl
+local steamerBase = make("Frame", {
+	Size = UDim2.new(0, 280, 0, 120),
+	Position = UDim2.new(0.5, 0, 1, 0),
+	AnchorPoint = Vector2.new(0.5, 1),
+	BackgroundColor3 = COLOR.bambooLight,
+	Parent = steamerRoot,
+})
+corner(28, steamerBase)
+make("Frame", { -- rim line
+	Size = UDim2.new(1, 0, 0, 10),
+	Position = UDim2.new(0, 0, 0, 0),
+	BackgroundColor3 = COLOR.bambooLine,
+	BorderSizePixel = 0,
+	Parent = steamerBase,
+})
+
+-- The squishy hiding inside (revealed when the lid pops)
+local hiddenSquishy = make("TextLabel", {
+	Size = UDim2.new(0, 130, 0, 110),
+	Position = UDim2.new(0.5, 0, 0, -46),
+	AnchorPoint = Vector2.new(0.5, 0),
+	BackgroundColor3 = COLOR.white,
+	Font = Enum.Font.FredokaOne,
+	Text = "•ᴗ•",
+	TextColor3 = COLOR.text,
+	TextSize = 40,
+	Visible = false,
+	ZIndex = 3,
+	Parent = steamerBase,
+})
+make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = hiddenSquishy })
+
+-- Lid (drawn AFTER the squishy so it covers it until animated away)
+local lid = make("Frame", {
+	Size = UDim2.new(0, 300, 0, 150),
+	Position = UDim2.new(0.5, 0, 0, 0),
+	AnchorPoint = Vector2.new(0.5, 0),
+	BackgroundColor3 = COLOR.bambooDark,
+	ZIndex = 5,
+	Parent = steamerRoot,
+})
+corner(40, lid)
+make("Frame", { -- weave line 1
+	Size = UDim2.new(0.8, 0, 0, 8),
+	Position = UDim2.new(0.1, 0, 0.35, 0),
+	BackgroundColor3 = COLOR.bambooLine,
+	BorderSizePixel = 0,
+	ZIndex = 6,
+	Parent = lid,
+})
+make("Frame", { -- weave line 2
+	Size = UDim2.new(0.9, 0, 0, 8),
+	Position = UDim2.new(0.05, 0, 0.62, 0),
+	BackgroundColor3 = COLOR.bambooLine,
+	BorderSizePixel = 0,
+	ZIndex = 6,
+	Parent = lid,
+})
+make("Frame", { -- handle nub
+	Size = UDim2.new(0, 54, 0, 22),
+	Position = UDim2.new(0.5, 0, 0, 8),
+	AnchorPoint = Vector2.new(0.5, 0),
+	BackgroundColor3 = COLOR.bambooLine,
+	ZIndex = 6,
+	Parent = lid,
+})
+
+-- Invisible click catcher over the whole steamer
+local steamerButton = make("TextButton", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Text = "",
+	ZIndex = 10,
+	Parent = steamerRoot,
+})
 
 make("TextLabel", {
-	Size = UDim2.new(0, 260, 0, 24),
-	Position = UDim2.new(0.5, 0, 0.5, 150),
+	Size = UDim2.new(0, 300, 0, 24),
+	Position = UDim2.new(0.5, -160, 0.5, 170),
 	AnchorPoint = Vector2.new(0.5, 0.5),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamMedium,
-	Text = "tap the squishy!",
+	Text = "tap the steamer to open it!",
 	TextColor3 = COLOR.dim,
 	TextSize = 16,
 	Parent = gui,
 })
 
--- squish bounce + floating "+N" on every tap
-local baseSize = squishyButton.Size
-local squashed = UDim2.new(0, 210, 0, 210)
+-- ---------- click progress bar (under the steamer) ----------
+local progressShell = make("Frame", {
+	Size = UDim2.new(0, 280, 0, 26),
+	Position = UDim2.new(0.5, -160, 0.5, 205),
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	BackgroundColor3 = COLOR.progressBg,
+	Parent = gui,
+})
+corner(13, progressShell)
 
-local function playSquish()
-	TweenService
-		:Create(
-			squishyButton,
-			TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ Size = squashed }
-		)
-		:Play()
-	task.delay(0.08, function()
+local progressFill = make("Frame", {
+	Size = UDim2.new(0, 0, 1, 0),
+	BackgroundColor3 = COLOR.gold,
+	BorderSizePixel = 0,
+	Parent = progressShell,
+})
+corner(13, progressFill)
+
+local progressLabel = make("TextLabel", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	Text = "0 / 10",
+	TextColor3 = COLOR.text,
+	TextSize = 14,
+	ZIndex = 2,
+	Parent = progressShell,
+})
+
+-- ---------- steamer animations ----------
+local lidHome = lid.Position
+local revealing = false
+
+local function wobbleLid()
+	TweenService:Create(
+		lid,
+		TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Position = lidHome + UDim2.new(0, 0, 0, -8), Rotation = (math.random() - 0.5) * 6 }
+	):Play()
+	task.delay(0.06, function()
+		if revealing then
+			return
+		end
 		TweenService:Create(
-			squishyButton,
-			TweenInfo.new(0.28, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out),
-			{ Size = baseSize }
+			lid,
+			TweenInfo.new(0.2, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out),
+			{ Position = lidHome, Rotation = 0 }
 		):Play()
 	end)
 end
 
-local function floatText(amount: number)
-	local label = make("TextLabel", {
-		Size = UDim2.new(0, 120, 0, 40),
-		Position = UDim2.new(0.5, math.random(-40, 40), 0.5, -60),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.FredokaOne,
-		Text = "+" .. Format.abbreviate(amount),
-		TextColor3 = COLOR.pink,
-		TextSize = 28,
-		Parent = gui,
-	})
-	TweenService:Create(
-		label,
-		TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Position = label.Position + UDim2.new(0, 0, 0, -70), TextTransparency = 1 }
-	):Play()
-	task.delay(0.7, function()
-		label:Destroy()
-	end)
-end
-
-squishyButton.Activated:Connect(function()
-	-- Optimistic feedback: animate now, let the server confirm the real total.
-	playSquish()
-	floatText(state.perClick)
-	ClickSquishy:FireServer()
+steamerButton.Activated:Connect(function()
+	if revealing then
+		return -- let the reveal finish before more clicks count visually
+	end
+	wobbleLid()
+	ClickSteamer:FireServer()
 end)
 
--- ---------- shop (right side) ----------
-local shop = make("Frame", {
-	Size = UDim2.new(0, 300, 0, 420),
-	Position = UDim2.new(1, -24, 0.5, 10),
+-- ---------- inventory / collection (right side) ----------
+local panel = make("Frame", {
+	Size = UDim2.new(0, 320, 0, 480),
+	Position = UDim2.new(1, -20, 0.5, 0),
 	AnchorPoint = Vector2.new(1, 0.5),
 	BackgroundColor3 = COLOR.panel,
 	BackgroundTransparency = 0.05,
 	Parent = gui,
 })
-corner(20, shop)
+corner(20, panel)
 
 make("TextLabel", {
 	Size = UDim2.new(1, 0, 0, 40),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.FredokaOne,
-	Text = "Squishy Shop",
+	Text = "My Squishies",
 	TextColor3 = COLOR.text,
 	TextSize = 24,
-	Parent = shop,
+	Parent = panel,
 })
 
-local shopList = make("ScrollingFrame", {
+local invList = make("ScrollingFrame", {
 	Size = UDim2.new(1, -16, 1, -52),
 	Position = UDim2.new(0, 8, 0, 44),
 	BackgroundTransparency = 1,
@@ -211,104 +323,236 @@ local shopList = make("ScrollingFrame", {
 	ScrollBarThickness = 4,
 	CanvasSize = UDim2.new(0, 0, 0, 0),
 	AutomaticCanvasSize = Enum.AutomaticSize.Y,
-	Parent = shop,
+	Parent = panel,
 })
 make("UIListLayout", {
 	Padding = UDim.new(0, 8),
 	SortOrder = Enum.SortOrder.LayoutOrder,
-	Parent = shopList,
+	Parent = invList,
 })
 
--- Build one row per squishy and remember its parts so we can update them.
-type Row = { buy: TextButton, info: TextLabel }
+type Row = {
+	countLabel: TextLabel,
+	starLabel: TextLabel,
+	prestige: TextButton,
+	icon: TextLabel,
+}
 local rows: { [string]: Row } = {}
 
 for index, squishy in Squishies.list do
+	local rarity = Squishies.rarityByName[squishy.rarity]
+
 	local row = make("Frame", {
-		Size = UDim2.new(1, 0, 0, 76),
-		BackgroundColor3 = Color3.fromRGB(250, 246, 255),
+		Size = UDim2.new(1, 0, 0, 84),
+		BackgroundColor3 = Color3.fromRGB(252, 248, 244),
 		LayoutOrder = index,
-		Parent = shopList,
+		Parent = invList,
 	})
 	corner(14, row)
 
-	make("TextLabel", {
-		Size = UDim2.new(0, 56, 1, 0),
-		BackgroundTransparency = 1,
+	-- the dumpling itself: colored circle with a face
+	local icon = make("TextLabel", {
+		Size = UDim2.new(0, 56, 0, 56),
+		Position = UDim2.new(0, 10, 0.5, 0),
+		AnchorPoint = Vector2.new(0, 0.5),
+		BackgroundColor3 = squishy.color,
 		Font = Enum.Font.FredokaOne,
-		Text = squishy.emoji,
-		TextSize = 40,
+		Text = squishy.sparkle and "✧•ᴗ•✧" or "•ᴗ•",
+		TextColor3 = COLOR.text,
+		TextSize = squishy.sparkle and 13 or 18,
 		Parent = row,
 	})
+	make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = icon })
 
 	make("TextLabel", {
-		Size = UDim2.new(1, -140, 0, 24),
-		Position = UDim2.new(0, 60, 0, 8),
+		Size = UDim2.new(1, -170, 0, 22),
+		Position = UDim2.new(0, 76, 0, 8),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		Text = squishy.name,
 		TextColor3 = COLOR.text,
-		TextSize = 16,
+		TextSize = 15,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = row,
 	})
 
-	local info = make("TextLabel", {
-		Size = UDim2.new(1, -140, 0, 20),
-		Position = UDim2.new(0, 60, 0, 34),
+	make("TextLabel", {
+		Size = UDim2.new(1, -170, 0, 16),
+		Position = UDim2.new(0, 76, 0, 30),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		Text = squishy.rarity,
+		TextColor3 = rarity and rarity.color or COLOR.dim,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = row,
+	})
+
+	local starLabel = make("TextLabel", {
+		Size = UDim2.new(1, -170, 0, 16),
+		Position = UDim2.new(0, 76, 0, 48),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		Text = starString(0),
+		TextColor3 = COLOR.gold,
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = row,
+	})
+
+	local countLabel = make("TextLabel", {
+		Size = UDim2.new(1, -170, 0, 16),
+		Position = UDim2.new(0, 76, 0, 64),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamMedium,
-		Text = ("+%d/tap  +%d/s"):format(squishy.perClick, squishy.perSecond),
+		Text = "x0",
 		TextColor3 = COLOR.dim,
-		TextSize = 13,
+		TextSize = 12,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = row,
 	})
 
-	local buy = make("TextButton", {
-		Size = UDim2.new(0, 72, 0, 56),
-		Position = UDim2.new(1, -80, 0.5, 0),
+	local prestige = make("TextButton", {
+		Size = UDim2.new(0, 84, 0, 60),
+		Position = UDim2.new(1, -92, 0.5, 0),
 		AnchorPoint = Vector2.new(0, 0.5),
-		BackgroundColor3 = COLOR.mint,
-		AutoButtonColor = true,
+		BackgroundColor3 = COLOR.locked,
+		AutoButtonColor = false,
 		Font = Enum.Font.FredokaOne,
-		Text = "🫧 " .. Format.abbreviate(squishy.cost),
+		Text = "",
 		TextColor3 = COLOR.text,
-		TextSize = 15,
+		TextSize = 13,
+		TextWrapped = true,
 		Parent = row,
 	})
-	corner(12, buy)
+	corner(12, prestige)
 
 	local id = squishy.id
-	buy.Activated:Connect(function()
-		BuySquishy:FireServer(id)
+	prestige.Activated:Connect(function()
+		PrestigeSquishy:FireServer(id)
 	end)
 
-	rows[id] = { buy = buy, info = info }
+	rows[id] = { countLabel = countLabel, starLabel = starLabel, prestige = prestige, icon = icon }
 end
+
+-- ---------- reveal animation ----------
+local function playReveal(squishyId: string)
+	local squishy = Squishies.byId[squishyId]
+	if not squishy then
+		return
+	end
+	local rarity = Squishies.rarityByName[squishy.rarity]
+	revealing = true
+
+	-- Show the squishy inside the base, pop the lid up and off.
+	hiddenSquishy.BackgroundColor3 = squishy.color
+	hiddenSquishy.Text = squishy.sparkle and "✧•ᴗ•✧" or "•ᴗ•"
+	hiddenSquishy.Visible = true
+
+	TweenService:Create(
+		lid,
+		TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+		{ Position = lidHome + UDim2.new(0, 90, 0, -170), Rotation = 24 }
+	):Play()
+
+	-- Banner naming the pull, colored by rarity.
+	local banner = make("TextLabel", {
+		Size = UDim2.new(0, 300, 0, 54),
+		Position = UDim2.new(0.5, -160, 0.5, -170),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundColor3 = rarity and rarity.color or COLOR.gold,
+		Font = Enum.Font.FredokaOne,
+		Text = ("%s!"):format(squishy.name),
+		TextColor3 = COLOR.white,
+		TextSize = 22,
+		ZIndex = 15,
+		Parent = gui,
+	})
+	corner(16, banner)
+	banner.Rotation = -4
+
+	-- Sparkles for the fancy ones.
+	if squishy.sparkle then
+		for _ = 1, 6 do
+			local spark = make("TextLabel", {
+				Size = UDim2.new(0, 30, 0, 30),
+				Position = UDim2.new(0.5, -160 + math.random(-130, 130), 0.5, math.random(-120, 60)),
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				BackgroundTransparency = 1,
+				Font = Enum.Font.FredokaOne,
+				Text = "✦",
+				TextColor3 = COLOR.gold,
+				TextSize = math.random(18, 30),
+				ZIndex = 14,
+				Parent = gui,
+			})
+			TweenService:Create(
+				spark,
+				TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Position = spark.Position + UDim2.new(0, 0, 0, -50), TextTransparency = 1 }
+			):Play()
+			task.delay(1.2, function()
+				spark:Destroy()
+			end)
+		end
+	end
+
+	-- Put everything back after a moment.
+	task.delay(1.35, function()
+		banner:Destroy()
+		hiddenSquishy.Visible = false
+		lid.Position = lidHome + UDim2.new(0, 0, 0, -40)
+		lid.Rotation = 0
+		TweenService
+			:Create(lid, TweenInfo.new(0.25, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out), { Position = lidHome })
+			:Play()
+		revealing = false
+	end)
+end
+
+SteamerOpened.OnClientEvent:Connect(playReveal)
 
 -- ---------- redraw from server state ----------
 local function refresh()
-	squishLabel.Text = "🫧 " .. Format.abbreviate(state.squish)
-	rateLabel.Text = ("+%s / tap   •   +%s / sec"):format(
-		Format.abbreviate(state.perClick),
-		Format.abbreviate(state.perSecond)
-	)
+	headerLabel.Text = ("🥟 Opens: %d    ⭐ Stars: %d"):format(state.totalOpens, state.totalStars)
+
+	progressLabel.Text = ("%d / %d"):format(state.clickProgress, state.clicksToOpen)
+	local frac = math.clamp(state.clickProgress / math.max(state.clicksToOpen, 1), 0, 1)
+	TweenService:Create(
+		progressFill,
+		TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Size = UDim2.new(frac, 0, 1, 0) }
+	):Play()
 
 	for id, row in rows do
+		local held = state.counts[id] or 0
+		local star = state.stars[id] or 0
+
+		row.countLabel.Text = "x" .. held
+		row.starLabel.Text = starString(star)
+
+		-- Undiscovered squishies show as dark silhouettes — the collection tease.
 		local squishy = Squishies.byId[id]
-		if state.owned[id] then
-			row.buy.Text = "Owned ✓"
-			row.buy.BackgroundColor3 = COLOR.locked
-			row.buy.AutoButtonColor = false
-		elseif squishy and state.squish >= squishy.cost then
-			row.buy.Text = "🫧 " .. Format.abbreviate(squishy.cost)
-			row.buy.BackgroundColor3 = COLOR.mint
-			row.buy.AutoButtonColor = true
-		elseif squishy then
-			row.buy.Text = "🫧 " .. Format.abbreviate(squishy.cost)
-			row.buy.BackgroundColor3 = Color3.fromRGB(235, 232, 240)
-			row.buy.AutoButtonColor = true
+		local discovered = held > 0 or star > 0
+		if squishy then
+			row.icon.BackgroundColor3 = discovered and squishy.color or Color3.fromRGB(90, 82, 76)
+			row.icon.Text = discovered and (squishy.sparkle and "✧•ᴗ•✧" or "•ᴗ•") or "?"
+		end
+
+		if star >= Config.MaxStars then
+			row.prestige.Text = "MAX ⭐"
+			row.prestige.BackgroundColor3 = COLOR.gold
+			row.prestige.AutoButtonColor = false
+		else
+			local cost = prestigeCost(id, star)
+			row.prestige.Text = ("%d/%d\n→ %d★"):format(math.min(held, cost), cost, star + 1)
+			if held >= cost then
+				row.prestige.BackgroundColor3 = COLOR.mint
+				row.prestige.AutoButtonColor = true
+			else
+				row.prestige.BackgroundColor3 = COLOR.locked
+				row.prestige.AutoButtonColor = false
+			end
 		end
 	end
 end
