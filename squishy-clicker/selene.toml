@@ -1,1 +1,3 @@
 std = "roblox"
+[lints]
+roblox_manual_fromscale_or_fromoffset = "allow"

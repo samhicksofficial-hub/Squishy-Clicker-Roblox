@@ -13,29 +13,10 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
-
--- Find the Squishies module whether it sits directly in Shared OR inside a
--- Shared/Classes folder, so moving the file never silently hangs the game.
-local function requireSquishies()
-	local elapsed = 0
-	while elapsed < 10 do
-		local direct = Shared:FindFirstChild("Squishies")
-		if direct and direct:IsA("ModuleScript") then
-			return require(direct)
-		end
-		local classes = Shared:FindFirstChild("Classes")
-		if classes then
-			local nested = classes:FindFirstChild("Squishies")
-			if nested and nested:IsA("ModuleScript") then
-				return require(nested)
-			end
-		end
-		task.wait(0.1)
-		elapsed += 0.1
-	end
-	error("[SquishyClicker] Could not find a 'Squishies' ModuleScript in Shared or Shared/Classes")
-end
-local Squishies = requireSquishies()
+-- Direct require: Squishies lives at Shared/Squishies. If this ever hangs
+-- with an orange "Infinite yield possible" warning in Output, the file was
+-- moved — put it back at src/shared/Squishies.luau or update this path.
+local Squishies = require(Shared:WaitForChild("Squishies"))
 
 -- ---------- Remotes ----------
 local Remotes = Instance.new("Folder")
@@ -177,7 +158,11 @@ local function saveData(player: Player)
 	end
 end
 
-Players.PlayerAdded:Connect(function(player)
+local function onPlayerAdded(player: Player)
+	if dataByPlayer[player] then
+		return -- already initialized (guards against double-init)
+	end
+
 	local data = loadData(player)
 	dataByPlayer[player] = data
 
@@ -196,7 +181,16 @@ Players.PlayerAdded:Connect(function(player)
 	stars.Parent = leaderstats
 
 	sync(player)
-end)
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+
+-- CRITICAL: players can join BEFORE the line above runs (especially in
+-- Studio Play Solo). Without this loop, those players are invisible to the
+-- server — every click silently ignored. This catches them.
+for _, existing in Players:GetPlayers() do
+	task.spawn(onPlayerAdded, existing)
+end
 
 Players.PlayerRemoving:Connect(function(player)
 	saveData(player)
