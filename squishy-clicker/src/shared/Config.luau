@@ -9,10 +9,22 @@ local Config = {
 	-- The steamer can never get faster than this many clicks.
 	MinClicksToOpen = 3,
 
-	-- Every star you've earned (across ALL squishies) shaves this many clicks
-	-- off the requirement. 0.25 means every 4 stars = 1 fewer click.
-	-- THIS is why prestiging matters: your collection makes you faster.
-	ClickReductionPerStar = 0.25,
+	-- THE TREADMILL: every steamer you open makes the next one cost this many
+	-- more clicks, forever. Opening 20 steamers adds 20 clicks to the price.
+	ClicksAddedPerOpen = 1,
+
+	-- Hard ceiling, so the treadmill can never make the game unplayable.
+	MaxClicksToOpen = 200,
+
+	-- ===== Stars fight the treadmill =====
+	-- Each star you've earned (across ALL squishies) shaves this FRACTION off
+	-- the requirement. A percentage rather than a flat number, so stars keep
+	-- mattering no matter how high the requirement has climbed.
+	-- 0.02 = 2% per star, so 10 stars means a 20% cheaper steamer.
+	StarDiscountPerStar = 0.02,
+
+	-- Stars can never discount more than this, or the floor becomes trivial.
+	MaxStarDiscount = 0.8,
 
 	-- ===== Prestige (star-ups) =====
 	MaxStars = 5,

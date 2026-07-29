@@ -50,7 +50,21 @@ type PlayerData = {
 	clicksThisSecond: number,
 }
 
-local store = DataStoreService:GetDataStore(Config.DataStoreName)
+-- GetDataStore THROWS in an unpublished place (and in Studio without API
+-- access). If that error escaped, it would kill this whole script and every
+-- click would be silently ignored — so the store is optional and the game
+-- simply doesn't persist when it's unavailable.
+local store: DataStore? = nil
+do
+	local ok, result = pcall(function()
+		return DataStoreService:GetDataStore(Config.DataStoreName)
+	end)
+	if ok then
+		store = result
+	else
+		warn("[SquishyClicker] DataStores unavailable — progress will NOT save this session:", result)
+	end
+end
 local dataByPlayer: { [Player]: PlayerData } = {}
 local rng = Random.new()
 
@@ -67,10 +81,14 @@ local function totalStars(data: PlayerData): number
 end
 
 -- How many clicks this player needs to open the steamer right now.
--- Stars from prestiging make it faster — that's the payoff loop.
+-- Every steamer already opened makes this number bigger (the treadmill);
+-- every star earned shaves a percentage back off (the payoff loop). Prestige
+-- enough and you stay roughly level; hoard copies instead and you slow down.
 local function clicksToOpen(data: PlayerData): number
-	local reduction = math.floor(totalStars(data) * Config.ClickReductionPerStar)
-	return math.max(Config.MinClicksToOpen, Config.BaseClicksToOpen - reduction)
+	local raw = Config.BaseClicksToOpen + data.totalOpens * Config.ClicksAddedPerOpen
+	local discount = math.min(totalStars(data) * Config.StarDiscountPerStar, Config.MaxStarDiscount)
+	local needed = math.ceil(raw * (1 - discount))
+	return math.clamp(needed, Config.MinClicksToOpen, Config.MaxClicksToOpen)
 end
 
 -- Copies needed for a squishy's NEXT star, given its rarity and current star.
@@ -122,13 +140,16 @@ end
 local function loadData(player: Player): PlayerData
 	local loaded: { counts: { [string]: number }?, stars: { [string]: number }?, totalOpens: number? }? = nil
 
-	local ok, result = pcall(function()
-		return store:GetAsync("player_" .. player.UserId)
-	end)
-	if ok and typeof(result) == "table" then
-		loaded = result :: any
-	elseif not ok then
-		warn("[SquishyClicker] Could not load data for", player.Name, "-", result)
+	local activeStore = store
+	if activeStore then
+		local ok, result = pcall(function()
+			return activeStore:GetAsync("player_" .. player.UserId)
+		end)
+		if ok and typeof(result) == "table" then
+			loaded = result :: any
+		elseif not ok then
+			warn("[SquishyClicker] Could not load data for", player.Name, "-", result)
+		end
 	end
 
 	return {
@@ -143,11 +164,12 @@ end
 
 local function saveData(player: Player)
 	local data = dataByPlayer[player]
-	if not data then
+	local activeStore = store
+	if not data or not activeStore then
 		return
 	end
 	local ok, err = pcall(function()
-		store:SetAsync("player_" .. player.UserId, {
+		activeStore:SetAsync("player_" .. player.UserId, {
 			counts = data.counts,
 			stars = data.stars,
 			totalOpens = data.totalOpens,

@@ -1,8 +1,12 @@
 --!strict
 -- ============================================================
---  CLIENT  —  the steamer, the reveal, and the collection.
+--  CLIENT  —  the HUD, and the wiring between it and the 3D
+--  stage in Scene.luau.
+--
 --  All numbers come from the server via SyncData; this script
---  only draws them and sends requests.
+--  only draws them and sends requests. The steamer itself is a
+--  real 3D model now, so the UI deliberately stays out of the
+--  middle of the screen and leaves the view clear.
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -18,6 +22,7 @@ local Config = require(Shared:WaitForChild("Config"))
 -- with an orange "Infinite yield possible" warning in Output, the file was
 -- moved — put it back at src/shared/Squishies.luau or update this path.
 local Squishies = require(Shared:WaitForChild("Squishies"))
+local Scene = require(script:WaitForChild("Scene"))
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local ClickSteamer = Remotes:WaitForChild("ClickSteamer") :: RemoteEvent
@@ -27,10 +32,6 @@ local SyncData = Remotes:WaitForChild("SyncData") :: RemoteEvent
 
 -- ---------- palette ----------
 local COLOR = {
-	bg = Color3.fromRGB(255, 244, 236),
-	bambooLight = Color3.fromRGB(222, 184, 135),
-	bambooDark = Color3.fromRGB(196, 154, 108),
-	bambooLine = Color3.fromRGB(176, 134, 90),
 	panel = Color3.fromRGB(255, 255, 255),
 	text = Color3.fromRGB(74, 52, 38),
 	dim = Color3.fromRGB(150, 130, 118),
@@ -50,6 +51,12 @@ local state = {
 	totalOpens = 0,
 	totalStars = 0,
 }
+
+-- Rarity rank (Common = 1 ... Mythical = 6). The reveal scales off this.
+local rarityTier: { [string]: number } = {}
+for index, rarity in Squishies.rarities do
+	rarityTier[rarity.name] = index
+end
 
 -- ---------- tiny UI helpers ----------
 local function make(className: string, props: { [string]: any }): any
@@ -79,6 +86,7 @@ local function prestigeCost(squishyId: string, currentStar: number): number
 end
 
 -- ---------- root gui ----------
+-- No background frame: the 3D stage IS the background now.
 local gui = make("ScreenGui", {
 	Name = "SquishyClickerUI",
 	ResetOnSpawn = false,
@@ -87,21 +95,34 @@ local gui = make("ScreenGui", {
 	Parent = playerGui,
 })
 
-make("Frame", {
+-- ---------- the click target ----------
+-- A full-screen invisible button. Catching taps in the UI layer rather than with
+-- a ClickDetector on the model means clicking works identically on PC, mobile
+-- and console, and never misses because the steamer happened to be mid-bounce.
+-- The collection panel sits above this and is Active, so it swallows its own
+-- taps instead of leaking them through as clicks.
+local clickArea = make("TextButton", {
 	Size = UDim2.fromScale(1, 1),
-	BackgroundColor3 = COLOR.bg,
-	BorderSizePixel = 0,
-	ZIndex = 0,
+	Position = UDim2.fromScale(0, 0),
+	BackgroundTransparency = 1,
+	Text = "",
+	AutoButtonColor = false,
+	ZIndex = 1,
 	Parent = gui,
 })
+
+clickArea.MouseButton1Down:Connect(function()
+	Scene.click()
+	ClickSteamer:FireServer()
+end)
 
 -- ---------- header ----------
 local header = make("Frame", {
 	Size = UDim2.new(0, 340, 0, 64),
-	Position = UDim2.new(0.5, -160, 0, 20),
-	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0, 24, 0, 20),
 	BackgroundColor3 = COLOR.panel,
-	BackgroundTransparency = 0.05,
+	BackgroundTransparency = 0.12,
+	ZIndex = 2,
 	Parent = gui,
 })
 corner(18, header)
@@ -116,115 +137,15 @@ local headerLabel = make("TextLabel", {
 	Parent = header,
 })
 
--- ---------- the bamboo steamer (center-left) ----------
--- Built from layered rounded frames: a lid that pops off on reveal,
--- and a base that stays put.
-local steamerRoot = make("Frame", {
-	Size = UDim2.new(0, 300, 0, 260),
-	Position = UDim2.new(0.5, -160, 0.5, 20),
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	BackgroundTransparency = 1,
-	Parent = gui,
-})
-
--- Base bowl
-local steamerBase = make("Frame", {
-	Size = UDim2.new(0, 280, 0, 120),
-	Position = UDim2.new(0.5, 0, 1, 0),
-	AnchorPoint = Vector2.new(0.5, 1),
-	BackgroundColor3 = COLOR.bambooLight,
-	Parent = steamerRoot,
-})
-corner(28, steamerBase)
-make("Frame", { -- rim line
-	Size = UDim2.new(1, 0, 0, 10),
-	Position = UDim2.new(0, 0, 0, 0),
-	BackgroundColor3 = COLOR.bambooLine,
-	BorderSizePixel = 0,
-	Parent = steamerBase,
-})
-
--- The squishy hiding inside (revealed when the lid pops)
-local hiddenSquishy = make("TextLabel", {
-	Size = UDim2.new(0, 130, 0, 110),
-	Position = UDim2.new(0.5, 0, 0, -46),
-	AnchorPoint = Vector2.new(0.5, 0),
-	BackgroundColor3 = COLOR.white,
-	Font = Enum.Font.FredokaOne,
-	Text = "•ᴗ•",
-	TextColor3 = COLOR.text,
-	TextSize = 40,
-	Visible = false,
-	ZIndex = 3,
-	Parent = steamerBase,
-})
-make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = hiddenSquishy })
-
--- Lid (drawn AFTER the squishy so it covers it until animated away)
-local lid = make("Frame", {
-	Size = UDim2.new(0, 300, 0, 150),
-	Position = UDim2.new(0.5, 0, 0, 0),
-	AnchorPoint = Vector2.new(0.5, 0),
-	BackgroundColor3 = COLOR.bambooDark,
-	ZIndex = 5,
-	Parent = steamerRoot,
-})
-corner(40, lid)
-make("Frame", { -- weave line 1
-	Size = UDim2.new(0.8, 0, 0, 8),
-	Position = UDim2.new(0.1, 0, 0.35, 0),
-	BackgroundColor3 = COLOR.bambooLine,
-	BorderSizePixel = 0,
-	ZIndex = 6,
-	Parent = lid,
-})
-make("Frame", { -- weave line 2
-	Size = UDim2.new(0.9, 0, 0, 8),
-	Position = UDim2.new(0.05, 0, 0.62, 0),
-	BackgroundColor3 = COLOR.bambooLine,
-	BorderSizePixel = 0,
-	ZIndex = 6,
-	Parent = lid,
-})
-make("Frame", { -- handle nub
-	Size = UDim2.new(0, 54, 0, 22),
-	Position = UDim2.new(0.5, 0, 0, 8),
-	AnchorPoint = Vector2.new(0.5, 0),
-	BackgroundColor3 = COLOR.bambooLine,
-	ZIndex = 6,
-	Parent = lid,
-})
-
--- Invisible click catcher over the whole steamer
-local steamerButton = make("TextButton", {
-	Size = UDim2.new(1, 0, 1, 0),
-	BackgroundTransparency = 1,
-	Text = "",
-	ZIndex = 10,
-	Parent = steamerRoot,
-})
-
-make("TextLabel", {
-	Size = UDim2.new(0, 300, 0, 24),
-	Position = UDim2.new(0.5, -160, 0.5, 170),
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamMedium,
-	Text = "tap the steamer to open it!",
-	TextColor3 = COLOR.dim,
-	TextSize = 16,
-	Parent = gui,
-})
-
--- ---------- click progress bar (under the steamer) ----------
+-- ---------- click progress (bottom left, under the steamer) ----------
 local progressShell = make("Frame", {
-	Size = UDim2.new(0, 280, 0, 26),
-	Position = UDim2.new(0.5, -160, 0.5, 205),
-	AnchorPoint = Vector2.new(0.5, 0.5),
+	Size = UDim2.new(0, 300, 0, 28),
+	Position = UDim2.new(0, 24, 1, -92),
 	BackgroundColor3 = COLOR.progressBg,
+	ZIndex = 2,
 	Parent = gui,
 })
-corner(13, progressShell)
+corner(14, progressShell)
 
 local progressFill = make("Frame", {
 	Size = UDim2.new(0, 0, 1, 0),
@@ -232,7 +153,7 @@ local progressFill = make("Frame", {
 	BorderSizePixel = 0,
 	Parent = progressShell,
 })
-corner(13, progressFill)
+corner(14, progressFill)
 
 local progressLabel = make("TextLabel", {
 	Size = UDim2.new(1, 0, 1, 0),
@@ -240,40 +161,40 @@ local progressLabel = make("TextLabel", {
 	Font = Enum.Font.GothamBold,
 	Text = "0 / 10",
 	TextColor3 = COLOR.text,
-	TextSize = 14,
+	TextSize = 15,
 	ZIndex = 2,
 	Parent = progressShell,
 })
 
--- ---------- steamer animations ----------
-local lidHome = lid.Position
-local revealing = false
+make("TextLabel", {
+	Size = UDim2.new(0, 300, 0, 20),
+	Position = UDim2.new(0, 24, 1, -116),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamMedium,
+	Text = "tap anywhere to work the steamer",
+	TextColor3 = COLOR.text,
+	TextTransparency = 0.25,
+	TextSize = 15,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 2,
+	Parent = gui,
+})
 
-local function wobbleLid()
-	TweenService:Create(
-		lid,
-		TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Position = lidHome + UDim2.new(0, 0, 0, -8), Rotation = (math.random() - 0.5) * 6 }
-	):Play()
-	task.delay(0.06, function()
-		if revealing then
-			return
-		end
-		TweenService:Create(
-			lid,
-			TweenInfo.new(0.2, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out),
-			{ Position = lidHome, Rotation = 0 }
-		):Play()
-	end)
-end
-
-steamerButton.Activated:Connect(function()
-	if revealing then
-		return -- let the reveal finish before more clicks count visually
-	end
-	wobbleLid()
-	ClickSteamer:FireServer()
-end)
+-- Spells out the treadmill, so a rising requirement reads as a mechanic rather
+-- than a bug.
+local costLabel = make("TextLabel", {
+	Size = UDim2.new(0, 320, 0, 20),
+	Position = UDim2.new(0, 24, 1, -58),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamMedium,
+	Text = "",
+	TextColor3 = COLOR.text,
+	TextTransparency = 0.35,
+	TextSize = 13,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 2,
+	Parent = gui,
+})
 
 -- ---------- inventory / collection (right side) ----------
 local panel = make("Frame", {
@@ -281,7 +202,9 @@ local panel = make("Frame", {
 	Position = UDim2.new(1, -20, 0.5, 0),
 	AnchorPoint = Vector2.new(1, 0.5),
 	BackgroundColor3 = COLOR.panel,
-	BackgroundTransparency = 0.05,
+	BackgroundTransparency = 0.08,
+	Active = true, -- consume taps so browsing the collection doesn't click the steamer
+	ZIndex = 3,
 	Parent = gui,
 })
 corner(20, panel)
@@ -416,82 +339,96 @@ for index, squishy in Squishies.list do
 	rows[id] = { countLabel = countLabel, starLabel = starLabel, prestige = prestige, icon = icon }
 end
 
--- ---------- reveal animation ----------
+-- ---------- reveal: the UI half of the show ----------
+-- Scene.luau handles the steamer, the dumpling and the particles; this adds
+-- the banner naming the pull and a screen flash for the best rarities.
 local function playReveal(squishyId: string)
 	local squishy = Squishies.byId[squishyId]
 	if not squishy then
 		return
 	end
 	local rarity = Squishies.rarityByName[squishy.rarity]
-	revealing = true
+	local tier = rarityTier[squishy.rarity] or 1
+	local rarityColor = rarity and rarity.color or COLOR.gold
 
-	-- Show the squishy inside the base, pop the lid up and off.
-	hiddenSquishy.BackgroundColor3 = squishy.color
-	hiddenSquishy.Text = squishy.sparkle and "✧•ᴗ•✧" or "•ᴗ•"
-	hiddenSquishy.Visible = true
+	Scene.open(squishy.color, squishy.sparkle, rarityColor, tier)
 
-	TweenService:Create(
-		lid,
-		TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-		{ Position = lidHome + UDim2.new(0, 90, 0, -170), Rotation = 24 }
-	):Play()
-
-	-- Banner naming the pull, colored by rarity.
 	local banner = make("TextLabel", {
-		Size = UDim2.new(0, 300, 0, 54),
-		Position = UDim2.new(0.5, -160, 0.5, -170),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		BackgroundColor3 = rarity and rarity.color or COLOR.gold,
+		Size = UDim2.new(0, 320, 0, 56),
+		Position = UDim2.new(0, 24, 0, 100),
+		BackgroundColor3 = rarityColor,
 		Font = Enum.Font.FredokaOne,
 		Text = ("%s!"):format(squishy.name),
 		TextColor3 = COLOR.white,
-		TextSize = 22,
+		TextSize = 23,
+		Rotation = -3,
 		ZIndex = 15,
 		Parent = gui,
 	})
 	corner(16, banner)
-	banner.Rotation = -4
 
-	-- Sparkles for the fancy ones.
-	if squishy.sparkle then
-		for _ = 1, 6 do
-			local spark = make("TextLabel", {
-				Size = UDim2.new(0, 30, 0, 30),
-				Position = UDim2.new(0.5, -160 + math.random(-130, 130), 0.5, math.random(-120, 60)),
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				BackgroundTransparency = 1,
-				Font = Enum.Font.FredokaOne,
-				Text = "✦",
-				TextColor3 = COLOR.gold,
-				TextSize = math.random(18, 30),
-				ZIndex = 14,
-				Parent = gui,
-			})
-			TweenService:Create(
-				spark,
-				TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Position = spark.Position + UDim2.new(0, 0, 0, -50), TextTransparency = 1 }
-			):Play()
-			task.delay(1.2, function()
-				spark:Destroy()
-			end)
-		end
+	banner.Position = banner.Position - UDim2.new(0, 40, 0, 0)
+	banner.TextTransparency = 1
+	TweenService:Create(
+		banner,
+		TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Position = UDim2.new(0, 24, 0, 100), TextTransparency = 0 }
+	):Play()
+
+	-- Legendary and Mythical wash the screen out for a moment.
+	if tier >= 5 then
+		local flash = make("Frame", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundColor3 = COLOR.white,
+			BackgroundTransparency = 0.25,
+			BorderSizePixel = 0,
+			ZIndex = 20,
+			Parent = gui,
+		})
+		TweenService
+			:Create(flash, TweenInfo.new(0.75, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
+			:Play()
+		task.delay(0.85, function()
+			flash:Destroy()
+		end)
 	end
 
-	-- Put everything back after a moment.
-	task.delay(1.35, function()
-		banner:Destroy()
-		hiddenSquishy.Visible = false
-		lid.Position = lidHome + UDim2.new(0, 0, 0, -40)
-		lid.Rotation = 0
+	task.delay(1.7, function()
 		TweenService
-			:Create(lid, TweenInfo.new(0.25, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out), { Position = lidHome })
+			:Create(banner, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { TextTransparency = 1, BackgroundTransparency = 1 })
 			:Play()
-		revealing = false
+		task.delay(0.3, function()
+			banner:Destroy()
+		end)
 	end)
 end
 
 SteamerOpened.OnClientEvent:Connect(playReveal)
+
+-- A floating "+N clicks" whenever the requirement climbs, so the cost of an
+-- open is visible at the moment you pay it.
+local function showCostRise(amount: number)
+	local floater = make("TextLabel", {
+		Size = UDim2.new(0, 200, 0, 26),
+		Position = UDim2.new(0, 24, 1, -92),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.FredokaOne,
+		Text = ("+%d click%s to open"):format(amount, amount == 1 and "" or "s"),
+		TextColor3 = Color3.fromRGB(226, 96, 96),
+		TextSize = 17,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 16,
+		Parent = gui,
+	})
+	TweenService:Create(
+		floater,
+		TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Position = UDim2.new(0, 24, 1, -140), TextTransparency = 1 }
+	):Play()
+	task.delay(1.2, function()
+		floater:Destroy()
+	end)
+end
 
 -- ---------- redraw from server state ----------
 local function refresh()
@@ -499,11 +436,19 @@ local function refresh()
 
 	progressLabel.Text = ("%d / %d"):format(state.clickProgress, state.clicksToOpen)
 	local frac = math.clamp(state.clickProgress / math.max(state.clicksToOpen, 1), 0, 1)
+	Scene.setProgress(frac)
 	TweenService:Create(
 		progressFill,
 		TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Size = UDim2.new(frac, 0, 1, 0) }
 	):Play()
+
+	local discount = math.min(state.totalStars * Config.StarDiscountPerStar, Config.MaxStarDiscount)
+	costLabel.Text = ("every open costs +%d · your %d★ cut the price %d%%"):format(
+		Config.ClicksAddedPerOpen,
+		state.totalStars,
+		math.floor(discount * 100 + 0.5)
+	)
 
 	for id, row in rows do
 		local held = state.counts[id] or 0
@@ -539,8 +484,14 @@ local function refresh()
 end
 
 SyncData.OnClientEvent:Connect(function(payload)
+	local previousRequirement = state.clicksToOpen
 	state = payload
 	refresh()
+
+	local rise = state.clicksToOpen - previousRequirement
+	if rise > 0 then
+		showCostRise(rise)
+	end
 end)
 
 refresh()
