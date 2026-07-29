@@ -27,19 +27,20 @@ local Scene = {}
 -- baseplate, spawn, the player's own character — stays out of frame.
 local ORIGIN = Vector3.new(0, 500, 0)
 -- Aiming to the RIGHT of the steamer pushes it left on screen, clear of the
--- collection panel.
-local CAMERA_POS = ORIGIN + Vector3.new(0.5, 5.6, 15.0)
-local CAMERA_LOOK = ORIGIN + Vector3.new(2.0, 2.3, 0)
+-- collection panel. Aim height splits the difference between the tub and the
+-- risen dumpling so the whole reveal stays in frame.
+local CAMERA_POS = ORIGIN + Vector3.new(0.5, 5.0, 16.5)
+local CAMERA_LOOK = ORIGIN + Vector3.new(1.9, 3.0, 0)
 local FIELD_OF_VIEW = 50
 
-local BACKDROP_COLOR = Color3.fromRGB(255, 240, 228)
-local FLOOR_COLOR = Color3.fromRGB(246, 226, 208)
+local BACKDROP_COLOR = Color3.fromRGB(240, 222, 206)
+local FLOOR_COLOR = Color3.fromRGB(228, 204, 182)
 
 local LID_REST_Y = 2.15 -- where the lid sits on the tub
 -- Low enough that the dumpling sits entirely below the tub's interior floor at
 -- rest, so it needs no hiding: the tub's own walls do it.
 local DUMPLING_HIDDEN_Y = 0.95
-local DUMPLING_RISEN_Y = 4.4
+local DUMPLING_RISEN_Y = 4.0
 local REVEAL_SECONDS = 1.7
 
 -- ---------- springs ----------
@@ -126,24 +127,28 @@ local dumpling = Models.buildDumpling(stage)
 
 -- ---------- lights and particles ----------
 
-Lighting.Ambient = Color3.fromRGB(138, 128, 122)
-Lighting.OutdoorAmbient = Color3.fromRGB(138, 128, 122)
-Lighting.Brightness = 2.4
+-- Restrained on purpose: the first pass at these numbers (Brightness 2.4,
+-- heavy bloom) blew the pale backdrop out to pure white and the whole stage
+-- vanished into glow. If it ever looks foggy-bright again, suspect these
+-- before suspecting the models.
+Lighting.Ambient = Color3.fromRGB(96, 90, 86)
+Lighting.OutdoorAmbient = Color3.fromRGB(112, 105, 99)
+Lighting.Brightness = 1.15
 Lighting.ClockTime = 14.2
 Lighting.GeographicLatitude = 8
 Lighting.GlobalShadows = true
 Lighting.FogEnd = 100000
 
 local bloom = Instance.new("BloomEffect")
-bloom.Intensity = 0.55
-bloom.Size = 26
-bloom.Threshold = 1.15
+bloom.Intensity = 0.3
+bloom.Size = 18
+bloom.Threshold = 1.75 -- only genuinely emissive things (neon rays) may glow
 bloom.Parent = Lighting
 
 local keyLightHost = block(Vector3.new(0.2, 0.2, 0.2), ORIGIN + Vector3.new(5, 9, 9), BACKDROP_COLOR)
 keyLightHost.Transparency = 1
 local keyLight = Instance.new("PointLight")
-keyLight.Brightness = 1.1
+keyLight.Brightness = 0.45
 keyLight.Range = 44
 keyLight.Color = Color3.fromRGB(255, 240, 214)
 keyLight.Shadows = false
@@ -154,26 +159,28 @@ keyLight.Parent = keyLightHost
 local mouth = block(Vector3.new(0.2, 0.2, 0.2), ORIGIN + Vector3.new(0, LID_REST_Y, 0), BACKDROP_COLOR)
 mouth.Transparency = 1
 
+-- Kept wispy: at its first size (peaking at 3.2 studs, 42% opaque, rate 7)
+-- the steam filled the frame with white haze and read as a rendering bug.
 local steam = Instance.new("ParticleEmitter")
 steam.Texture = "rbxasset://textures/particles/smoke_main.dds"
-steam.Rate = 7
-steam.Lifetime = NumberRange.new(1.6, 2.6)
-steam.Speed = NumberRange.new(1.2, 2.6)
-steam.SpreadAngle = Vector2.new(16, 16)
+steam.Rate = 3
+steam.Lifetime = NumberRange.new(1.4, 2.2)
+steam.Speed = NumberRange.new(1.2, 2.4)
+steam.SpreadAngle = Vector2.new(12, 12)
 steam.Acceleration = Vector3.new(0, 2.2, 0)
 steam.Size = NumberSequence.new({
-	NumberSequenceKeypoint.new(0, 0.4),
-	NumberSequenceKeypoint.new(0.45, 2.1),
-	NumberSequenceKeypoint.new(1, 3.2),
+	NumberSequenceKeypoint.new(0, 0.25),
+	NumberSequenceKeypoint.new(0.45, 1.1),
+	NumberSequenceKeypoint.new(1, 1.7),
 })
 steam.Transparency = NumberSequence.new({
 	NumberSequenceKeypoint.new(0, 1),
-	NumberSequenceKeypoint.new(0.18, 0.58),
+	NumberSequenceKeypoint.new(0.18, 0.8),
 	NumberSequenceKeypoint.new(1, 1),
 })
 steam.Rotation = NumberRange.new(0, 360)
 steam.RotSpeed = NumberRange.new(-25, 25)
-steam.LightEmission = 0.35
+steam.LightEmission = 0.15
 steam.EmissionDirection = Enum.NormalId.Top
 steam.Parent = mouth
 
@@ -384,15 +391,17 @@ end
 function Scene.open(bodyColor: Color3, sparkle: boolean, rarityColor: Color3, tier: number)
 	Models.paintDumpling(dumpling, bodyColor, sparkle)
 
-	lidLift.target = 4.5 + tier * 0.7
+	-- The lift used to peak at 8.7 studs, which threw the lid clean out of
+	-- frame; the whole show now has to fit under the camera's ceiling.
+	lidLift.target = 2.6 + tier * 0.4
 	lidTilt.target = 0.55
 	lidSpinVelocity = 7 + tier * 2.5
 	rise.target = 1
 	kick(jiggle, 1)
-	glow.target = 1.4 + tier * 0.9
+	glow.target = 0.7 + tier * 0.45
 	glowLight.Color = rarityColor
 
-	steam:Emit(16 + tier * 6)
+	steam:Emit(10 + tier * 4)
 	burst.Color = ColorSequence.new(rarityColor)
 	burst:Emit(16 + tier * 22)
 

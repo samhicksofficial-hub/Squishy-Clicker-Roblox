@@ -165,8 +165,12 @@ function Models.buildDumpling(parent: Instance): Dumpling
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "Face"
 	billboard.Adornee = body
-	billboard.Size = UDim2.fromScale(1.9, 1.1) -- BillboardGui scale is in studs
-	billboard.StudsOffsetWorldSpace = Vector3.new(0, 0.02, 1.45)
+	billboard.Size = UDim2.fromScale(1.7, 1.0) -- BillboardGui scale is in studs
+	-- CAMERA-space offset, not world-space: it slides the face toward whoever
+	-- is looking, so it always reads as painted on the front of the body.
+	-- Must stay a touch beyond the body's widest radius (1.25 × jiggle
+	-- stretch), or the sphere pokes through and swallows the face.
+	billboard.StudsOffset = Vector3.new(0, 0.05, 1.55)
 	billboard.AlwaysOnTop = false
 	billboard.LightInfluence = 0
 	billboard.Enabled = false
