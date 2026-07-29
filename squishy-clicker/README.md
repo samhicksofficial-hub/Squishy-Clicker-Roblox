@@ -27,8 +27,8 @@ and slower. That tug-of-war is the whole game.
 │   │   └── init.server.luau   click counting, rolls, inventory, prestige, saving
 │   └── client/              → StarterPlayerScripts/Client
 │       ├── init.client.luau   the HUD, and wiring it to the stage
-│       ├── Scene.luau         the 3D stage: camera, lights, reveal choreography
-│       └── Models.luau        builds the steamer and dumplings out of primitives
+│       ├── Scene.luau         the 3D stage: toy shop, camera, lights, reveals
+│       └── Models.luau        builds the steamer and every squishy shape
 ```
 
 The steamer is a real 3D model, built from parts at runtime — there are no assets
@@ -67,10 +67,14 @@ If the game is ever a blank screen, open View → Output first: an orange
 - Starting pace and floor: `BaseClicksToOpen`, `MinClicksToOpen`.
 - Rarity odds and prestige costs: the `rarities` table in `Squishies.luau`
   (weights are out of 1000: 550 = 55%).
-- Add a dumpling: one line in the `list` in `Squishies.luau`. The reveal scales
-  off rarity rank automatically, so a new top rarity gets the biggest show.
-- Reshape the models: the numbers in `Models.luau`. Camera angle, lighting and
-  reveal timing: the constants at the top of `Scene.luau`.
+- Add a squishy: one line in the `list` in `Squishies.luau`. Give it a `shape`
+  from the builders in `Models.luau` (or leave it off for a dumpling). The
+  reveal scales off rarity rank automatically, so a new top rarity gets the
+  biggest show.
+- Add a shape: one builder function in `shapeBuilders` in `Models.luau`.
+- Reshape the models or the toy-shop backdrop: `Models.luau` and the shop
+  section of `Scene.luau`. Camera angle, lighting and reveal timing: the
+  constants at the top of `Scene.luau`.
 
 Lint before you commit:
 

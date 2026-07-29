@@ -351,7 +351,7 @@ local function playReveal(squishyId: string)
 	local tier = rarityTier[squishy.rarity] or 1
 	local rarityColor = rarity and rarity.color or COLOR.gold
 
-	Scene.open(squishy.color, squishy.sparkle, rarityColor, tier)
+	Scene.open(squishy.shape, squishy.color, squishy.sparkle, rarityColor, tier)
 
 	local banner = make("TextLabel", {
 		Size = UDim2.new(0, 320, 0, 56),

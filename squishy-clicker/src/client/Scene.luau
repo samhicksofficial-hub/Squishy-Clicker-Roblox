@@ -33,8 +33,7 @@ local CAMERA_POS = ORIGIN + Vector3.new(0.5, 5.0, 16.5)
 local CAMERA_LOOK = ORIGIN + Vector3.new(1.9, 3.0, 0)
 local FIELD_OF_VIEW = 50
 
-local BACKDROP_COLOR = Color3.fromRGB(240, 222, 206)
-local FLOOR_COLOR = Color3.fromRGB(228, 204, 182)
+local BACKDROP_COLOR = Color3.fromRGB(240, 222, 206) -- invisible helper parts only
 
 local LID_REST_Y = 2.15 -- where the lid sits on the tub
 -- Low enough that the dumpling sits entirely below the tub's interior floor at
@@ -67,6 +66,9 @@ end
 local squash = spring(190, 15) -- the whole steamer compressing on a click
 local lidLift = spring(55, 8.5)
 local lidTilt = spring(48, 8)
+-- Slides the lid SIDEWAYS during a reveal. Without it the lid hovers directly
+-- over the risen squishy and hides the whole show from the camera.
+local lidSide = spring(38, 7.5)
 local rise = spring(70, 11) -- dumpling climbing out, 0..1
 local jiggle = spring(150, 11)
 local glow = spring(90, 12)
@@ -102,10 +104,99 @@ local function block(size: Vector3, position: Vector3, color: Color3): Part
 	return part
 end
 
--- A cream wall and floor turn the open sky into a soft studio that matches the
--- UI behind it, and give the steamer something to cast a shadow onto.
-block(Vector3.new(110, 66, 0.5), ORIGIN + Vector3.new(0, 24, -20), BACKDROP_COLOR)
-block(Vector3.new(110, 0.5, 60), ORIGIN + Vector3.new(0, -0.25, -6), FLOOR_COLOR)
+-- ---------- the toy shop ----------
+-- A stylised toy store behind the steamer: teal walls, white pillars, a
+-- skylight band, shelves of colourful boxes and a high ledge of plush balls.
+-- Deliberately chunky and low-detail — a DepthOfField effect blurs it into a
+-- soft backdrop while the steamer is the focus, so silhouettes and colour are
+-- all that survive anyway. Seeded Random keeps the clutter identical every run.
+local shopRandom = Random.new(7)
+local TOY_COLORS = {
+	Color3.fromRGB(232, 82, 82),
+	Color3.fromRGB(245, 166, 60),
+	Color3.fromRGB(248, 214, 80),
+	Color3.fromRGB(110, 200, 110),
+	Color3.fromRGB(88, 160, 230),
+	Color3.fromRGB(170, 120, 230),
+	Color3.fromRGB(240, 130, 190),
+	Color3.fromRGB(250, 246, 240),
+}
+local function toyColor(): Color3
+	return TOY_COLORS[shopRandom:NextInteger(1, #TOY_COLORS)]
+end
+
+-- Wooden floor
+local shopFloor = block(Vector3.new(110, 0.5, 60), ORIGIN + Vector3.new(0, -0.25, -6), Color3.fromRGB(206, 172, 134))
+shopFloor.Material = Enum.Material.WoodPlanks
+
+-- Teal back wall with a white upper band and skylight strip above
+local wall = block(Vector3.new(110, 13, 0.8), ORIGIN + Vector3.new(0, 6.5, -16), Color3.fromRGB(62, 178, 186))
+wall.Material = Enum.Material.SmoothPlastic
+block(Vector3.new(110, 3.2, 0.8), ORIGIN + Vector3.new(0, 14.6, -16), Color3.fromRGB(248, 246, 242))
+local skylight = block(Vector3.new(110, 6, 0.6), ORIGIN + Vector3.new(0, 19.2, -15.8), Color3.fromRGB(198, 224, 242))
+skylight.Material = Enum.Material.Glass
+for i = -5, 5 do -- skylight mullions
+	block(Vector3.new(0.5, 6, 0.7), ORIGIN + Vector3.new(i * 9, 19.2, -15.7), Color3.fromRGB(248, 246, 242))
+end
+
+-- White pillars against the wall
+for _, x in { -13, -4.5, 4.5, 13 } do
+	block(Vector3.new(1.4, 16.2, 1.2), ORIGIN + Vector3.new(x, 8.1, -15.3), Color3.fromRGB(250, 248, 244))
+end
+
+-- High ledge with the rainbow plush row, like the balcony in the reference
+block(Vector3.new(110, 0.5, 2.4), ORIGIN + Vector3.new(0, 12.6, -14.8), Color3.fromRGB(250, 248, 244))
+for i = 1, 14 do
+	local plush = Instance.new("Part")
+	plush.Shape = Enum.PartType.Ball
+	local diameter = shopRandom:NextNumber(1.5, 2.2)
+	plush.Size = Vector3.new(diameter, diameter, diameter)
+	plush.Position = ORIGIN + Vector3.new(-26 + i * 3.7, 12.85 + diameter / 2, -14.8)
+	plush.Color = Color3.fromHSV((i - 1) / 14, 0.62, 0.95)
+	plush.Material = Enum.Material.SmoothPlastic
+	plush.Anchored = true
+	plush.CanCollide = false
+	plush.CanQuery = false
+	plush.CanTouch = false
+	plush.Parent = stage
+end
+
+-- Shelf gondolas stacked with colourful toy boxes
+for _, shelfX in { -13, -5, 3.5, 12 } do
+	local shelfZ = -11.5
+	for side = -1, 1, 2 do -- white end panels
+		block(Vector3.new(0.35, 6.0, 2.0), ORIGIN + Vector3.new(shelfX + side * 3.1, 3.0, shelfZ), Color3.fromRGB(250, 248, 244))
+	end
+	for level = 0, 2 do
+		local boardY = 1.1 + level * 1.9
+		block(Vector3.new(6.2, 0.28, 1.9), ORIGIN + Vector3.new(shelfX, boardY, shelfZ), Color3.fromRGB(222, 196, 158))
+		local cursor = -2.6
+		while cursor < 2.2 do
+			local width = shopRandom:NextNumber(0.6, 1.2)
+			local height = shopRandom:NextNumber(0.7, 1.4)
+			block(
+				Vector3.new(width, height, shopRandom:NextNumber(0.5, 1.0)),
+				ORIGIN + Vector3.new(shelfX + cursor + width / 2, boardY + 0.14 + height / 2, shelfZ),
+				toyColor()
+			)
+			cursor += width + shopRandom:NextNumber(0.1, 0.5)
+		end
+	end
+end
+
+-- The blur that fades the shop out behind the steamer. Everything nearer than
+-- the focus distance (the steamer) stays sharp; the shop sits well past it.
+local depthOfField = Instance.new("DepthOfFieldEffect")
+depthOfField.FocusDistance = 17
+depthOfField.InFocusRadius = 8
+depthOfField.FarIntensity = 0.6
+depthOfField.NearIntensity = 0
+depthOfField.Parent = Lighting
+
+-- For a future free-roam mode: pass false to snap the shop into focus.
+function Scene.setBackdropFaded(faded: boolean)
+	depthOfField.FarIntensity = faded and 0.6 or 0
+end
 
 -- Contact shadow: without it the steamer looks like it is floating.
 local contact = Instance.new("Part")
@@ -123,7 +214,16 @@ contact.Parent = stage
 
 local baseRig = Models.buildSteamerBase(stage)
 local lidRig = Models.buildSteamerLid(stage)
-local dumpling = Models.buildDumpling(stage)
+
+-- The squishy inside the steamer. Rebuilt on every open so each reveal shows
+-- the actual shape that was rolled — a banana looks like a banana. The
+-- placeholder dumpling just fills the tub before the first open.
+local squishyModel = Models.buildSquishy(stage, "dumpling", Color3.fromRGB(226, 190, 142), false)
+
+local function swapSquishy(shape: string?, color: Color3, sparkle: boolean)
+	squishyModel.rig.folder:Destroy()
+	squishyModel = Models.buildSquishy(stage, shape, color, sparkle)
+end
 
 -- ---------- lights and particles ----------
 
@@ -290,6 +390,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	advance(squash, dt)
 	advance(lidLift, dt)
 	advance(lidTilt, dt)
+	advance(lidSide, dt)
 	advance(rise, dt)
 	advance(jiggle, dt)
 	advance(glow, dt)
@@ -320,25 +421,25 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	local lidY = LID_REST_Y * baseScale.Y + bob + lidLift.value
 	Models.apply(
 		lidRig,
-		CFrame.new(ORIGIN + Vector3.new(rattle, lidY, 0))
+		CFrame.new(ORIGIN + Vector3.new(rattle + lidSide.value, lidY, 0))
 			* CFrame.fromEulerAnglesXYZ(lidTilt.value, lidSpin, lidTilt.value * 0.55),
 		lidScale
 	)
 
 	mouth.CFrame = CFrame.new(ORIGIN + Vector3.new(rattle, LID_REST_Y * baseScale.Y + bob, 0))
 
-	-- The dumpling sits down inside the tub at rest, hidden by its own walls,
+	-- The squishy sits down inside the tub at rest, hidden by its own walls,
 	-- so it needs no showing and hiding — it just climbs out and drops back.
 	local risen = rise.value
 	local jg = jiggle.value
-	local dumplingY = DUMPLING_HIDDEN_Y + (DUMPLING_RISEN_Y - DUMPLING_HIDDEN_Y) * risen
+	local squishyY = DUMPLING_HIDDEN_Y + (DUMPLING_RISEN_Y - DUMPLING_HIDDEN_Y) * risen
 	Models.apply(
-		dumpling.rig,
-		CFrame.new(ORIGIN + Vector3.new(0, dumplingY + math.sin(elapsed * 3) * 0.08 * risen, 0))
+		squishyModel.rig,
+		CFrame.new(ORIGIN + Vector3.new(0, squishyY + math.sin(elapsed * 3) * 0.08 * risen, 0))
 			* CFrame.fromEulerAnglesXYZ(0, dumplingSpin, math.sin(elapsed * 2.2) * 0.05 * risen),
 		Vector3.new(1 + jg * 0.18, 1 - jg * 0.22, 1 + jg * 0.18)
 	)
-	dumpling.billboard.Enabled = risen > 0.06
+	squishyModel.billboard.Enabled = risen > 0.06
 
 	glowLight.Brightness = math.max(glow.value, 0)
 
@@ -388,13 +489,15 @@ end
 -- tier is the squishy's rarity rank, 1 for Common up to 6 for Mythical. The
 -- whole show scales off it, so adding a rarity in Squishies.luau automatically
 -- gets a bigger reveal than the one below it.
-function Scene.open(bodyColor: Color3, sparkle: boolean, rarityColor: Color3, tier: number)
-	Models.paintDumpling(dumpling, bodyColor, sparkle)
+function Scene.open(shape: string?, bodyColor: Color3, sparkle: boolean, rarityColor: Color3, tier: number)
+	swapSquishy(shape, bodyColor, sparkle)
 
-	-- The lift used to peak at 8.7 studs, which threw the lid clean out of
-	-- frame; the whole show now has to fit under the camera's ceiling.
+	-- Up AND well off to the side: a lid that only rises hovers directly over
+	-- the squishy and hides it from the camera. It slides left because the
+	-- camera aims right of centre, so left is the emptier half of the frame.
 	lidLift.target = 2.6 + tier * 0.4
-	lidTilt.target = 0.55
+	lidSide.target = -4.4 - tier * 0.25
+	lidTilt.target = 0.7
 	lidSpinVelocity = 7 + tier * 2.5
 	rise.target = 1
 	kick(jiggle, 1)
@@ -405,7 +508,7 @@ function Scene.open(bodyColor: Color3, sparkle: boolean, rarityColor: Color3, ti
 	burst.Color = ColorSequence.new(rarityColor)
 	burst:Emit(16 + tier * 22)
 
-	dumpling.sparkles.Enabled = sparkle
+	squishyModel.sparkles.Enabled = sparkle
 
 	-- Epic and up get the full treatment: rays behind, and a shove to the camera.
 	if tier >= 4 then
@@ -430,15 +533,16 @@ function Scene.open(bodyColor: Color3, sparkle: boolean, rarityColor: Color3, ti
 		rise.target = 0
 		glow.target = 0
 		rayGlow.target = 0
-		dumpling.sparkles.Enabled = false
+		squishyModel.sparkles.Enabled = false
 
-		-- The lid waits for the dumpling to be back inside before dropping,
+		-- The lid waits for the squishy to be back inside before dropping,
 		-- otherwise it closes straight through it.
 		task.delay(0.3, function()
 			if token ~= revealToken then
 				return
 			end
 			lidLift.target = 0
+			lidSide.target = 0
 			lidTilt.target = 0
 		end)
 	end)
