@@ -26,12 +26,18 @@ local Scene = {}
 -- The stage lives high above the map so whatever is in the place already —
 -- baseplate, spawn, the player's own character — stays out of frame.
 local ORIGIN = Vector3.new(0, 500, 0)
--- Aiming to the RIGHT of the steamer pushes it left on screen, clear of the
--- collection panel. Aim height splits the difference between the tub and the
--- risen dumpling so the whole reveal stays in frame.
+-- The MAIN view frames the squisher on its cushion; the camera never moves,
+-- it only turns. Aim height splits the difference between the cushion and the
+-- risen squishy so reveals stay in frame after the turn.
 local CAMERA_POS = ORIGIN + Vector3.new(0.5, 5.0, 16.5)
 local CAMERA_LOOK = ORIGIN + Vector3.new(1.9, 3.0, 0)
+local BASE_LOOK_DIR = CAMERA_LOOK - CAMERA_POS
 local FIELD_OF_VIEW = 50
+
+-- The steamer lives in its own nook, exactly 90° to the camera's LEFT — the
+-- position is ORIGIN rotated 90° around the camera, so after the turn the
+-- steamer occupies the same spot on screen the squisher does in the main view.
+local STEAMER_ORIGIN = ORIGIN + Vector3.new(-16, 0, 17)
 
 local BACKDROP_COLOR = Color3.fromRGB(240, 222, 206) -- invisible helper parts only
 
@@ -64,6 +70,7 @@ local function kick(s: Spring, amount: number)
 end
 
 local squash = spring(190, 15) -- the whole steamer compressing on a click
+local clickerSquash = spring(210, 13) -- the click toy, squishing harder
 local lidLift = spring(55, 8.5)
 local lidTilt = spring(48, 8)
 -- Slides the lid SIDEWAYS during a reveal. Without it the lid hovers directly
@@ -73,6 +80,10 @@ local rise = spring(70, 11) -- dumpling climbing out, 0..1
 local jiggle = spring(150, 11)
 local glow = spring(90, 12)
 local rayGlow = spring(40, 9)
+
+-- 0 = facing the squisher, 1 = turned 90° left to the steamer nook. Springy
+-- so the turn eases out with a hint of overshoot instead of lerping flatly.
+local viewYaw = spring(30, 10)
 
 local lidSpin = 0
 local lidSpinVelocity = 0
@@ -125,8 +136,8 @@ local function toyColor(): Color3
 	return TOY_COLORS[shopRandom:NextInteger(1, #TOY_COLORS)]
 end
 
--- Wooden floor
-local shopFloor = block(Vector3.new(110, 0.5, 60), ORIGIN + Vector3.new(0, -0.25, -6), Color3.fromRGB(206, 172, 134))
+-- Wooden floor, big enough to run under both the main view and the steamer nook
+local shopFloor = block(Vector3.new(110, 0.5, 100), ORIGIN + Vector3.new(0, -0.25, 0), Color3.fromRGB(206, 172, 134))
 shopFloor.Material = Enum.Material.WoodPlanks
 
 -- Teal back wall with a white upper band and skylight strip above
@@ -184,8 +195,19 @@ for _, shelfX in { -13, -5, 3.5, 12 } do
 	end
 end
 
--- The blur that fades the shop out behind the steamer. Everything nearer than
--- the focus distance (the steamer) stays sharp; the shop sits well past it.
+-- The steamer nook: the wall the camera faces after the 90° turn left. Same
+-- teal-and-skylight language as the main wall, meeting it in an L corner.
+local unboxWall = block(Vector3.new(0.8, 13, 56), ORIGIN + Vector3.new(-32, 6.5, 12), Color3.fromRGB(62, 178, 186))
+unboxWall.Material = Enum.Material.SmoothPlastic
+block(Vector3.new(0.8, 3.2, 56), ORIGIN + Vector3.new(-32, 14.6, 12), Color3.fromRGB(248, 246, 242))
+local unboxSkylight = block(Vector3.new(0.6, 6, 56), ORIGIN + Vector3.new(-31.8, 19.2, 12), Color3.fromRGB(198, 224, 242))
+unboxSkylight.Material = Enum.Material.Glass
+for _, z in { -2, 12, 26 } do
+	block(Vector3.new(1.2, 16.2, 1.4), ORIGIN + Vector3.new(-31.3, 8.1, z), Color3.fromRGB(250, 248, 244))
+end
+
+-- The blur that fades the shop out behind the squisher and the steamer.
+-- Everything nearer than the focus distance stays sharp; the walls sit past it.
 local depthOfField = Instance.new("DepthOfFieldEffect")
 depthOfField.FocusDistance = 17
 depthOfField.InFocusRadius = 8
@@ -202,7 +224,7 @@ end
 local contact = Instance.new("Part")
 contact.Shape = Enum.PartType.Cylinder
 contact.Size = Vector3.new(0.06, 6.4, 6.4)
-contact.CFrame = CFrame.new(ORIGIN + Vector3.new(0, 0.05, 0)) * CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
+contact.CFrame = CFrame.new(STEAMER_ORIGIN + Vector3.new(0, 0.05, 0)) * CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
 contact.Color = Color3.fromRGB(120, 92, 70)
 contact.Transparency = 0.72
 contact.Material = Enum.Material.SmoothPlastic
@@ -224,6 +246,28 @@ local function swapSquishy(shape: string?, color: Color3, sparkle: boolean)
 	squishyModel.rig.folder:Destroy()
 	squishyModel = Models.buildSquishy(stage, shape, color, sparkle)
 end
+
+-- ---------- the click toy ----------
+-- The player's chosen squishy IS the main clicker: it sits centre stage on a
+-- big cushion, alone in frame, and squishes with every click. The steamer is
+-- off in its nook, out of view until an unbox turns the camera.
+
+local CLICKER_POS = ORIGIN + Vector3.new(1.9, 1.75, 3.0)
+local CLICKER_SCALE = 1.35 -- centrepiece, so a touch bigger than the reveal size
+
+local cushion = Instance.new("Part")
+cushion.Shape = Enum.PartType.Cylinder
+cushion.Size = Vector3.new(0.45, 4.4, 4.4)
+cushion.CFrame = CFrame.new(ORIGIN + Vector3.new(1.9, 0.2, 3.0)) * CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
+cushion.Color = Color3.fromRGB(243, 200, 210)
+cushion.Material = Enum.Material.Fabric
+cushion.Anchored = true
+cushion.CanCollide = false
+cushion.CanQuery = false
+cushion.CanTouch = false
+cushion.Parent = stage
+
+local clickerModel: Models.SquishyModel? = nil
 
 -- ---------- lights and particles ----------
 
@@ -253,6 +297,16 @@ keyLight.Range = 44
 keyLight.Color = Color3.fromRGB(255, 240, 214)
 keyLight.Shadows = false
 keyLight.Parent = keyLightHost
+
+-- Matching key light for the steamer nook, so the unbox view isn't dimmer.
+local nookLightHost = block(Vector3.new(0.2, 0.2, 0.2), STEAMER_ORIGIN + Vector3.new(6, 9, 5), BACKDROP_COLOR)
+nookLightHost.Transparency = 1
+local nookLight = Instance.new("PointLight")
+nookLight.Brightness = 0.45
+nookLight.Range = 44
+nookLight.Color = Color3.fromRGB(255, 240, 214)
+nookLight.Shadows = false
+nookLight.Parent = nookLightHost
 
 -- Everything that erupts out of the steamer hangs off this one tiny invisible
 -- part, which we keep parked at the tub's mouth as the steamer bounces around.
@@ -342,6 +396,32 @@ local clickSound = newSound(0.11)
 local openSound = newSound(0.38)
 local lastClickSound = 0
 
+-- Every squishy gets its own squish noise: the base sound comes from what the
+-- shape is made of, and a hash of the id detunes the pitch so no two squishies
+-- sound quite alike.
+local clickerSound = newSound(0.3)
+local clickerBasePitch = 1
+
+local SQUISH_SOUNDS: { [string]: { id: string, pitch: number } } = {
+	jellycube = { id = "rbxasset://sounds/impact_water.mp3", pitch = 1.5 },
+	ball = { id = "rbxasset://sounds/impact_water.mp3", pitch = 1.3 },
+	blobfish = { id = "rbxasset://sounds/impact_water.mp3", pitch = 1.1 },
+	baby = { id = "rbxasset://sounds/impact_water.mp3", pitch = 1.4 },
+	drop = { id = "rbxasset://sounds/electronicpingshort.wav", pitch = 1.1 },
+	donut = { id = "rbxasset://sounds/electronicpingshort.wav", pitch = 0.9 },
+	default = { id = "rbxasset://sounds/impact_water.mp3", pitch = 1.7 },
+}
+
+local function tuneClickerSound(shape: string?, id: string)
+	local entry = SQUISH_SOUNDS[shape or "default"] or SQUISH_SOUNDS.default
+	local hash = 0
+	for i = 1, #id do
+		hash = (hash * 31 + string.byte(id, i)) % 1000
+	end
+	clickerSound.SoundId = entry.id
+	clickerBasePitch = entry.pitch + (hash / 1000) * 0.35
+end
+
 -- ---------- camera ----------
 
 -- The default camera scripts have to be told to stand down, and the player's
@@ -388,6 +468,8 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	elapsed += dt
 
 	advance(squash, dt)
+	advance(clickerSquash, dt)
+	advance(viewYaw, dt)
 	advance(lidLift, dt)
 	advance(lidTilt, dt)
 	advance(lidSide, dt)
@@ -407,10 +489,14 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	local bob = math.sin(elapsed * 1.6) * 0.06
 	local sq = squash.value
 
+	-- The steamer lives in the nook the camera faces after the 90° left turn.
+	-- That camera looks down -X, so its screen-horizontal is the world Z axis:
+	-- every sideways motion (rattle, the lid's side-throw) rides Z here, and
+	-- lidSide is negated because screen-left for that camera is +Z.
 	local baseScale = Vector3.new(1 + sq * 0.13, 1 - sq * 0.19, 1 + sq * 0.13)
 	Models.apply(
 		baseRig,
-		CFrame.new(ORIGIN + Vector3.new(rattle, bob, 0))
+		CFrame.new(STEAMER_ORIGIN + Vector3.new(0, bob, rattle))
 			* CFrame.fromEulerAnglesXYZ(0, math.sin(elapsed * 0.5) * 0.06, rattle * 0.05),
 		baseScale
 	)
@@ -421,12 +507,12 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	local lidY = LID_REST_Y * baseScale.Y + bob + lidLift.value
 	Models.apply(
 		lidRig,
-		CFrame.new(ORIGIN + Vector3.new(rattle + lidSide.value, lidY, 0))
+		CFrame.new(STEAMER_ORIGIN + Vector3.new(0, lidY, rattle - lidSide.value))
 			* CFrame.fromEulerAnglesXYZ(lidTilt.value, lidSpin, lidTilt.value * 0.55),
 		lidScale
 	)
 
-	mouth.CFrame = CFrame.new(ORIGIN + Vector3.new(rattle, LID_REST_Y * baseScale.Y + bob, 0))
+	mouth.CFrame = CFrame.new(STEAMER_ORIGIN + Vector3.new(0, LID_REST_Y * baseScale.Y + bob, rattle))
 
 	-- The squishy sits down inside the tub at rest, hidden by its own walls,
 	-- so it needs no showing and hiding — it just climbs out and drops back.
@@ -435,21 +521,35 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	local squishyY = DUMPLING_HIDDEN_Y + (DUMPLING_RISEN_Y - DUMPLING_HIDDEN_Y) * risen
 	Models.apply(
 		squishyModel.rig,
-		CFrame.new(ORIGIN + Vector3.new(0, squishyY + math.sin(elapsed * 3) * 0.08 * risen, 0))
+		CFrame.new(STEAMER_ORIGIN + Vector3.new(0, squishyY + math.sin(elapsed * 3) * 0.08 * risen, 0))
 			* CFrame.fromEulerAnglesXYZ(0, dumplingSpin, math.sin(elapsed * 2.2) * 0.05 * risen),
 		Vector3.new(1 + jg * 0.18, 1 - jg * 0.22, 1 + jg * 0.18)
 	)
 	squishyModel.billboard.Enabled = risen > 0.06
 
+	-- The click toy on its cushion: idle breathing, hard squash on clicks.
+	local toy = clickerModel
+	if toy then
+		local cs = clickerSquash.value
+		Models.apply(
+			toy.rig,
+			CFrame.new(CLICKER_POS + Vector3.new(0, math.sin(elapsed * 2.1) * 0.05, 0))
+				* CFrame.fromEulerAnglesXYZ(0, math.sin(elapsed * 1.3) * 0.08, 0),
+			Vector3.new(1 + cs * 0.28, 1 - cs * 0.34, 1 + cs * 0.28) * CLICKER_SCALE
+		)
+	end
+
 	glowLight.Brightness = math.max(glow.value, 0)
 
+	-- Rays fan in the Y-Z plane (spinning about X) because the nook camera
+	-- looks down -X; pivoting at -X puts them behind the risen squishy.
 	local rayAlpha = math.clamp(rayGlow.value, 0, 1)
-	local rayPivot = CFrame.new(ORIGIN + Vector3.new(0, DUMPLING_RISEN_Y, -1.4))
+	local rayPivot = CFrame.new(STEAMER_ORIGIN + Vector3.new(-1.4, DUMPLING_RISEN_Y, 0))
 	for index, ray in rays do
 		local angle = elapsed * 0.55 + (index / #rays) * math.pi * 2
 		local length = math.max(9 * rayAlpha, 0.05)
 		ray.Size = Vector3.new(0.24, length, 0.24)
-		ray.CFrame = rayPivot * CFrame.fromEulerAnglesXYZ(0, 0, angle) * CFrame.new(0, length * 0.5 + 1.6, 0)
+		ray.CFrame = rayPivot * CFrame.fromEulerAnglesXYZ(angle, 0, 0) * CFrame.new(0, length * 0.5 + 1.6, 0)
 		ray.Transparency = 1 - rayAlpha * 0.7
 	end
 
@@ -458,28 +558,65 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		if camera.CameraType ~= Enum.CameraType.Scriptable then
 			camera.CameraType = Enum.CameraType.Scriptable
 		end
-		local jolt = Vector3.new((math.random() - 0.5) * shake, (math.random() - 0.5) * shake, 0)
-		camera.CFrame = CFrame.lookAt(CAMERA_POS + jolt, CAMERA_LOOK)
+		-- The camera stands still and TURNS: viewYaw 0 faces the squisher,
+		-- 1 is 90° left onto the steamer nook. (+yaw about Y turns left.)
+		local yaw = math.clamp(viewYaw.value, -0.15, 1.15) * math.rad(90)
+		local dir = CFrame.fromEulerAnglesXYZ(0, yaw, 0):VectorToWorldSpace(BASE_LOOK_DIR)
+		-- Shake in view space, so it reads as shake from either angle.
+		local right = dir:Cross(Vector3.new(0, 1, 0)).Unit
+		local jolt = right * ((math.random() - 0.5) * shake) + Vector3.new(0, (math.random() - 0.5) * shake, 0)
+		camera.CFrame = CFrame.lookAt(CAMERA_POS + jolt, CAMERA_POS + jolt + dir)
 		-- A hair of punch-in on every click, too small to notice and too big to
 		-- do without.
-		camera.FieldOfView = FIELD_OF_VIEW - sq * 1.2
+		camera.FieldOfView = FIELD_OF_VIEW - math.max(sq, clickerSquash.value) * 1.2
 	end
 end)
 
 -- ---------- what init.client.luau calls ----------
 
+-- Turn the camera: "unbox" swings 90° left onto the steamer nook, anything
+-- else swings back to the squisher.
+function Scene.setView(view: string)
+	viewYaw.target = view == "unbox" and 1 or 0
+end
+
 function Scene.click()
 	kick(squash, 1)
-	steam:Emit(2)
 
 	-- Rising pitch as the bar fills. Rate limited so a held-down mouse does not
 	-- turn into a machine gun.
 	local now = os.clock()
 	if now - lastClickSound > 0.05 then
 		lastClickSound = now
-		clickSound.PlaybackSpeed = 1.2 + progress * 0.6
-		clickSound:Play()
+		if clickerModel then
+			clickerSound.PlaybackSpeed = clickerBasePitch + progress * 0.3
+			clickerSound:Play()
+		else
+			clickSound.PlaybackSpeed = 1.2 + progress * 0.6
+			clickSound:Play()
+		end
 	end
+
+	if clickerModel then
+		kick(clickerSquash, 1)
+	end
+end
+
+-- Equip an owned squishy as the click toy on the cushion.
+function Scene.setClicker(shape: string?, color: Color3, sparkle: boolean, id: string)
+	local previous = clickerModel
+	if previous then
+		previous.rig.folder:Destroy()
+	end
+
+	local toy = Models.buildSquishy(stage, shape, color, sparkle)
+	toy.billboard.Enabled = true
+	toy.sparkles.Rate = 6 -- gentler than the reveal sparkle shower
+	toy.sparkles.Enabled = sparkle
+	clickerModel = toy
+
+	tuneClickerSound(shape, id)
+	kick(clickerSquash, 1) -- welcome squish
 end
 
 function Scene.setProgress(fraction: number)

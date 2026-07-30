@@ -7,10 +7,17 @@ automatically.
 
 ## The core loop
 
-Every steamer you open makes the **next one cost more clicks**, forever. Stars
-are the answer: each one shaves a percentage off the price. Prestige steadily and
-you stay roughly level; hoard copies without spending them and you grind slower
-and slower. That tug-of-war is the whole game.
+Filling the bar **banks** a steamer into the Unbox tray — opening it is its own
+button, its own moment. Every steamer you *open* makes the next one cost more
+clicks, forever (banked ones are safe to hoard). Stars are the answer: each one
+shaves a percentage off the price. Prestige steadily and you stay roughly
+level; hoard copies without spending them and you grind slower and slower.
+
+Your **squisher** is the star of the screen and the thing every click squishes.
+Everyone starts with a Red Dumpling; tap any discovered squishy's face in the
+collection to swap it, and every squishy has its own squish noise. The steamer
+waits in its own nook 90° to the left — pressing Unbox turns the camera to it
+for the reveal, then turns back.
 
 ## The files
 

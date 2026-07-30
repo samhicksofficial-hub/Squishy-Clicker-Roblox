@@ -36,6 +36,16 @@ local SteamerOpened = Instance.new("RemoteEvent")
 SteamerOpened.Name = "SteamerOpened"
 SteamerOpened.Parent = Remotes
 
+-- Client asks to open one of its banked steamers.
+local UnboxSteamer = Instance.new("RemoteEvent")
+UnboxSteamer.Name = "UnboxSteamer"
+UnboxSteamer.Parent = Remotes
+
+-- Client picks which owned squishy is its click toy: (squishyId)
+local SetClicker = Instance.new("RemoteEvent")
+SetClicker.Name = "SetClicker"
+SetClicker.Parent = Remotes
+
 local SyncData = Instance.new("RemoteEvent")
 SyncData.Name = "SyncData"
 SyncData.Parent = Remotes
@@ -46,6 +56,8 @@ type PlayerData = {
 	stars: { [string]: number },  -- star level (0-5) per squishy
 	clickProgress: number,        -- clicks toward the next open
 	totalOpens: number,           -- lifetime steamers opened (for leaderboard)
+	unopened: number,             -- banked steamers waiting in the Unbox tray
+	clickerId: string?,           -- which owned squishy is the click toy
 	lastSecondBucket: number,     -- click rate limiting
 	clicksThisSecond: number,
 }
@@ -117,6 +129,8 @@ local function sync(player: Player)
 		clicksToOpen = clicksToOpen(data),
 		totalOpens = data.totalOpens,
 		totalStars = totalStars(data),
+		unopened = data.unopened,
+		clickerId = data.clickerId,
 	})
 end
 
@@ -138,7 +152,14 @@ end
 -- ---------- Join / leave ----------
 
 local function loadData(player: Player): PlayerData
-	local loaded: { counts: { [string]: number }?, stars: { [string]: number }?, totalOpens: number? }? = nil
+	local loaded: {
+		counts: { [string]: number }?,
+		stars: { [string]: number }?,
+		totalOpens: number?,
+		unopened: number?,
+		clickerId: string?,
+	}? =
+		nil
 
 	local activeStore = store
 	if activeStore then
@@ -152,14 +173,28 @@ local function loadData(player: Player): PlayerData
 		end
 	end
 
-	return {
+	local data: PlayerData = {
 		counts = loaded and loaded.counts or {},
 		stars = loaded and loaded.stars or {},
 		clickProgress = 0,
 		totalOpens = loaded and loaded.totalOpens or 0,
+		unopened = loaded and loaded.unopened or 0,
+		clickerId = loaded and loaded.clickerId or nil,
 		lastSecondBucket = 0,
 		clicksThisSecond = 0,
 	}
+
+	-- Starter gift: the squisher IS the main clicker, so nobody may start
+	-- without one. Everyone gets a Red Dumpling; players who never picked a
+	-- squisher get it equipped (and granted, if they somehow don't own it).
+	if data.clickerId == nil then
+		if (data.counts.red or 0) <= 0 and (data.stars.red or 0) <= 0 then
+			data.counts.red = 1
+		end
+		data.clickerId = "red"
+	end
+
+	return data
 end
 
 local function saveData(player: Player)
@@ -173,6 +208,8 @@ local function saveData(player: Player)
 			counts = data.counts,
 			stars = data.stars,
 			totalOpens = data.totalOpens,
+			unopened = data.unopened,
+			clickerId = data.clickerId,
 		})
 	end)
 	if not ok then
@@ -241,17 +278,52 @@ ClickSteamer.OnServerEvent:Connect(function(player)
 	data.clickProgress += 1
 
 	if data.clickProgress >= clicksToOpen(data) then
-		-- The steamer opens! Roll the squishy server-side.
+		-- Full! The steamer is BANKED, not opened: it waits in the Unbox
+		-- tray so opening is its own moment — and its own choice.
 		data.clickProgress = 0
-		data.totalOpens += 1
-
-		local squishy = Squishies.roll(rng)
-		data.counts[squishy.id] = (data.counts[squishy.id] or 0) + 1
-
-		SteamerOpened:FireClient(player, squishy.id)
-		updateLeaderstats(player)
+		data.unopened += 1
 	end
 
+	sync(player)
+end)
+
+-- ---------- unboxing a banked steamer ----------
+
+UnboxSteamer.OnServerEvent:Connect(function(player)
+	local data = dataByPlayer[player]
+	if not data or data.unopened <= 0 then
+		return
+	end
+
+	data.unopened -= 1
+	-- The treadmill ticks on the OPEN, not the bank: hoarding unopened
+	-- steamers never makes the current one more expensive.
+	data.totalOpens += 1
+
+	local squishy = Squishies.roll(rng)
+	data.counts[squishy.id] = (data.counts[squishy.id] or 0) + 1
+
+	SteamerOpened:FireClient(player, squishy.id)
+	updateLeaderstats(player)
+	sync(player)
+end)
+
+-- ---------- choosing the click toy ----------
+
+SetClicker.OnServerEvent:Connect(function(player, squishyId)
+	local data = dataByPlayer[player]
+	if not data or typeof(squishyId) ~= "string" then
+		return
+	end
+	if not Squishies.byId[squishyId] then
+		return
+	end
+	-- You can only squish what you own (copies in hand, or prestiged away).
+	if (data.counts[squishyId] or 0) <= 0 and (data.stars[squishyId] or 0) <= 0 then
+		return
+	end
+
+	data.clickerId = squishyId
 	sync(player)
 end)
 

@@ -29,6 +29,8 @@ local ClickSteamer = Remotes:WaitForChild("ClickSteamer") :: RemoteEvent
 local PrestigeSquishy = Remotes:WaitForChild("PrestigeSquishy") :: RemoteEvent
 local SteamerOpened = Remotes:WaitForChild("SteamerOpened") :: RemoteEvent
 local SyncData = Remotes:WaitForChild("SyncData") :: RemoteEvent
+local UnboxSteamer = Remotes:WaitForChild("UnboxSteamer") :: RemoteEvent
+local SetClicker = Remotes:WaitForChild("SetClicker") :: RemoteEvent
 
 -- ---------- palette ----------
 local COLOR = {
@@ -50,6 +52,8 @@ local state = {
 	clicksToOpen = Config.BaseClicksToOpen,
 	totalOpens = 0,
 	totalStars = 0,
+	unopened = 0,
+	clickerId = nil :: string?,
 }
 
 -- Rarity rank (Common = 1 ... Mythical = 6). The reveal scales off this.
@@ -171,7 +175,7 @@ make("TextLabel", {
 	Position = UDim2.new(0, 24, 1, -116),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamMedium,
-	Text = "tap anywhere to work the steamer",
+	Text = "tap anywhere to squish!",
 	TextColor3 = COLOR.text,
 	TextTransparency = 0.25,
 	TextSize = 15,
@@ -179,6 +183,40 @@ make("TextLabel", {
 	ZIndex = 2,
 	Parent = gui,
 })
+
+-- ---------- the Unbox tray ----------
+-- Filling the bar BANKS a steamer instead of opening it; this button spends
+-- one. Sits right of the progress bar so the loop reads left to right:
+-- fill the bar, then unbox.
+local unboxButton = make("TextButton", {
+	Size = UDim2.new(0, 160, 0, 44),
+	Position = UDim2.new(0, 336, 1, -100),
+	BackgroundColor3 = COLOR.locked,
+	AutoButtonColor = false,
+	Font = Enum.Font.FredokaOne,
+	Text = "🥡 Unbox (0)",
+	TextColor3 = COLOR.text,
+	TextSize = 18,
+	ZIndex = 2,
+	Parent = gui,
+})
+corner(14, unboxButton)
+
+-- Guards the swing back to the squisher: another unbox press bumps the token,
+-- so a queued "return to main view" from an earlier reveal quietly gives up.
+local viewToken = 0
+
+unboxButton.Activated:Connect(function()
+	if state.unopened <= 0 then
+		return
+	end
+	viewToken += 1
+	Scene.setView("unbox")
+	-- Let the camera land on the steamer before the lid pops.
+	task.delay(0.55, function()
+		UnboxSteamer:FireServer()
+	end)
+end)
 
 -- Spells out the treadmill, so a rising requirement reads as a mechanic rather
 -- than a bug.
@@ -210,7 +248,7 @@ local panel = make("Frame", {
 corner(20, panel)
 
 make("TextLabel", {
-	Size = UDim2.new(1, 0, 0, 40),
+	Size = UDim2.new(1, 0, 0, 32),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.FredokaOne,
 	Text = "My Squishies",
@@ -219,9 +257,20 @@ make("TextLabel", {
 	Parent = panel,
 })
 
+make("TextLabel", {
+	Size = UDim2.new(1, 0, 0, 16),
+	Position = UDim2.new(0, 0, 0, 30),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamMedium,
+	Text = "tap a face to make it your squisher",
+	TextColor3 = COLOR.dim,
+	TextSize = 12,
+	Parent = panel,
+})
+
 local invList = make("ScrollingFrame", {
-	Size = UDim2.new(1, -16, 1, -52),
-	Position = UDim2.new(0, 8, 0, 44),
+	Size = UDim2.new(1, -16, 1, -58),
+	Position = UDim2.new(0, 8, 0, 50),
 	BackgroundTransparency = 1,
 	BorderSizePixel = 0,
 	ScrollBarThickness = 4,
@@ -239,27 +288,33 @@ type Row = {
 	countLabel: TextLabel,
 	starLabel: TextLabel,
 	prestige: TextButton,
-	icon: TextLabel,
+	icon: TextButton,
+	equipStroke: UIStroke,
 }
 local rows: { [string]: Row } = {}
 
 for index, squishy in Squishies.list do
 	local rarity = Squishies.rarityByName[squishy.rarity]
+	local tier = rarityTier[squishy.rarity] or 1
 
 	local row = make("Frame", {
 		Size = UDim2.new(1, 0, 0, 84),
 		BackgroundColor3 = Color3.fromRGB(252, 248, 244),
-		LayoutOrder = index,
+		-- Sort the whole tab Common → Mythical, keeping catalog order inside
+		-- each rarity. Without the tier term the shop squishies (appended to
+		-- the catalog) land AFTER the Mythical and the tab looks shuffled.
+		LayoutOrder = tier * 1000 + index,
 		Parent = invList,
 	})
 	corner(14, row)
 
-	-- the dumpling itself: colored circle with a face
-	local icon = make("TextLabel", {
+	-- The squishy's face — also the button that equips it as the click toy.
+	local icon = make("TextButton", {
 		Size = UDim2.new(0, 56, 0, 56),
 		Position = UDim2.new(0, 10, 0.5, 0),
 		AnchorPoint = Vector2.new(0, 0.5),
 		BackgroundColor3 = squishy.color,
+		AutoButtonColor = false,
 		Font = Enum.Font.FredokaOne,
 		Text = squishy.sparkle and "✧•ᴗ•✧" or "•ᴗ•",
 		TextColor3 = COLOR.text,
@@ -267,6 +322,14 @@ for index, squishy in Squishies.list do
 		Parent = row,
 	})
 	make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = icon })
+
+	-- Gold ring marking the equipped squisher.
+	local equipStroke = make("UIStroke", {
+		Color = COLOR.gold,
+		Thickness = 3,
+		Transparency = 1,
+		Parent = icon,
+	})
 
 	make("TextLabel", {
 		Size = UDim2.new(1, -170, 0, 22),
@@ -336,7 +399,18 @@ for index, squishy in Squishies.list do
 		PrestigeSquishy:FireServer(id)
 	end)
 
-	rows[id] = { countLabel = countLabel, starLabel = starLabel, prestige = prestige, icon = icon }
+	icon.Activated:Connect(function()
+		-- Server validates ownership; tapping an undiscovered one does nothing.
+		SetClicker:FireServer(id)
+	end)
+
+	rows[id] = {
+		countLabel = countLabel,
+		starLabel = starLabel,
+		prestige = prestige,
+		icon = icon,
+		equipStroke = equipStroke,
+	}
 end
 
 -- ---------- reveal: the UI half of the show ----------
@@ -401,6 +475,16 @@ local function playReveal(squishyId: string)
 			banner:Destroy()
 		end)
 	end)
+
+	-- Once the show is over, swing back to the squisher — unless the player
+	-- queued another unbox in the meantime.
+	viewToken += 1
+	local token = viewToken
+	task.delay(2.3, function()
+		if token == viewToken then
+			Scene.setView("main")
+		end
+	end)
 end
 
 SteamerOpened.OnClientEvent:Connect(playReveal)
@@ -430,9 +514,49 @@ local function showCostRise(amount: number)
 	end)
 end
 
+-- A floating note when a full bar banks a steamer — the moment needs SOME
+-- fanfare now that it no longer opens anything.
+local function showBanked()
+	local floater = make("TextLabel", {
+		Size = UDim2.new(0, 220, 0, 26),
+		Position = UDim2.new(0, 336, 1, -110),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.FredokaOne,
+		Text = "🥡 steamer banked!",
+		TextColor3 = COLOR.mint,
+		TextSize = 18,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 16,
+		Parent = gui,
+	})
+	TweenService:Create(
+		floater,
+		TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Position = UDim2.new(0, 336, 1, -158), TextTransparency = 1 }
+	):Play()
+	task.delay(1.2, function()
+		floater:Destroy()
+	end)
+end
+
 -- ---------- redraw from server state ----------
+local appliedClickerId: string? = nil
+
 local function refresh()
 	headerLabel.Text = ("🥟 Opens: %d    ⭐ Stars: %d"):format(state.totalOpens, state.totalStars)
+
+	unboxButton.Text = ("🥡 Unbox (%d)"):format(state.unopened)
+	unboxButton.BackgroundColor3 = state.unopened > 0 and COLOR.mint or COLOR.locked
+	unboxButton.AutoButtonColor = state.unopened > 0
+
+	-- Equip the chosen squisher on the stage (once per change, not per sync).
+	if state.clickerId ~= appliedClickerId then
+		appliedClickerId = state.clickerId
+		local equipped = appliedClickerId and Squishies.byId[appliedClickerId]
+		if equipped then
+			Scene.setClicker(equipped.shape, equipped.color, equipped.sparkle, equipped.id)
+		end
+	end
 
 	progressLabel.Text = ("%d / %d"):format(state.clickProgress, state.clicksToOpen)
 	local frac = math.clamp(state.clickProgress / math.max(state.clicksToOpen, 1), 0, 1)
@@ -456,6 +580,7 @@ local function refresh()
 
 		row.countLabel.Text = "x" .. held
 		row.starLabel.Text = starString(star)
+		row.equipStroke.Transparency = (id == state.clickerId) and 0 or 1
 
 		-- Undiscovered squishies show as dark silhouettes — the collection tease.
 		local squishy = Squishies.byId[id]
@@ -483,15 +608,26 @@ local function refresh()
 	end
 end
 
+local hasSynced = false
+
 SyncData.OnClientEvent:Connect(function(payload)
 	local previousRequirement = state.clicksToOpen
+	local previousUnopened = state.unopened
 	state = payload
 	refresh()
 
-	local rise = state.clicksToOpen - previousRequirement
-	if rise > 0 then
-		showCostRise(rise)
+	-- No floaters on the join sync: a returning player's saved numbers
+	-- differing from the defaults isn't news.
+	if hasSynced then
+		local rise = state.clicksToOpen - previousRequirement
+		if rise > 0 then
+			showCostRise(rise)
+		end
+		if state.unopened > previousUnopened then
+			showBanked()
+		end
 	end
+	hasSynced = true
 end)
 
 refresh()
