@@ -41,12 +41,12 @@ export type Rig = { folder: Folder, pieces: { Piece } }
 export type SquishyModel = {
 	rig: Rig,
 	primary: BasePart,
-	face: TextLabel,
-	billboard: BillboardGui,
+	face: TextLabel?,
+	billboard: BillboardGui?,
 	sparkles: ParticleEmitter,
-	-- True for imported meshes whose texture already includes a face: the
-	-- billboard face must stay OFF for these or the squishy grows two faces.
-	hasOwnFace: boolean,
+	-- True when this squishy has a billboard face to switch on. Only dumplings
+	-- do, and not even those when their texture already paints one.
+	wearsFace: boolean,
 }
 
 -- ---------- rig plumbing ----------
@@ -396,7 +396,8 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	opalmesh = { template = "OpalDumpling", yaw = 180, bakedFace = true, fallback = "dumpling" },
 	-- Every other dumpling: same mesh, tinted.
 	dumplingmesh = { template = "OpalDumpling", yaw = 180, tint = true, bakedFace = true, fallback = "dumpling" },
-	-- These two textures paint no face, so they wear the billboard one.
+	-- No bakedFace on these, and they aren't dumplings, so they wear no face
+	-- at all — real bananas and butter sticks don't have one.
 	bananamesh = { template = "BananaSquishy", yaw = 180, fallback = "banana" },
 	buttermesh = { template = "ButterSquishy", yaw = 180, fallback = "butter" },
 	-- Rainbow Butter borrows the butter mesh, lifted so it reads pastel
@@ -570,47 +571,69 @@ end
 
 -- ---------- building a squishy ----------
 
+-- Only dumplings have faces. The shop squishies are bananas, butter sticks and
+-- jelly cubes — real ones have no features, and a face stuck on the side of a
+-- banana read as a mistake rather than a character.
+local FACE_SHAPES: { [string]: boolean } = {
+	dumpling = true,
+	dumplingmesh = true,
+	opalmesh = true,
+}
+
 function Models.buildSquishy(parent: Instance, shape: string?, color: Color3, sparkle: boolean): SquishyModel
 	local rig = Models.newRig("Squishy", parent)
 
 	local primary: BasePart? = nil
-	local hasOwnFace = false
+	local shapeKey = shape or "dumpling"
+	local textureFace = false
+
 	local meshConfig = MESH_SHAPES[shape or ""]
 	if meshConfig then
 		primary = tryBuildMesh(rig, shape :: string, meshConfig, color)
-		hasOwnFace = primary ~= nil and meshConfig.bakedFace == true
+		textureFace = primary ~= nil and meshConfig.bakedFace == true
 	end
 	if not primary then
-		local key = (meshConfig and meshConfig.fallback) or shape or "dumpling"
-		local builder = shapeBuilders[key] or shapeBuilders.dumpling
+		-- Fell back to a primitive, so the effective shape is that one.
+		shapeKey = (meshConfig and meshConfig.fallback) or shape or "dumpling"
+		local builder = shapeBuilders[shapeKey] or shapeBuilders.dumpling
 		primary = builder(rig, color)
 	end
 	assert(primary, "shape builder returned no primary part")
 
-	-- The face rides on a billboard so it always turns to the camera — the
-	-- squishy can spin freely and still look back at you.
-	local billboard = Instance.new("BillboardGui")
-	billboard.Name = "Face"
-	billboard.Adornee = primary
-	billboard.Size = UDim2.fromScale(1.7, 1.0) -- BillboardGui scale is in studs
-	-- CAMERA-space offset, not world-space: it slides the face toward whoever
-	-- is looking, so it always reads as painted on the front of the body.
-	-- Must stay a touch beyond the widest model radius or the parts poke
-	-- through and swallow the face.
-	billboard.StudsOffset = Vector3.new(0, 0.05, 1.55)
-	billboard.AlwaysOnTop = false
-	billboard.LightInfluence = 0
-	billboard.Enabled = false
-	billboard.Parent = primary
+	-- A billboard face is only built when there is one to show: a dumpling
+	-- whose texture doesn't already paint it on.
+	local wearsFace = FACE_SHAPES[shapeKey] == true and not textureFace
+	local billboard: BillboardGui? = nil
+	local face: TextLabel? = nil
 
-	local face = Instance.new("TextLabel")
-	face.Size = UDim2.fromScale(1, 1)
-	face.BackgroundTransparency = 1
-	face.Font = Enum.Font.FredokaOne
-	face.Text = sparkle and "✧•ᴗ•✧" or "•ᴗ•"
-	face.TextColor3 = FACE_INK
-	face.TextScaled = true
-	face.Parent = billboard
+	if wearsFace then
+		-- The face rides on a billboard so it always turns to the camera — the
+		-- squishy can spin freely and still look back at you.
+		local gui = Instance.new("BillboardGui")
+		gui.Name = "Face"
+		gui.Adornee = primary
+		gui.Size = UDim2.fromScale(1.7, 1.0) -- BillboardGui scale is in studs
+		-- CAMERA-space offset, not world-space: it slides the face toward
+		-- whoever is looking, so it always reads as painted on the front of the
+		-- body. Must stay a touch beyond the widest model radius or the parts
+		-- poke through and swallow the face.
+		gui.StudsOffset = Vector3.new(0, 0.05, 1.55)
+		gui.AlwaysOnTop = false
+		gui.LightInfluence = 0
+		gui.Enabled = false
+		gui.Parent = primary
+		billboard = gui
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.FredokaOne
+		label.Text = sparkle and "✧•ᴗ•✧" or "•ᴗ•"
+		label.TextColor3 = FACE_INK
+		label.TextScaled = true
+		label.Parent = gui
+		face = label
+	end
 
 	local sparkles = Instance.new("ParticleEmitter")
 	sparkles.Name = "Sparkles"
@@ -638,7 +661,7 @@ function Models.buildSquishy(parent: Instance, shape: string?, color: Color3, sp
 		face = face,
 		billboard = billboard,
 		sparkles = sparkles,
-		hasOwnFace = hasOwnFace,
+		wearsFace = wearsFace,
 	}
 end
 

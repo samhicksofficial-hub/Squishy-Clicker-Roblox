@@ -79,6 +79,21 @@ local function starString(stars: number): string
 	return string.rep("★", stars) .. string.rep("☆", Config.MaxStars - stars)
 end
 
+-- Matches the 3D models: only dumplings have faces. The rest keep a sparkle
+-- mark when they glitter, so the collection still shows that at a glance.
+local DUMPLING_SHAPES: { [string]: boolean } = {
+	dumpling = true,
+	dumplingmesh = true,
+	opalmesh = true,
+}
+
+local function iconText(squishy: { sparkle: boolean, shape: string? }): string
+	if DUMPLING_SHAPES[squishy.shape or "dumpling"] then
+		return squishy.sparkle and "✧•ᴗ•✧" or "•ᴗ•"
+	end
+	return squishy.sparkle and "✦" or ""
+end
+
 -- Copies needed for a squishy's next star (mirrors the server's math for display).
 local function prestigeCost(squishyId: string, currentStar: number): number
 	local squishy = Squishies.byId[squishyId]
@@ -308,7 +323,7 @@ for index, squishy in Squishies.list do
 	})
 	corner(14, row)
 
-	-- The squishy's face — also the button that equips it as the click toy.
+	-- The squishy itself — also the button that equips it as the click toy.
 	local icon = make("TextButton", {
 		Size = UDim2.new(0, 56, 0, 56),
 		Position = UDim2.new(0, 10, 0.5, 0),
@@ -316,7 +331,7 @@ for index, squishy in Squishies.list do
 		BackgroundColor3 = squishy.color,
 		AutoButtonColor = false,
 		Font = Enum.Font.FredokaOne,
-		Text = squishy.sparkle and "✧•ᴗ•✧" or "•ᴗ•",
+		Text = iconText(squishy),
 		TextColor3 = COLOR.text,
 		TextSize = squishy.sparkle and 13 or 18,
 		Parent = row,
@@ -587,7 +602,7 @@ local function refresh()
 		local discovered = held > 0 or star > 0
 		if squishy then
 			row.icon.BackgroundColor3 = discovered and squishy.color or Color3.fromRGB(90, 82, 76)
-			row.icon.Text = discovered and (squishy.sparkle and "✧•ᴗ•✧" or "•ᴗ•") or "?"
+			row.icon.Text = discovered and iconText(squishy) or "?"
 		end
 
 		if star >= Config.MaxStars then

@@ -527,7 +527,10 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			* CFrame.fromEulerAnglesXYZ(0, dumplingSpin, math.sin(elapsed * 2.2) * 0.05 * risen),
 		Vector3.new(1 + jg * 0.18, 1 - jg * 0.22, 1 + jg * 0.18)
 	)
-	squishyModel.billboard.Enabled = risen > 0.06 and not squishyModel.hasOwnFace
+	local revealFace = squishyModel.billboard
+	if revealFace then
+		revealFace.Enabled = risen > 0.06
+	end
 
 	-- The click toy on its cushion: idle breathing, hard squash on clicks.
 	local toy = clickerModel
@@ -613,7 +616,9 @@ function Scene.setClicker(shape: string?, color: Color3, sparkle: boolean, id: s
 	clickerSpec = { shape = shape, color = color, sparkle = sparkle, id = id }
 
 	local toy = Models.buildSquishy(stage, shape, color, sparkle)
-	toy.billboard.Enabled = not toy.hasOwnFace
+	if toy.billboard then
+		toy.billboard.Enabled = true
+	end
 	toy.sparkles.Rate = 6 -- gentler than the reveal sparkle shower
 	toy.sparkles.Enabled = sparkle
 	clickerModel = toy
