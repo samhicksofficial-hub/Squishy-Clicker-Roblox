@@ -114,7 +114,8 @@ Three models live in `assets/`, each needing the same one-time import:
 |---|---|---|---|
 | `opal-dumpling/` | `OpalDumpling` | all 13 dumplings (tinted) | PBR maps |
 | `banana/` | `BananaSquishy` | Stretch Banana | one baked texture |
-| `butter/` | `ButterSquishy` | Butter Stick, Rainbow Butter (tinted) | one baked texture |
+| `butter/` | `ButterSquishy` | Butter Stick | one baked texture |
+| `rainbow-butter/` | `RainbowButter` | Rainbow Butter | one baked texture |
 
 Do all of this in **Edit mode, with the playtest stopped** — anything you create
 while the game is running is discarded the moment you press Stop.

@@ -379,10 +379,6 @@ export type MeshConfig = {
 	-- face while changing the shade — one mould, thirteen dumplings, exactly
 	-- how the real squishies are made.
 	tint: boolean?,
-	-- Lift the tint toward white before multiplying, 0..1. Tinting only ever
-	-- darkens, so a strong colour over an already-bright texture turns to mud
-	-- (purple over yellow butter goes brown). Lifting keeps it pastel.
-	tintLift: number?,
 	-- True when the texture already paints a face on. The billboard face stays
 	-- off for these, or the squishy ends up with two.
 	bakedFace: boolean?,
@@ -400,15 +396,8 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	-- at all — real bananas and butter sticks don't have one.
 	bananamesh = { template = "BananaSquishy", yaw = 180, fallback = "banana" },
 	buttermesh = { template = "ButterSquishy", yaw = 180, fallback = "butter" },
-	-- Rainbow Butter borrows the butter mesh, lifted so it reads pastel
-	-- instead of brown.
-	rainbuttermesh = {
-		template = "ButterSquishy",
-		yaw = 180,
-		tint = true,
-		tintLift = 0.5,
-		fallback = "butter",
-	},
+	-- Rainbow Butter has its own tie-dye model, so it needs no tinting.
+	rainbuttermesh = { template = "RainbowButter", yaw = 180, fallback = "butter" },
 }
 
 -- Debug hook: nudge a mesh's facing at runtime so the right angle can be found
@@ -481,10 +470,8 @@ local tintReported = false
 -- SurfaceAppearance.Color multiplies the ColorMap, which is what lets one
 -- pearly texture become a whole colour range. MeshPart.Color is set too as a
 -- fallback for meshes imported without a SurfaceAppearance.
-local function tintMesh(mesh: BasePart, color: Color3, lift: number)
-	local shade = lift > 0 and color:Lerp(Color3.new(1, 1, 1), lift) or color
-	mesh.Color = shade
-	color = shade
+local function tintMesh(mesh: BasePart, color: Color3)
+	mesh.Color = color
 
 	local appearance = mesh:FindFirstChildOfClass("SurfaceAppearance")
 	if not appearance then
@@ -540,7 +527,7 @@ local function tryBuildMesh(rig: Rig, shape: string, config: MeshConfig, color: 
 		clone.CanQuery = false
 		clone.CanTouch = false
 		if config.tint then
-			tintMesh(clone, color, config.tintLift or 0)
+			tintMesh(clone, color)
 		end
 		clone.Size = part.Size * scale
 
