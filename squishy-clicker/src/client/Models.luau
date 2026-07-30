@@ -426,34 +426,47 @@ end
 -- itself — either which mesh is in use, or precisely what is missing.
 local meshReported: { [string]: boolean } = {}
 
-local function findMeshTemplate(templateName: string): BasePart?
+local function findMeshEntry(templateName: string): Instance?
 	-- Searched recursively. The tidy home is ReplicatedStorage/SquishyMeshes,
 	-- but ANYWHERE in ReplicatedStorage works — a model dragged straight in
 	-- shouldn't be a silent failure over a missing folder.
-	local entry = ReplicatedStorage:FindFirstChild(templateName, true)
-	if not entry then
-		return nil
-	end
-	if entry:IsA("BasePart") then
-		return entry
-	end
-	-- Studio's Import 3D wraps the mesh in a Model, so accept that too and dig
-	-- the MeshPart out rather than failing on a technicality.
-	for _, descendant in entry:GetDescendants() do
-		if descendant:IsA("MeshPart") then
-			return descendant
-		end
-	end
-	return nil
+	return ReplicatedStorage:FindFirstChild(templateName, true)
 end
 
-local function reportMissingMesh(shape: string, templateName: string)
+-- Import 3D wraps meshes in a Model, and SPLITS anything too dense into
+-- several MeshParts. Both are normal, so gather every part and rebuild the
+-- whole assembly rather than grabbing one piece and rendering a fragment.
+local function collectMeshParts(entry: Instance): { BasePart }
+	if entry:IsA("BasePart") then
+		return { entry }
+	end
+	local parts: { BasePart } = {}
+	for _, descendant in entry:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			table.insert(parts, descendant)
+		end
+	end
+	return parts
+end
+
+local function reportMissingMesh(shape: string, templateName: string, entry: Instance?)
+	if entry then
+		warn(
+			("[SquishyClicker] '%s' found '%s' [%s] in ReplicatedStorage, but there are no parts inside it — using the primitive shape instead."):format(
+				shape,
+				templateName,
+				entry.ClassName
+			)
+		)
+		return
+	end
+
 	local found: { string } = {}
 	for _, child in ReplicatedStorage:GetChildren() do
 		table.insert(found, ("%s [%s]"):format(child.Name, child.ClassName))
 	end
 	warn(
-		("[SquishyClicker] '%s' wants a MeshPart named '%s' somewhere in ReplicatedStorage, and nothing there has that name — using the primitive shape. Fix: STOP the playtest first (anything created while playing is thrown away when you stop), then drag the imported model into ReplicatedStorage and rename it to exactly '%s'. A Model wrapper is fine as long as a MeshPart is inside. ReplicatedStorage currently holds: %s"):format(
+		("[SquishyClicker] '%s' wants a MeshPart named '%s' somewhere in ReplicatedStorage, and nothing there has that name — using the primitive shape. Fix: STOP the playtest first (anything created while playing is thrown away when you stop), then drag the imported model into ReplicatedStorage and rename it to exactly '%s'. A Model wrapper is fine, including one Studio split into several MeshParts. ReplicatedStorage currently holds: %s"):format(
 			shape,
 			templateName,
 			templateName,
@@ -489,39 +502,70 @@ end
 
 local function tryBuildMesh(rig: Rig, shape: string, config: MeshConfig, color: Color3): BasePart?
 	local templateName = config.template
-	local template = findMeshTemplate(templateName)
-	if not template then
+	local entry = findMeshEntry(templateName)
+	local parts = if entry then collectMeshParts(entry) else {}
+	if #parts == 0 then
 		if not meshReported[templateName] then
 			meshReported[templateName] = true
-			reportMissingMesh(shape, templateName)
+			reportMissingMesh(shape, templateName, entry)
 		end
 		return nil
 	end
 
-	local mesh = template:Clone()
-	mesh.Anchored = true
-	mesh.CanCollide = false
-	mesh.CanQuery = false
-	mesh.CanTouch = false
-	if config.tint then
-		tintMesh(mesh, color, config.tintLift or 0)
+	-- One bounding box around every piece, so a split model scales and centres
+	-- as a single object instead of each fragment doing its own thing.
+	local low = Vector3.new(math.huge, math.huge, math.huge)
+	local high = -low
+	for _, part in parts do
+		local half = part.Size * 0.5
+		low = low:Min(part.Position - half)
+		high = high:Max(part.Position + half)
 	end
-
+	local centre = (low + high) * 0.5
+	local extents = high - low
 	-- Normalise the largest dimension to squishy size, however the import came
 	-- in — Import 3D scales are wildly inconsistent between models.
-	local size = mesh.Size
-	local largest = math.max(size.X, size.Y, size.Z, 0.05)
-	mesh.Size = size * (2.7 / largest)
+	local scale = 2.7 / math.max(extents.X, extents.Y, extents.Z, 0.05)
+	local yaw = CFrame.fromEulerAnglesXYZ(0, math.rad(config.yaw), 0)
 
-	-- Configured yaw first, then whatever rotation the template carries in
-	-- Studio, so the model can be aimed from either place.
-	Models.add(rig, mesh, CFrame.fromEulerAnglesXYZ(0, math.rad(config.yaw), 0) * template.CFrame.Rotation)
+	-- The face and sparkles ride the biggest piece.
+	local primary: BasePart = parts[1]
+	local biggest = -1
+
+	for _, part in parts do
+		local clone = part:Clone()
+		clone.Anchored = true
+		clone.CanCollide = false
+		clone.CanQuery = false
+		clone.CanTouch = false
+		if config.tint then
+			tintMesh(clone, color, config.tintLift or 0)
+		end
+		clone.Size = part.Size * scale
+
+		-- Configured yaw first, then whatever rotation the piece carries, so
+		-- the assembly turns as a unit and each piece keeps its orientation.
+		Models.add(rig, clone, yaw * CFrame.new((part.Position - centre) * scale) * part.CFrame.Rotation)
+
+		local volume = clone.Size.X * clone.Size.Y * clone.Size.Z
+		if volume > biggest then
+			biggest = volume
+			primary = clone
+		end
+	end
 
 	if not meshReported[templateName] then
 		meshReported[templateName] = true
-		print(("[SquishyClicker] Using imported mesh '%s' for '%s'."):format(templateName, shape))
+		print(
+			("[SquishyClicker] Using imported mesh '%s' for '%s' (%d part%s)."):format(
+				templateName,
+				shape,
+				#parts,
+				#parts == 1 and "" or "s"
+			)
+		)
 	end
-	return mesh
+	return primary
 end
 
 -- ---------- building a squishy ----------

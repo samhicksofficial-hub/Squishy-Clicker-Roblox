@@ -110,26 +110,30 @@ by Rojo — they go through Studio once:
 
 Three models live in `assets/`, each needing the same one-time import:
 
-| Folder | Name it exactly | Used by |
-|---|---|---|
-| `opal-dumpling/` | `OpalDumpling` | all 13 dumplings (tinted) |
-| `banana/` | `BananaSquishy` | Stretch Banana |
-| `butter/` | `ButterSquishy` | Butter Stick, Rainbow Butter (tinted) |
+| Folder | Name it exactly | Used by | Texturing |
+|---|---|---|---|
+| `opal-dumpling/` | `OpalDumpling` | all 13 dumplings (tinted) | PBR maps |
+| `banana/` | `BananaSquishy` | Stretch Banana | one baked texture |
+| `butter/` | `ButterSquishy` | Butter Stick, Rainbow Butter (tinted) | one baked texture |
 
 Do all of this in **Edit mode, with the playtest stopped** — anything you create
 while the game is running is discarded the moment you press Stop.
 
 1. Studio → **File → Import 3D** → pick that folder's `base.obj`.
-2. Select the imported MeshPart → add a **SurfaceAppearance** child → paste the
-   uploaded image IDs (`rbxassetid://…`) into its map slots: ColorMap =
-   `texture_diffuse.png`, NormalMap = `texture_normal.png`, MetalnessMap =
-   `texture_metallic.png`, RoughnessMap = `texture_roughness.png`. The slots
-   are plain text fields; upload the PNGs first via **View → Asset Manager →
-   Images → Add Images**, then right-click each → Copy ID to Clipboard.
+2. Texture it. For the **baked texture** models, `base.mtl` points at
+   `texture.png` sitting beside it, so the importer usually applies it by
+   itself — if it doesn't, upload `texture.png` and paste its ID into the
+   MeshPart's **TextureID**. For the **PBR** model, add a **SurfaceAppearance**
+   child and paste uploaded image IDs (`rbxassetid://…`) into its map slots:
+   ColorMap = `texture_diffuse.png`, NormalMap = `texture_normal.png`,
+   MetalnessMap = `texture_metallic.png`, RoughnessMap = `texture_roughness.png`.
+   Those slots are plain text fields; upload the PNGs first via **View → Asset
+   Manager → Images → Add Images**, then right-click each → Copy ID.
 3. Drag it into **ReplicatedStorage** and rename it to the name in the table
    above. A `SquishyMeshes` folder is the tidy home, but anywhere in
-   ReplicatedStorage works. A Model wrapper is fine as long as a MeshPart is
-   inside.
+   ReplicatedStorage works. A Model wrapper is fine — including one Studio has
+   split into several MeshParts, which it does to dense meshes. The game
+   reassembles every piece and scales them as one object.
 4. If the face points the wrong way, equip it and press **Rotate Clicker** in
    the debug menu until it looks right, then write the yaw it prints into
    `MESH_SHAPES` in `Models.luau` so it sticks. (Rotating the template in
