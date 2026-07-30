@@ -631,4 +631,12 @@ SyncData.OnClientEvent:Connect(function(payload)
 end)
 
 refresh()
+
+-- Studio-only debug menu. Spawned because it waits on a remote that will never
+-- arrive in a published game, and the HUD must not wait with it.
+task.spawn(function()
+	local Debug = require(script:WaitForChild("Debug"))
+	Debug.mount(gui, Scene)
+end)
+
 print("[SquishyClicker] Client UI ready.")

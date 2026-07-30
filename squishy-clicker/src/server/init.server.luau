@@ -50,6 +50,32 @@ local SyncData = Instance.new("RemoteEvent")
 SyncData.Name = "SyncData"
 SyncData.Parent = Remotes
 
+-- ---------- Debug ----------
+-- The debug remote is the one thing here that hands out free squishies, so it
+-- only exists in Studio (or for the UserIds you allowlist in Config). In a
+-- published game this remote is never created and the client's debug menu
+-- never appears — there is no request an exploiter could forge.
+local debugAllowlisted = #Config.DebugUserIds > 0
+local DebugAction: RemoteEvent? = nil
+if RunService:IsStudio() or debugAllowlisted then
+	local remote = Instance.new("RemoteEvent")
+	remote.Name = "DebugAction"
+	remote.Parent = Remotes
+	DebugAction = remote
+end
+
+local function isDebugAllowed(player: Player): boolean
+	if RunService:IsStudio() then
+		return true
+	end
+	for _, userId in Config.DebugUserIds do
+		if userId == player.UserId then
+			return true
+		end
+	end
+	return false
+end
+
 -- ---------- Data types ----------
 type PlayerData = {
 	counts: { [string]: number }, -- copies of each squishy currently held
@@ -366,6 +392,57 @@ PrestigeSquishy.OnServerEvent:Connect(function(player, squishyId)
 	sync(player)
 	print(("[SquishyClicker] %s prestiged %s to %d star(s)"):format(player.Name, squishy.name, currentStar + 1))
 end)
+
+-- ---------- Debug actions ----------
+
+if DebugAction then
+	DebugAction.OnServerEvent:Connect(function(player, action, argument)
+		if not isDebugAllowed(player) then
+			return
+		end
+		local data = dataByPlayer[player]
+		if not data or typeof(action) ~= "string" then
+			return
+		end
+
+		if action == "bank" then
+			data.unopened += (typeof(argument) == "number") and argument or 1
+		elseif action == "fillBar" then
+			-- One click short, so you can watch the bar land and bank.
+			data.clickProgress = math.max(clicksToOpen(data) - 1, 0)
+		elseif action == "giveAll" then
+			local amount = (typeof(argument) == "number") and argument or 5
+			for _, squishy in Squishies.list do
+				data.counts[squishy.id] = (data.counts[squishy.id] or 0) + amount
+			end
+		elseif action == "maxStars" then
+			for _, squishy in Squishies.list do
+				data.stars[squishy.id] = Config.MaxStars
+			end
+		elseif action == "forceOpen" then
+			-- Reveal one specific squishy. Deliberately does NOT tick
+			-- totalOpens: testing reveals shouldn't inflate the click cost.
+			local squishy = (typeof(argument) == "string") and Squishies.byId[argument]
+			if squishy then
+				data.counts[squishy.id] = (data.counts[squishy.id] or 0) + 1
+				SteamerOpened:FireClient(player, squishy.id)
+			end
+		elseif action == "reset" then
+			-- Back to a fresh save, starter Red Dumpling and all.
+			data.counts = { red = 1 }
+			data.stars = {}
+			data.clickProgress = 0
+			data.totalOpens = 0
+			data.unopened = 0
+			data.clickerId = "red"
+		else
+			return
+		end
+
+		updateLeaderstats(player)
+		sync(player)
+	end)
+end
 
 -- ---------- Autosave ----------
 

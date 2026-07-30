@@ -35,7 +35,8 @@ for the reveal, then turns back.
 │   └── client/              → StarterPlayerScripts/Client
 │       ├── init.client.luau   the HUD, and wiring it to the stage
 │       ├── Scene.luau         the 3D stage: toy shop, camera, lights, reveals
-│       └── Models.luau        builds the steamer and every squishy shape
+│       ├── Models.luau        builds the steamer and every squishy shape
+│       └── Debug.luau         the Studio-only test menu
 ```
 
 The steamer is a real 3D model, built from parts at runtime — there are no assets
@@ -88,6 +89,18 @@ Lint before you commit:
 ```bash
 selene src
 ```
+
+## Debug menu
+
+Press **F2** in Studio (or click 🐛 Debug, top of the screen) for a test menu:
+bank steamers, fill the bar, grant copies, max every star, reset your save,
+flip the camera and blur, and force-reveal any squishy in the catalog by name —
+which is how you look at a Mythical without rolling 0.5% odds.
+
+It is **Studio only**. The server only creates the remote behind it when
+`RunService:IsStudio()` is true, so a published game has nothing to call. To
+use it on a live server while testing, add your UserId to `DebugUserIds` in
+`Config.luau` — and take it out again before the game goes anywhere.
 
 ## Imported 3D models (assets/)
 
