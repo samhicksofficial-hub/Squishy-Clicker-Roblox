@@ -108,19 +108,28 @@ use it on a live server while testing, add your UserId to `DebugUserIds` in
 Real meshes (like the opal dumpling in `assets/opal-dumpling/`) can't be synced
 by Rojo — they go through Studio once:
 
+Three models live in `assets/`, each needing the same one-time import:
+
+| Folder | Name it exactly | Used by |
+|---|---|---|
+| `opal-dumpling/` | `OpalDumpling` | all 13 dumplings (tinted) |
+| `banana/` | `BananaSquishy` | Stretch Banana |
+| `butter/` | `ButterSquishy` | Butter Stick, Rainbow Butter (tinted) |
+
 Do all of this in **Edit mode, with the playtest stopped** — anything you create
 while the game is running is discarded the moment you press Stop.
 
-1. Studio → **File → Import 3D** → pick `assets/opal-dumpling/base.obj`.
+1. Studio → **File → Import 3D** → pick that folder's `base.obj`.
 2. Select the imported MeshPart → add a **SurfaceAppearance** child → paste the
    uploaded image IDs (`rbxassetid://…`) into its map slots: ColorMap =
    `texture_diffuse.png`, NormalMap = `texture_normal.png`, MetalnessMap =
    `texture_metallic.png`, RoughnessMap = `texture_roughness.png`. The slots
    are plain text fields; upload the PNGs first via **View → Asset Manager →
    Images → Add Images**, then right-click each → Copy ID to Clipboard.
-3. Drag it into **ReplicatedStorage** and rename it to exactly **OpalDumpling**.
-   A `SquishyMeshes` folder is the tidy home, but anywhere in ReplicatedStorage
-   works. A Model wrapper is fine as long as a MeshPart is inside.
+3. Drag it into **ReplicatedStorage** and rename it to the name in the table
+   above. A `SquishyMeshes` folder is the tidy home, but anywhere in
+   ReplicatedStorage works. A Model wrapper is fine as long as a MeshPart is
+   inside.
 4. If the face points the wrong way, equip it and press **Rotate Clicker** in
    the debug menu until it looks right, then write the yaw it prints into
    `MESH_SHAPES` in `Models.luau` so it sticks. (Rotating the template in

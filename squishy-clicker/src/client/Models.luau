@@ -379,13 +379,35 @@ export type MeshConfig = {
 	-- face while changing the shade — one mould, thirteen dumplings, exactly
 	-- how the real squishies are made.
 	tint: boolean?,
+	-- Lift the tint toward white before multiplying, 0..1. Tinting only ever
+	-- darkens, so a strong colour over an already-bright texture turns to mud
+	-- (purple over yellow butter goes brown). Lifting keeps it pastel.
+	tintLift: number?,
+	-- True when the texture already paints a face on. The billboard face stays
+	-- off for these, or the squishy ends up with two.
+	bakedFace: boolean?,
+	-- Primitive builder to use when the imported mesh isn't in the place, so a
+	-- missing banana falls back to the banana rather than to a dumpling.
+	fallback: string?,
 }
 
 local MESH_SHAPES: { [string]: MeshConfig } = {
-	-- The Mythical keeps the texture exactly as imported.
-	opalmesh = { template = "OpalDumpling", yaw = 180 },
+	-- The Mythical keeps the opal texture exactly as imported.
+	opalmesh = { template = "OpalDumpling", yaw = 180, bakedFace = true, fallback = "dumpling" },
 	-- Every other dumpling: same mesh, tinted.
-	dumplingmesh = { template = "OpalDumpling", yaw = 180, tint = true },
+	dumplingmesh = { template = "OpalDumpling", yaw = 180, tint = true, bakedFace = true, fallback = "dumpling" },
+	-- These two textures paint no face, so they wear the billboard one.
+	bananamesh = { template = "BananaSquishy", yaw = 180, fallback = "banana" },
+	buttermesh = { template = "ButterSquishy", yaw = 180, fallback = "butter" },
+	-- Rainbow Butter borrows the butter mesh, lifted so it reads pastel
+	-- instead of brown.
+	rainbuttermesh = {
+		template = "ButterSquishy",
+		yaw = 180,
+		tint = true,
+		tintLift = 0.5,
+		fallback = "butter",
+	},
 }
 
 -- Debug hook: nudge a mesh's facing at runtime so the right angle can be found
@@ -445,8 +467,10 @@ local tintReported = false
 -- SurfaceAppearance.Color multiplies the ColorMap, which is what lets one
 -- pearly texture become a whole colour range. MeshPart.Color is set too as a
 -- fallback for meshes imported without a SurfaceAppearance.
-local function tintMesh(mesh: BasePart, color: Color3)
-	mesh.Color = color
+local function tintMesh(mesh: BasePart, color: Color3, lift: number)
+	local shade = lift > 0 and color:Lerp(Color3.new(1, 1, 1), lift) or color
+	mesh.Color = shade
+	color = shade
 
 	local appearance = mesh:FindFirstChildOfClass("SurfaceAppearance")
 	if not appearance then
@@ -480,7 +504,7 @@ local function tryBuildMesh(rig: Rig, shape: string, config: MeshConfig, color: 
 	mesh.CanQuery = false
 	mesh.CanTouch = false
 	if config.tint then
-		tintMesh(mesh, color)
+		tintMesh(mesh, color, config.tintLift or 0)
 	end
 
 	-- Normalise the largest dimension to squishy size, however the import came
@@ -510,10 +534,11 @@ function Models.buildSquishy(parent: Instance, shape: string?, color: Color3, sp
 	local meshConfig = MESH_SHAPES[shape or ""]
 	if meshConfig then
 		primary = tryBuildMesh(rig, shape :: string, meshConfig, color)
-		hasOwnFace = primary ~= nil -- imported textures bake the face in
+		hasOwnFace = primary ~= nil and meshConfig.bakedFace == true
 	end
 	if not primary then
-		local builder = shapeBuilders[shape or "dumpling"] or shapeBuilders.dumpling
+		local key = (meshConfig and meshConfig.fallback) or shape or "dumpling"
+		local builder = shapeBuilders[key] or shapeBuilders.dumpling
 		primary = builder(rig, color)
 	end
 	assert(primary, "shape builder returned no primary part")

@@ -71,11 +71,11 @@ local list: { Squishy } = {
 
 	-- ===== The squishy shop haul =====
 	-- Commons: everyday squishies
-	{ id = "banana",     name = "Stretch Banana",   rarity = "Common",    color = Color3.fromRGB(250, 216, 88),  sparkle = false, shape = "banana" },
+	{ id = "banana",     name = "Stretch Banana",   rarity = "Common",    color = Color3.fromRGB(250, 216, 88),  sparkle = false, shape = "bananamesh" },
 	{ id = "coconut",    name = "Coconut Ball",     rarity = "Common",    color = Color3.fromRGB(196, 228, 200), sparkle = false, shape = "ball" },
 	{ id = "jellycube",  name = "Mini Jelly Cube",  rarity = "Common",    color = Color3.fromRGB(242, 150, 62),  sparkle = false, shape = "jellycube" },
 	{ id = "cloud",      name = "Dough Cloud",      rarity = "Common",    color = Color3.fromRGB(250, 248, 244), sparkle = false, shape = "cloud" },
-	{ id = "butter",     name = "Butter Stick",     rarity = "Common",    color = Color3.fromRGB(247, 210, 96),  sparkle = false, shape = "butter" },
+	{ id = "butter",     name = "Butter Stick",     rarity = "Common",    color = Color3.fromRGB(247, 210, 96),  sparkle = false, shape = "buttermesh" },
 
 	-- Uncommons
 	{ id = "cheese",     name = "Squeeze Cheese",   rarity = "Uncommon",  color = Color3.fromRGB(245, 196, 54),  sparkle = false, shape = "cheese" },
@@ -86,7 +86,7 @@ local list: { Squishy } = {
 	-- Rares
 	{ id = "glitcube",   name = "Glitter Cube",     rarity = "Rare",      color = Color3.fromRGB(112, 218, 122), sparkle = true,  shape = "jellycube" },
 	{ id = "twotone",    name = "Two-Tone Glitter", rarity = "Rare",      color = Color3.fromRGB(186, 142, 235), sparkle = true,  shape = "jellycube" },
-	{ id = "rainbutter", name = "Rainbow Butter",   rarity = "Rare",      color = Color3.fromRGB(196, 124, 220), sparkle = false, shape = "butter" },
+	{ id = "rainbutter", name = "Rainbow Butter",   rarity = "Rare",      color = Color3.fromRGB(196, 124, 220), sparkle = false, shape = "rainbuttermesh" },
 	{ id = "cake",       name = "Boxed Cake",       rarity = "Rare",      color = Color3.fromRGB(246, 204, 158), sparkle = true,  shape = "tub" },
 
 	-- Epics
