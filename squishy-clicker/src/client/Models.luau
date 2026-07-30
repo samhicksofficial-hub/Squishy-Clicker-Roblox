@@ -376,8 +376,10 @@ local MESH_SHAPES: { [string]: string } = {
 local meshReported: { [string]: boolean } = {}
 
 local function findMeshTemplate(templateName: string): BasePart?
-	local folder = ReplicatedStorage:FindFirstChild("SquishyMeshes")
-	local entry = folder and folder:FindFirstChild(templateName)
+	-- Searched recursively. The tidy home is ReplicatedStorage/SquishyMeshes,
+	-- but ANYWHERE in ReplicatedStorage works — a model dragged straight in
+	-- shouldn't be a silent failure over a missing folder.
+	local entry = ReplicatedStorage:FindFirstChild(templateName, true)
 	if not entry then
 		return nil
 	end
@@ -395,27 +397,16 @@ local function findMeshTemplate(templateName: string): BasePart?
 end
 
 local function reportMissingMesh(shape: string, templateName: string)
-	local folder = ReplicatedStorage:FindFirstChild("SquishyMeshes")
-	if not folder then
-		warn(
-			("[SquishyClicker] '%s' wants the mesh '%s', but ReplicatedStorage has no SquishyMeshes folder. Using the primitive shape. Fix: create a Folder in ReplicatedStorage named exactly SquishyMeshes and put the imported MeshPart inside it."):format(
-				shape,
-				templateName
-			)
-		)
-		return
-	end
-
 	local found: { string } = {}
-	for _, child in folder:GetChildren() do
+	for _, child in ReplicatedStorage:GetChildren() do
 		table.insert(found, ("%s [%s]"):format(child.Name, child.ClassName))
 	end
 	warn(
-		("[SquishyClicker] '%s' wants a MeshPart named '%s' inside ReplicatedStorage.SquishyMeshes, which currently holds: %s. Using the primitive shape. Fix: rename the imported part to exactly '%s' (Import 3D usually wraps it in a Model — a Model is fine as long as a MeshPart is inside)."):format(
+		("[SquishyClicker] '%s' wants a MeshPart named '%s' somewhere in ReplicatedStorage, and nothing there has that name — using the primitive shape. Fix: STOP the playtest first (anything created while playing is thrown away when you stop), then drag the imported model into ReplicatedStorage and rename it to exactly '%s'. A Model wrapper is fine as long as a MeshPart is inside. ReplicatedStorage currently holds: %s"):format(
 			shape,
 			templateName,
-			#found > 0 and table.concat(found, ", ") or "nothing",
-			templateName
+			templateName,
+			#found > 0 and table.concat(found, ", ") or "nothing"
 		)
 	)
 end

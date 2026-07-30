@@ -107,15 +107,24 @@ use it on a live server while testing, add your UserId to `DebugUserIds` in
 Real meshes (like the opal dumpling in `assets/opal-dumpling/`) can't be synced
 by Rojo — they go through Studio once:
 
+Do all of this in **Edit mode, with the playtest stopped** — anything you create
+while the game is running is discarded the moment you press Stop.
+
 1. Studio → **File → Import 3D** → pick `assets/opal-dumpling/base.obj`.
-2. Select the imported MeshPart → add a **SurfaceAppearance** child → set its
-   maps by uploading the textures from the same folder: ColorMap =
+2. Select the imported MeshPart → add a **SurfaceAppearance** child → paste the
+   uploaded image IDs (`rbxassetid://…`) into its map slots: ColorMap =
    `texture_diffuse.png`, NormalMap = `texture_normal.png`, MetalnessMap =
-   `texture_metallic.png`, RoughnessMap = `texture_roughness.png`.
-3. In ReplicatedStorage, make a Folder named **SquishyMeshes** and put the
-   MeshPart inside, renamed to **OpalDumpling**.
+   `texture_metallic.png`, RoughnessMap = `texture_roughness.png`. The slots
+   are plain text fields; upload the PNGs first via **View → Asset Manager →
+   Images → Add Images**, then right-click each → Copy ID to Clipboard.
+3. Drag it into **ReplicatedStorage** and rename it to exactly **OpalDumpling**.
+   A `SquishyMeshes` folder is the tidy home, but anywhere in ReplicatedStorage
+   works. A Model wrapper is fine as long as a MeshPart is inside.
 4. If the face points the wrong way in Play, rotate the template in 90° steps
    and test again — the game copies the template's rotation.
+
+The Output tells you which way it went: `Using imported mesh 'OpalDumpling'`, or
+a warning naming exactly what it couldn't find.
 
 The catalog's `shape = "opalmesh"` uses that template automatically and falls
 back to the primitive dumpling when it's missing, so nothing breaks in a place
