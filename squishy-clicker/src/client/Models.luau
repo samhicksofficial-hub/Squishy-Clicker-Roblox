@@ -370,10 +370,63 @@ local MESH_SHAPES: { [string]: string } = {
 	opalmesh = "OpalDumpling",
 }
 
-local function tryBuildMesh(rig: Rig, templateName: string): BasePart?
+-- Said once per template. A mesh that silently falls back to a primitive is
+-- exactly the bug that wastes an afternoon, so the Output always explains
+-- itself — either which mesh is in use, or precisely what is missing.
+local meshReported: { [string]: boolean } = {}
+
+local function findMeshTemplate(templateName: string): BasePart?
 	local folder = ReplicatedStorage:FindFirstChild("SquishyMeshes")
-	local template = folder and folder:FindFirstChild(templateName)
-	if not (template and template:IsA("BasePart")) then
+	local entry = folder and folder:FindFirstChild(templateName)
+	if not entry then
+		return nil
+	end
+	if entry:IsA("BasePart") then
+		return entry
+	end
+	-- Studio's Import 3D wraps the mesh in a Model, so accept that too and dig
+	-- the MeshPart out rather than failing on a technicality.
+	for _, descendant in entry:GetDescendants() do
+		if descendant:IsA("MeshPart") then
+			return descendant
+		end
+	end
+	return nil
+end
+
+local function reportMissingMesh(shape: string, templateName: string)
+	local folder = ReplicatedStorage:FindFirstChild("SquishyMeshes")
+	if not folder then
+		warn(
+			("[SquishyClicker] '%s' wants the mesh '%s', but ReplicatedStorage has no SquishyMeshes folder. Using the primitive shape. Fix: create a Folder in ReplicatedStorage named exactly SquishyMeshes and put the imported MeshPart inside it."):format(
+				shape,
+				templateName
+			)
+		)
+		return
+	end
+
+	local found: { string } = {}
+	for _, child in folder:GetChildren() do
+		table.insert(found, ("%s [%s]"):format(child.Name, child.ClassName))
+	end
+	warn(
+		("[SquishyClicker] '%s' wants a MeshPart named '%s' inside ReplicatedStorage.SquishyMeshes, which currently holds: %s. Using the primitive shape. Fix: rename the imported part to exactly '%s' (Import 3D usually wraps it in a Model — a Model is fine as long as a MeshPart is inside)."):format(
+			shape,
+			templateName,
+			#found > 0 and table.concat(found, ", ") or "nothing",
+			templateName
+		)
+	)
+end
+
+local function tryBuildMesh(rig: Rig, shape: string, templateName: string): BasePart?
+	local template = findMeshTemplate(templateName)
+	if not template then
+		if not meshReported[templateName] then
+			meshReported[templateName] = true
+			reportMissingMesh(shape, templateName)
+		end
 		return nil
 	end
 
@@ -383,14 +436,20 @@ local function tryBuildMesh(rig: Rig, templateName: string): BasePart?
 	mesh.CanQuery = false
 	mesh.CanTouch = false
 
-	-- Normalise to squishy size no matter how big the import came in.
+	-- Normalise the largest dimension to squishy size, however the import came
+	-- in — Import 3D scales are wildly inconsistent between models.
 	local size = mesh.Size
-	local widest = math.max(size.X, size.Z, 0.05)
-	mesh.Size = size * (2.7 / widest)
+	local largest = math.max(size.X, size.Y, size.Z, 0.05)
+	mesh.Size = size * (2.7 / largest)
 
 	-- The template's rotation in Studio is kept, so aiming the face is done by
 	-- rotating the template — in 90° steps, or the squash math goes skewed.
 	Models.add(rig, mesh, template.CFrame.Rotation)
+
+	if not meshReported[templateName] then
+		meshReported[templateName] = true
+		print(("[SquishyClicker] Using imported mesh '%s' for '%s'."):format(templateName, shape))
+	end
 	return mesh
 end
 
@@ -403,7 +462,7 @@ function Models.buildSquishy(parent: Instance, shape: string?, color: Color3, sp
 	local hasOwnFace = false
 	local meshName = MESH_SHAPES[shape or ""]
 	if meshName then
-		primary = tryBuildMesh(rig, meshName)
+		primary = tryBuildMesh(rig, shape :: string, meshName)
 		hasOwnFace = primary ~= nil -- imported textures bake the face in
 	end
 	if not primary then
