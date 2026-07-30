@@ -94,7 +94,7 @@ function Debug.mount(gui: ScreenGui, scene: any)
 
 	-- ---------- quick actions ----------
 	local grid = make("Frame", {
-		Size = UDim2.new(1, -16, 0, 148),
+		Size = UDim2.new(1, -16, 0, 192),
 		Position = UDim2.new(0, 8, 0, 32),
 		BackgroundTransparency = 1,
 		ZIndex = 41,
@@ -150,11 +150,23 @@ function Debug.mount(gui: ScreenGui, scene: any)
 		backdropFaded = not backdropFaded
 		scene.setBackdropFaded(backdropFaded)
 	end)
+	quickButton(9, "Rotate Clicker", function()
+		local yaw = scene.rotateClicker()
+		if yaw then
+			print(
+				("[SquishyClicker] mesh yaw = %d. Happy with it? Put that number in MESH_SHAPES in Models.luau to make it stick."):format(
+					yaw
+				)
+			)
+		else
+			print("[SquishyClicker] The equipped squishy is a built-in shape — only imported meshes need aiming.")
+		end
+	end)
 
 	-- ---------- force a reveal ----------
 	make("TextLabel", {
 		Size = UDim2.new(1, -16, 0, 18),
-		Position = UDim2.new(0, 8, 0, 186),
+		Position = UDim2.new(0, 8, 0, 230),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		Text = "Force reveal (also grants a copy)",
@@ -166,8 +178,8 @@ function Debug.mount(gui: ScreenGui, scene: any)
 	})
 
 	local list = make("ScrollingFrame", {
-		Size = UDim2.new(1, -16, 1, -216),
-		Position = UDim2.new(0, 8, 0, 208),
+		Size = UDim2.new(1, -16, 1, -260),
+		Position = UDim2.new(0, 8, 0, 252),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 4,

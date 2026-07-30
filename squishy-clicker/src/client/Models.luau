@@ -366,9 +366,30 @@ end
 -- ReplicatedStorage/SquishyMeshes. Shapes listed here use that template when
 -- it exists and quietly fall back to their primitive builder when it doesn't,
 -- so the game never breaks in a place without the imports.
-local MESH_SHAPES: { [string]: string } = {
-	opalmesh = "OpalDumpling",
+export type MeshConfig = {
+	template: string,
+	-- Spins the imported model about Y so its face points at the camera.
+	-- Importers disagree about which way is "front", so this is per-model.
+	-- Keep it to 90° steps: the squash maths in Models.apply is only exact on
+	-- right angles. Find the right value live with the debug menu's
+	-- "Rotate Clicker" button, then write it in here.
+	yaw: number,
 }
+
+local MESH_SHAPES: { [string]: MeshConfig } = {
+	opalmesh = { template = "OpalDumpling", yaw = 180 },
+}
+
+-- Debug hook: nudge a mesh's facing at runtime so the right angle can be found
+-- by eye. Returns the new yaw, or nil if this shape isn't mesh-backed.
+function Models.bumpMeshYaw(shape: string?, delta: number): number?
+	local config = MESH_SHAPES[shape or ""]
+	if not config then
+		return nil
+	end
+	config.yaw = (config.yaw + delta) % 360
+	return config.yaw
+end
 
 -- Said once per template. A mesh that silently falls back to a primitive is
 -- exactly the bug that wastes an afternoon, so the Output always explains
@@ -411,7 +432,8 @@ local function reportMissingMesh(shape: string, templateName: string)
 	)
 end
 
-local function tryBuildMesh(rig: Rig, shape: string, templateName: string): BasePart?
+local function tryBuildMesh(rig: Rig, shape: string, config: MeshConfig): BasePart?
+	local templateName = config.template
 	local template = findMeshTemplate(templateName)
 	if not template then
 		if not meshReported[templateName] then
@@ -433,9 +455,9 @@ local function tryBuildMesh(rig: Rig, shape: string, templateName: string): Base
 	local largest = math.max(size.X, size.Y, size.Z, 0.05)
 	mesh.Size = size * (2.7 / largest)
 
-	-- The template's rotation in Studio is kept, so aiming the face is done by
-	-- rotating the template — in 90° steps, or the squash math goes skewed.
-	Models.add(rig, mesh, template.CFrame.Rotation)
+	-- Configured yaw first, then whatever rotation the template carries in
+	-- Studio, so the model can be aimed from either place.
+	Models.add(rig, mesh, CFrame.fromEulerAnglesXYZ(0, math.rad(config.yaw), 0) * template.CFrame.Rotation)
 
 	if not meshReported[templateName] then
 		meshReported[templateName] = true
@@ -451,9 +473,9 @@ function Models.buildSquishy(parent: Instance, shape: string?, color: Color3, sp
 
 	local primary: BasePart? = nil
 	local hasOwnFace = false
-	local meshName = MESH_SHAPES[shape or ""]
-	if meshName then
-		primary = tryBuildMesh(rig, shape :: string, meshName)
+	local meshConfig = MESH_SHAPES[shape or ""]
+	if meshConfig then
+		primary = tryBuildMesh(rig, shape :: string, meshConfig)
 		hasOwnFace = primary ~= nil -- imported textures bake the face in
 	end
 	if not primary then

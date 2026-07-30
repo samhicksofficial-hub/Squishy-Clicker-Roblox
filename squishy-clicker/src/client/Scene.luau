@@ -268,6 +268,8 @@ cushion.CanTouch = false
 cushion.Parent = stage
 
 local clickerModel: Models.SquishyModel? = nil
+-- Remembered so the debug menu can rebuild the toy after nudging its facing.
+local clickerSpec: { shape: string?, color: Color3, sparkle: boolean, id: string }? = nil
 
 -- ---------- lights and particles ----------
 
@@ -608,6 +610,7 @@ function Scene.setClicker(shape: string?, color: Color3, sparkle: boolean, id: s
 	if previous then
 		previous.rig.folder:Destroy()
 	end
+	clickerSpec = { shape = shape, color = color, sparkle = sparkle, id = id }
 
 	local toy = Models.buildSquishy(stage, shape, color, sparkle)
 	toy.billboard.Enabled = not toy.hasOwnFace
@@ -617,6 +620,22 @@ function Scene.setClicker(shape: string?, color: Color3, sparkle: boolean, id: s
 
 	tuneClickerSound(shape, id)
 	kick(clickerSquash, 1) -- welcome squish
+end
+
+-- Debug: turn the equipped mesh 90° and rebuild it, so its facing can be dialled
+-- in by eye. Returns the new yaw to write into MESH_SHAPES, or nil if the
+-- equipped squishy is a primitive (those are authored facing the camera).
+function Scene.rotateClicker(): number?
+	local spec = clickerSpec
+	if not spec then
+		return nil
+	end
+	local yaw = Models.bumpMeshYaw(spec.shape, 90)
+	if not yaw then
+		return nil
+	end
+	Scene.setClicker(spec.shape, spec.color, spec.sparkle, spec.id)
+	return yaw
 end
 
 function Scene.setProgress(fraction: number)

@@ -94,8 +94,9 @@ selene src
 
 Press **F2** in Studio (or click 🐛 Debug, top of the screen) for a test menu:
 bank steamers, fill the bar, grant copies, max every star, reset your save,
-flip the camera and blur, and force-reveal any squishy in the catalog by name —
-which is how you look at a Mythical without rolling 0.5% odds.
+flip the camera and blur, aim an imported mesh with Rotate Clicker, and
+force-reveal any squishy in the catalog by name — which is how you look at a
+Mythical without rolling 0.5% odds.
 
 It is **Studio only**. The server only creates the remote behind it when
 `RunService:IsStudio()` is true, so a published game has nothing to call. To
@@ -120,8 +121,10 @@ while the game is running is discarded the moment you press Stop.
 3. Drag it into **ReplicatedStorage** and rename it to exactly **OpalDumpling**.
    A `SquishyMeshes` folder is the tidy home, but anywhere in ReplicatedStorage
    works. A Model wrapper is fine as long as a MeshPart is inside.
-4. If the face points the wrong way in Play, rotate the template in 90° steps
-   and test again — the game copies the template's rotation.
+4. If the face points the wrong way, equip it and press **Rotate Clicker** in
+   the debug menu until it looks right, then write the yaw it prints into
+   `MESH_SHAPES` in `Models.luau` so it sticks. (Rotating the template in
+   Studio works too — the game applies that on top.)
 
 The Output tells you which way it went: `Using imported mesh 'OpalDumpling'`, or
 a warning naming exactly what it couldn't find.
