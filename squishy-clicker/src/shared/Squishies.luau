@@ -63,8 +63,9 @@ local list: { Squishy } = {
 	-- Legendary
 	{ id = "gold",     name = "Gold Glitter",   rarity = "Legendary", color = Color3.fromRGB(226, 178, 66),  sparkle = true },
 
-	-- Mythical: the big iridescent pearl one
-	{ id = "opal",     name = "Opal Dumpling",  rarity = "Mythical",  color = Color3.fromRGB(232, 225, 245), sparkle = true },
+	-- Mythical: the big iridescent pearl one — uses the imported 3D mesh when
+	-- ReplicatedStorage/SquishyMeshes/OpalDumpling exists (see README).
+	{ id = "opal",     name = "Opal Dumpling",  rarity = "Mythical",  color = Color3.fromRGB(232, 225, 245), sparkle = true,  shape = "opalmesh" },
 
 	-- ===== The squishy shop haul =====
 	-- Commons: everyday squishies

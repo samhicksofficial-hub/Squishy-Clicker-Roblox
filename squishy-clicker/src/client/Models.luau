@@ -19,6 +19,8 @@
 --  from a catalog entry in Squishies.luau.
 -- ============================================================
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local Models = {}
 
 -- Cylinder parts run along their own X axis; this stands one upright.
@@ -42,6 +44,9 @@ export type SquishyModel = {
 	face: TextLabel,
 	billboard: BillboardGui,
 	sparkles: ParticleEmitter,
+	-- True for imported meshes whose texture already includes a face: the
+	-- billboard face must stay OFF for these or the squishy grows two faces.
+	hasOwnFace: boolean,
 }
 
 -- ---------- rig plumbing ----------
@@ -355,12 +360,57 @@ shapeBuilders.tub = function(rig, color)
 	return scoop
 end
 
+-- ---------- imported mesh squishies ----------
+-- Real 3D models (source files live in assets/) can't be synced by Rojo: they
+-- must be imported once in Studio and parked as a MeshPart template under
+-- ReplicatedStorage/SquishyMeshes. Shapes listed here use that template when
+-- it exists and quietly fall back to their primitive builder when it doesn't,
+-- so the game never breaks in a place without the imports.
+local MESH_SHAPES: { [string]: string } = {
+	opalmesh = "OpalDumpling",
+}
+
+local function tryBuildMesh(rig: Rig, templateName: string): BasePart?
+	local folder = ReplicatedStorage:FindFirstChild("SquishyMeshes")
+	local template = folder and folder:FindFirstChild(templateName)
+	if not (template and template:IsA("BasePart")) then
+		return nil
+	end
+
+	local mesh = template:Clone()
+	mesh.Anchored = true
+	mesh.CanCollide = false
+	mesh.CanQuery = false
+	mesh.CanTouch = false
+
+	-- Normalise to squishy size no matter how big the import came in.
+	local size = mesh.Size
+	local widest = math.max(size.X, size.Z, 0.05)
+	mesh.Size = size * (2.7 / widest)
+
+	-- The template's rotation in Studio is kept, so aiming the face is done by
+	-- rotating the template — in 90° steps, or the squash math goes skewed.
+	Models.add(rig, mesh, template.CFrame.Rotation)
+	return mesh
+end
+
 -- ---------- building a squishy ----------
 
 function Models.buildSquishy(parent: Instance, shape: string?, color: Color3, sparkle: boolean): SquishyModel
 	local rig = Models.newRig("Squishy", parent)
-	local builder = shapeBuilders[shape or "dumpling"] or shapeBuilders.dumpling
-	local primary = builder(rig, color)
+
+	local primary: BasePart? = nil
+	local hasOwnFace = false
+	local meshName = MESH_SHAPES[shape or ""]
+	if meshName then
+		primary = tryBuildMesh(rig, meshName)
+		hasOwnFace = primary ~= nil -- imported textures bake the face in
+	end
+	if not primary then
+		local builder = shapeBuilders[shape or "dumpling"] or shapeBuilders.dumpling
+		primary = builder(rig, color)
+	end
+	assert(primary, "shape builder returned no primary part")
 
 	-- The face rides on a billboard so it always turns to the camera — the
 	-- squishy can spin freely and still look back at you.
@@ -407,7 +457,14 @@ function Models.buildSquishy(parent: Instance, shape: string?, color: Color3, sp
 	sparkles.Enabled = false
 	sparkles.Parent = primary
 
-	return { rig = rig, primary = primary, face = face, billboard = billboard, sparkles = sparkles }
+	return {
+		rig = rig,
+		primary = primary,
+		face = face,
+		billboard = billboard,
+		sparkles = sparkles,
+		hasOwnFace = hasOwnFace,
+	}
 end
 
 return Models

@@ -89,6 +89,27 @@ Lint before you commit:
 selene src
 ```
 
+## Imported 3D models (assets/)
+
+Real meshes (like the opal dumpling in `assets/opal-dumpling/`) can't be synced
+by Rojo — they go through Studio once:
+
+1. Studio → **File → Import 3D** → pick `assets/opal-dumpling/base.obj`.
+2. Select the imported MeshPart → add a **SurfaceAppearance** child → set its
+   maps by uploading the textures from the same folder: ColorMap =
+   `texture_diffuse.png`, NormalMap = `texture_normal.png`, MetalnessMap =
+   `texture_metallic.png`, RoughnessMap = `texture_roughness.png`.
+3. In ReplicatedStorage, make a Folder named **SquishyMeshes** and put the
+   MeshPart inside, renamed to **OpalDumpling**.
+4. If the face points the wrong way in Play, rotate the template in 90° steps
+   and test again — the game copies the template's rotation.
+
+The catalog's `shape = "opalmesh"` uses that template automatically and falls
+back to the primitive dumpling when it's missing, so nothing breaks in a place
+without the import. New mesh squishies follow the same pattern: add the source
+files under `assets/`, an entry in `MESH_SHAPES` in `Models.luau`, and a
+template part under SquishyMeshes.
+
 ## Saving
 
 Studio blocks DataStores unless you enable: Game Settings → Security →
