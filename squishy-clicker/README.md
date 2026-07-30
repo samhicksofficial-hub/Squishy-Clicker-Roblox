@@ -129,9 +129,12 @@ while the game is running is discarded the moment you press Stop.
 The Output tells you which way it went: `Using imported mesh 'OpalDumpling'`, or
 a warning naming exactly what it couldn't find.
 
-The catalog's `shape = "opalmesh"` uses that template automatically and falls
-back to the primitive dumpling when it's missing, so nothing breaks in a place
-without the import. New mesh squishies follow the same pattern: add the source
+All thirteen dumplings share that one mesh: `opalmesh` uses the texture as
+imported, and `dumplingmesh` tints it via `SurfaceAppearance.Color` — the
+texture is pale and pearly, so multiplying by a colour keeps the glitter and
+the baked-in face while changing the shade. One mould, thirteen colours. Both
+fall back to the primitive dumpling when the template is missing, so nothing
+breaks in a place without the import. New mesh squishies follow the same pattern: add the source
 files under `assets/`, an entry in `MESH_SHAPES` in `Models.luau`, and a
 template part under SquishyMeshes.
 

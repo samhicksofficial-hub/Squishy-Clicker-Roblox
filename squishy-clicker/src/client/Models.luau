@@ -374,10 +374,18 @@ export type MeshConfig = {
 	-- right angles. Find the right value live with the debug menu's
 	-- "Rotate Clicker" button, then write it in here.
 	yaw: number,
+	-- Repaint the mesh in the squishy's colour. The opal texture is pale and
+	-- pearly, so multiplying it by a colour keeps the glitter and the baked-in
+	-- face while changing the shade — one mould, thirteen dumplings, exactly
+	-- how the real squishies are made.
+	tint: boolean?,
 }
 
 local MESH_SHAPES: { [string]: MeshConfig } = {
+	-- The Mythical keeps the texture exactly as imported.
 	opalmesh = { template = "OpalDumpling", yaw = 180 },
+	-- Every other dumpling: same mesh, tinted.
+	dumplingmesh = { template = "OpalDumpling", yaw = 180, tint = true },
 }
 
 -- Debug hook: nudge a mesh's facing at runtime so the right angle can be found
@@ -432,7 +440,30 @@ local function reportMissingMesh(shape: string, templateName: string)
 	)
 end
 
-local function tryBuildMesh(rig: Rig, shape: string, config: MeshConfig): BasePart?
+local tintReported = false
+
+-- SurfaceAppearance.Color multiplies the ColorMap, which is what lets one
+-- pearly texture become a whole colour range. MeshPart.Color is set too as a
+-- fallback for meshes imported without a SurfaceAppearance.
+local function tintMesh(mesh: BasePart, color: Color3)
+	mesh.Color = color
+
+	local appearance = mesh:FindFirstChildOfClass("SurfaceAppearance")
+	if not appearance then
+		return
+	end
+	local ok = pcall(function()
+		(appearance :: any).Color = color
+	end)
+	if not ok and not tintReported then
+		tintReported = true
+		warn(
+			"[SquishyClicker] This Studio build's SurfaceAppearance has no Color property, so tinted dumplings will all wear the opal texture. Fix: update Studio, or delete the SurfaceAppearance from the template to fall back to flat colours."
+		)
+	end
+end
+
+local function tryBuildMesh(rig: Rig, shape: string, config: MeshConfig, color: Color3): BasePart?
 	local templateName = config.template
 	local template = findMeshTemplate(templateName)
 	if not template then
@@ -448,6 +479,9 @@ local function tryBuildMesh(rig: Rig, shape: string, config: MeshConfig): BasePa
 	mesh.CanCollide = false
 	mesh.CanQuery = false
 	mesh.CanTouch = false
+	if config.tint then
+		tintMesh(mesh, color)
+	end
 
 	-- Normalise the largest dimension to squishy size, however the import came
 	-- in — Import 3D scales are wildly inconsistent between models.
@@ -475,7 +509,7 @@ function Models.buildSquishy(parent: Instance, shape: string?, color: Color3, sp
 	local hasOwnFace = false
 	local meshConfig = MESH_SHAPES[shape or ""]
 	if meshConfig then
-		primary = tryBuildMesh(rig, shape :: string, meshConfig)
+		primary = tryBuildMesh(rig, shape :: string, meshConfig, color)
 		hasOwnFace = primary ~= nil -- imported textures bake the face in
 	end
 	if not primary then

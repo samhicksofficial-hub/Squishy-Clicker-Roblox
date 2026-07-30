@@ -41,27 +41,29 @@ local rarities: { Rarity } = {
 }
 
 local list: { Squishy } = {
+	-- The dumplings all share the imported opal mesh, tinted — one mould in a
+	-- range of colours, the way the real squishies are made.
 	-- Commons: the classic solid-color dumplings
-	{ id = "red",     name = "Red Dumpling",    rarity = "Common",    color = Color3.fromRGB(214, 69, 65),   sparkle = false },
-	{ id = "pink",    name = "Pink Dumpling",   rarity = "Common",    color = Color3.fromRGB(247, 168, 195), sparkle = false },
-	{ id = "blue",    name = "Blue Dumpling",   rarity = "Common",    color = Color3.fromRGB(94, 156, 222),  sparkle = false },
-	{ id = "green",   name = "Green Dumpling",  rarity = "Common",    color = Color3.fromRGB(139, 197, 96),  sparkle = false },
+	{ id = "red",     name = "Red Dumpling",    rarity = "Common",    color = Color3.fromRGB(214, 69, 65),   sparkle = false, shape = "dumplingmesh" },
+	{ id = "pink",    name = "Pink Dumpling",   rarity = "Common",    color = Color3.fromRGB(247, 168, 195), sparkle = false, shape = "dumplingmesh" },
+	{ id = "blue",    name = "Blue Dumpling",   rarity = "Common",    color = Color3.fromRGB(94, 156, 222),  sparkle = false, shape = "dumplingmesh" },
+	{ id = "green",   name = "Green Dumpling",  rarity = "Common",    color = Color3.fromRGB(139, 197, 96),  sparkle = false, shape = "dumplingmesh" },
 
 	-- Uncommons
-	{ id = "white",   name = "White Dumpling",  rarity = "Uncommon",  color = Color3.fromRGB(243, 240, 235), sparkle = false },
-	{ id = "purple",  name = "Purple Dumpling", rarity = "Uncommon",  color = Color3.fromRGB(158, 122, 216), sparkle = false },
-	{ id = "teal",    name = "Teal Dumpling",   rarity = "Uncommon",  color = Color3.fromRGB(84, 196, 196),  sparkle = false },
+	{ id = "white",   name = "White Dumpling",  rarity = "Uncommon",  color = Color3.fromRGB(243, 240, 235), sparkle = false, shape = "dumplingmesh" },
+	{ id = "purple",  name = "Purple Dumpling", rarity = "Uncommon",  color = Color3.fromRGB(158, 122, 216), sparkle = false, shape = "dumplingmesh" },
+	{ id = "teal",    name = "Teal Dumpling",   rarity = "Uncommon",  color = Color3.fromRGB(84, 196, 196),  sparkle = false, shape = "dumplingmesh" },
 
 	-- Rares: the glitter ones
-	{ id = "skyglit",  name = "Sky Glitter",    rarity = "Rare",      color = Color3.fromRGB(70, 120, 200),  sparkle = true },
-	{ id = "oliveglit", name = "Olive Glitter", rarity = "Rare",      color = Color3.fromRGB(140, 150, 70),  sparkle = true },
+	{ id = "skyglit",  name = "Sky Glitter",    rarity = "Rare",      color = Color3.fromRGB(70, 120, 200),  sparkle = true,  shape = "dumplingmesh" },
+	{ id = "oliveglit", name = "Olive Glitter", rarity = "Rare",      color = Color3.fromRGB(140, 150, 70),  sparkle = true,  shape = "dumplingmesh" },
 
 	-- Epics
-	{ id = "confetti", name = "Confetti Pink",  rarity = "Epic",      color = Color3.fromRGB(240, 140, 180), sparkle = true },
-	{ id = "rainbow",  name = "Rainbow Melt",   rarity = "Epic",      color = Color3.fromRGB(190, 220, 120), sparkle = true },
+	{ id = "confetti", name = "Confetti Pink",  rarity = "Epic",      color = Color3.fromRGB(240, 140, 180), sparkle = true,  shape = "dumplingmesh" },
+	{ id = "rainbow",  name = "Rainbow Melt",   rarity = "Epic",      color = Color3.fromRGB(190, 220, 120), sparkle = true,  shape = "dumplingmesh" },
 
 	-- Legendary
-	{ id = "gold",     name = "Gold Glitter",   rarity = "Legendary", color = Color3.fromRGB(226, 178, 66),  sparkle = true },
+	{ id = "gold",     name = "Gold Glitter",   rarity = "Legendary", color = Color3.fromRGB(226, 178, 66),  sparkle = true,  shape = "dumplingmesh" },
 
 	-- Mythical: the big iridescent pearl one — uses the imported 3D mesh when
 	-- ReplicatedStorage/SquishyMeshes/OpalDumpling exists (see README).
