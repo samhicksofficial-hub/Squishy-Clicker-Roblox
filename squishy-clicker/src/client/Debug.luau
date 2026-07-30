@@ -68,7 +68,7 @@ function Debug.mount(gui: ScreenGui, scene: any)
 
 	local panel = make("Frame", {
 		Name = "DebugPanel",
-		Size = UDim2.new(0, 320, 0, 470),
+		Size = UDim2.new(0, 320, 0, 540),
 		Position = UDim2.new(0, 376, 0, 66),
 		BackgroundColor3 = COLOR.panel,
 		BackgroundTransparency = 0.06,
@@ -94,7 +94,7 @@ function Debug.mount(gui: ScreenGui, scene: any)
 
 	-- ---------- quick actions ----------
 	local grid = make("Frame", {
-		Size = UDim2.new(1, -16, 0, 192),
+		Size = UDim2.new(1, -16, 0, 232),
 		Position = UDim2.new(0, 8, 0, 32),
 		BackgroundTransparency = 1,
 		ZIndex = 41,
@@ -150,23 +150,58 @@ function Debug.mount(gui: ScreenGui, scene: any)
 		backdropFaded = not backdropFaded
 		scene.setBackdropFaded(backdropFaded)
 	end)
+	-- These three print the shape they changed, so the value can be written
+	-- into the right MESH_SHAPES entry without having to remember what was
+	-- equipped at the time.
+	local function notMesh(shape: string?)
+		print(
+			("[SquishyClicker] '%s' is a built-in shape — only imported meshes need aiming."):format(shape or "dumpling")
+		)
+	end
+
 	quickButton(9, "Rotate Clicker", function()
-		local yaw = scene.rotateClicker()
+		local yaw, shape = scene.rotateClicker()
 		if yaw then
+			print(("[SquishyClicker] %s: yaw = %d — write it into MESH_SHAPES in Models.luau."):format(shape, yaw))
+		else
+			notMesh(shape)
+		end
+	end)
+	quickButton(10, "Raise Clicker", function()
+		local offset, shape = scene.nudgeClicker(Vector3.new(0, 0.1, 0))
+		if offset then
 			print(
-				("[SquishyClicker] mesh yaw = %d. Happy with it? Put that number in MESH_SHAPES in Models.luau to make it stick."):format(
-					yaw
+				("[SquishyClicker] %s: offset = Vector3.new(%.2f, %.2f, %.2f) — write it into MESH_SHAPES."):format(
+					shape,
+					offset.X,
+					offset.Y,
+					offset.Z
 				)
 			)
 		else
-			print("[SquishyClicker] The equipped squishy is a built-in shape — only imported meshes need aiming.")
+			notMesh(shape)
+		end
+	end)
+	quickButton(11, "Lower Clicker", function()
+		local offset, shape = scene.nudgeClicker(Vector3.new(0, -0.1, 0))
+		if offset then
+			print(
+				("[SquishyClicker] %s: offset = Vector3.new(%.2f, %.2f, %.2f) — write it into MESH_SHAPES."):format(
+					shape,
+					offset.X,
+					offset.Y,
+					offset.Z
+				)
+			)
+		else
+			notMesh(shape)
 		end
 	end)
 
 	-- ---------- force a reveal ----------
 	make("TextLabel", {
 		Size = UDim2.new(1, -16, 0, 18),
-		Position = UDim2.new(0, 8, 0, 230),
+		Position = UDim2.new(0, 8, 0, 270),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		Text = "Force reveal (also grants a copy)",
@@ -178,8 +213,8 @@ function Debug.mount(gui: ScreenGui, scene: any)
 	})
 
 	local list = make("ScrollingFrame", {
-		Size = UDim2.new(1, -16, 1, -260),
-		Position = UDim2.new(0, 8, 0, 252),
+		Size = UDim2.new(1, -16, 1, -300),
+		Position = UDim2.new(0, 8, 0, 292),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 4,

@@ -628,19 +628,34 @@ function Scene.setClicker(shape: string?, color: Color3, sparkle: boolean, id: s
 end
 
 -- Debug: turn the equipped mesh 90° and rebuild it, so its facing can be dialled
--- in by eye. Returns the new yaw to write into MESH_SHAPES, or nil if the
+-- in by eye. Returns the new yaw and which shape it belongs to, or nil if the
 -- equipped squishy is a primitive (those are authored facing the camera).
-function Scene.rotateClicker(): number?
+function Scene.rotateClicker(): (number?, string?)
 	local spec = clickerSpec
 	if not spec then
-		return nil
+		return nil, nil
 	end
 	local yaw = Models.bumpMeshYaw(spec.shape, 90)
 	if not yaw then
-		return nil
+		return nil, spec.shape
 	end
 	Scene.setClicker(spec.shape, spec.color, spec.sparkle, spec.id)
-	return yaw
+	return yaw, spec.shape
+end
+
+-- Debug: shift the equipped mesh, for one that sits too low or too high on the
+-- cushion. Same deal — returns the offset to write into MESH_SHAPES.
+function Scene.nudgeClicker(delta: Vector3): (Vector3?, string?)
+	local spec = clickerSpec
+	if not spec then
+		return nil, nil
+	end
+	local offset = Models.nudgeMeshOffset(spec.shape, delta)
+	if not offset then
+		return nil, spec.shape
+	end
+	Scene.setClicker(spec.shape, spec.color, spec.sparkle, spec.id)
+	return offset, spec.shape
 end
 
 function Scene.setProgress(fraction: number)
