@@ -12,6 +12,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -133,6 +134,62 @@ local clickArea = make("TextButton", {
 clickArea.MouseButton1Down:Connect(function()
 	Scene.click()
 	ClickSteamer:FireServer()
+end)
+
+-- ---------- drag to spin the squishy ----------
+-- Click-and-drag on PC, touch-and-drag on mobile. A press on its own does
+-- nothing to the spin: only movement past a few pixels counts as a drag, so
+-- hammering the clicker never kills a spin that's already going. Movement and
+-- release come from UserInputService rather than the button, so a drag that
+-- wanders off the button — or lets go outside it — still behaves.
+local DRAG_THRESHOLD = 5 -- pixels of travel before a press becomes a drag
+
+local pointerDown = false
+local pointerTouch: InputObject? = nil
+local pointerLastX = 0
+local pointerTravel = 0
+local pointerDragging = false
+
+clickArea.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		pointerDown = true
+		pointerTouch = input
+		pointerLastX = input.Position.X
+		pointerTravel = 0
+		pointerDragging = false
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if not pointerDown then
+		return
+	end
+	-- A mouse reports movement on its own input object; a touch reports it on
+	-- the same one that began the press.
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement and input ~= pointerTouch then
+		return
+	end
+
+	local delta = input.Position.X - pointerLastX
+	pointerLastX = input.Position.X
+	pointerTravel += math.abs(delta)
+	if not pointerDragging and pointerTravel < DRAG_THRESHOLD then
+		return
+	end
+	pointerDragging = true
+	Scene.dragClicker(delta)
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input ~= pointerTouch then
+		return
+	end
+	pointerDown = false
+	pointerTouch = nil
+	if pointerDragging then
+		pointerDragging = false
+		Scene.releaseClicker()
+	end
 end)
 
 -- ---------- header ----------

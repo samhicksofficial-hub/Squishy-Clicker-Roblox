@@ -271,6 +271,21 @@ local clickerModel: Models.SquishyModel? = nil
 -- Remembered so the debug menu can rebuild the toy after nudging its facing.
 local clickerSpec: { shape: string?, color: Color3, sparkle: boolean, id: string }? = nil
 
+-- ---------- spinning the click toy ----------
+-- Drag the squishy and it turns on its cushion, then coasts to a stop like a
+-- flywheel. Drag deltas are banked here and spent in the render loop: input
+-- events fire at their own rate, and a velocity only means something measured
+-- against a known frame time.
+local RADIANS_PER_PIXEL = 0.015
+local SPIN_FRICTION = 1.6 -- how quickly a released spin bleeds off
+
+local spinAngle = 0
+local spinVelocity = 0
+local spinDragging = false
+local spinPending = 0
+-- The idle sway steps aside while the squishy is being spun, then eases back.
+local swayAmount = 1
+
 -- ---------- lights and particles ----------
 
 -- Restrained on purpose: the first pass at these numbers (Brightness 2.4,
@@ -532,6 +547,24 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		revealFace.Enabled = risen > 0.06
 	end
 
+	-- Drag-to-spin: spend whatever the pointer banked this frame, else coast.
+	if spinDragging then
+		local applied = spinPending
+		spinPending = 0
+		spinAngle += applied
+		-- Smoothed, so one stuttery frame at the moment of release doesn't
+		-- decide how hard the squishy was thrown.
+		spinVelocity += (applied / dt - spinVelocity) * math.min(dt * 18, 1)
+	else
+		spinAngle += spinVelocity * dt
+		spinVelocity *= 1 - math.min(dt * SPIN_FRICTION, 1)
+		if math.abs(spinVelocity) < 0.01 then
+			spinVelocity = 0
+		end
+	end
+	local swayTarget = (spinDragging or math.abs(spinVelocity) > 0.25) and 0 or 1
+	swayAmount += (swayTarget - swayAmount) * math.min(dt * 4, 1)
+
 	-- The click toy on its cushion: idle breathing, hard squash on clicks.
 	local toy = clickerModel
 	if toy then
@@ -539,7 +572,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		Models.apply(
 			toy.rig,
 			CFrame.new(CLICKER_POS + Vector3.new(0, math.sin(elapsed * 2.1) * 0.05, 0))
-				* CFrame.fromEulerAnglesXYZ(0, math.sin(elapsed * 1.3) * 0.08, 0),
+				* CFrame.fromEulerAnglesXYZ(0, spinAngle + math.sin(elapsed * 1.3) * 0.08 * swayAmount, 0),
 			Vector3.new(1 + cs * 0.28, 1 - cs * 0.34, 1 + cs * 0.28) * CLICKER_SCALE
 		)
 	end
@@ -578,6 +611,19 @@ RunService.RenderStepped:Connect(function(deltaTime)
 end)
 
 -- ---------- what init.client.luau calls ----------
+
+-- Drag the squishy round on its cushion. Called only once the pointer has
+-- actually moved, never on a bare press, so ordinary clicking never stops a
+-- spin that is already going.
+function Scene.dragClicker(deltaPixels: number)
+	spinDragging = true
+	spinPending += deltaPixels * RADIANS_PER_PIXEL
+end
+
+-- Let go: whatever speed it was turning at, it keeps, and winds down.
+function Scene.releaseClicker()
+	spinDragging = false
+end
 
 -- Turn the camera: "unbox" swings 90° left onto the steamer nook, anything
 -- else swings back to the squisher.

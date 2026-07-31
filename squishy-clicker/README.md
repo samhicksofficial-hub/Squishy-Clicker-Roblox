@@ -15,7 +15,8 @@ level; hoard copies without spending them and you grind slower and slower.
 
 Your **squisher** is the star of the screen and the thing every click squishes.
 Everyone starts with a Red Dumpling; tap any discovered squishy's face in the
-collection to swap it, and every squishy has its own squish noise. The steamer
+collection to swap it, and every squishy has its own squish noise. Drag it —
+mouse or finger — to spin it on its cushion; let go and it coasts. The steamer
 waits in its own nook 90° to the left — pressing Unbox turns the camera to it
 for the reveal, then turns back.
 
