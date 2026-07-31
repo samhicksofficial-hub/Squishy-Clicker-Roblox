@@ -91,6 +91,23 @@ Lint before you commit:
 selene src
 ```
 
+## Glitter
+
+Squishies marked `sparkle = true` wear a glitter surface, tinted to their own
+colour — one gold glitter sheet becomes pink, green or gold glitter depending
+on who's wearing it. Roblox needs the image uploaded first:
+
+1. Save the glitter image into `assets/glitter/` (any name).
+2. **View → Asset Manager → Images → Add Images**, pick it, wait for it to
+   process, then right-click → **Copy ID**.
+3. Paste it into `GLITTER_TEXTURE` at the top of `Models.luau`, as
+   `rbxassetid://…`.
+
+Left empty, the glittery squishies just wear their flat colour and nothing
+breaks. Glass and neon squishies are skipped deliberately — being see-through
+or glowing is the point of those — and an imported mesh with its own texture
+keeps that texture.
+
 ## Debug menu
 
 Press **F2** in Studio (or click 🐛 Debug, top of the screen) for a test menu:

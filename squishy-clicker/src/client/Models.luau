@@ -19,9 +19,54 @@
 --  from a catalog entry in Squishies.luau.
 -- ============================================================
 
+local MaterialService = game:GetService("MaterialService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Models = {}
+
+-- ---------- glitter ----------
+-- The glittery squishies get a real sparkly surface rather than flat plastic.
+-- Roblox can't be handed a local image, so upload the glitter texture (View →
+-- Asset Manager → Images → Add Images) and paste its id here. Leave it empty
+-- and the glittery ones simply wear their colour, no harm done.
+local GLITTER_TEXTURE = ""
+-- Smaller tiles the flecks more tightly; a squishy is only ~2.7 studs across.
+local GLITTER_STUDS_PER_TILE = 0.9
+
+local glitterVariant: MaterialVariant? = nil
+
+local function ensureGlitter(): MaterialVariant?
+	if GLITTER_TEXTURE == "" then
+		return nil
+	end
+	if glitterVariant then
+		return glitterVariant
+	end
+	local variant = Instance.new("MaterialVariant")
+	variant.Name = "SquishyGlitter"
+	variant.BaseMaterial = Enum.Material.Plastic
+	variant.ColorMap = GLITTER_TEXTURE
+	variant.StudsPerTile = GLITTER_STUDS_PER_TILE
+	variant.Parent = MaterialService
+	glitterVariant = variant
+	return variant
+end
+
+-- The part keeps its own Color, and a MaterialVariant's colour map multiplies
+-- by it — so one gold glitter sheet becomes gold, pink or green glitter to
+-- match whatever squishy is wearing it.
+local function applyGlitter(part: BasePart)
+	if not ensureGlitter() then
+		return
+	end
+	-- Glass and neon are left alone: being see-through or glowing is the whole
+	-- point of the squishies that use them, and glitter would flatten that.
+	if part.Material ~= Enum.Material.SmoothPlastic and part.Material ~= Enum.Material.Plastic then
+		return
+	end
+	part.Material = Enum.Material.Plastic
+	part.MaterialVariant = "SquishyGlitter"
+end
 
 -- Cylinder parts run along their own X axis; this stands one upright.
 local UPRIGHT = CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
@@ -675,6 +720,15 @@ function Models.buildSquishy(parent: Instance, shape: string?, color: Color3, sp
 		primary = builder(rig, color)
 	end
 	assert(primary, "shape builder returned no primary part")
+
+	-- Glittery squishies get the glitter surface. On an imported mesh that
+	-- already carries its own texture this is a no-op — the texture wins — so
+	-- it only ever dresses the plain surfaces that need it.
+	if sparkle then
+		for _, piece in rig.pieces do
+			applyGlitter(piece.inst)
+		end
+	end
 
 	-- A billboard face is only built when there is one to show: a dumpling
 	-- whose texture doesn't already paint it on.
