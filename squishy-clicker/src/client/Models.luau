@@ -403,6 +403,7 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	buttermesh = { template = "ButterSquishy", yaw = 180, fallback = "butter" },
 	-- Rainbow Butter has its own tie-dye model, so it needs no tinting.
 	rainbuttermesh = { template = "RainbowButter", yaw = 0, fallback = "butter" },
+	glowdonutmesh = { template = "GlowDonut", yaw = 0, fallback = "donut" },
 }
 
 -- Debug hook: nudge a mesh's facing at runtime so the right angle can be found

@@ -96,7 +96,7 @@ local list: { Squishy } = {
 
 	-- Legendaries: the glow-in-the-dark ones
 	{ id = "sparkledrop", name = "Sparkle Drop",    rarity = "Legendary", color = Color3.fromRGB(140, 226, 198), sparkle = true,  shape = "drop" },
-	{ id = "glowdonut",   name = "Glow Doughnut",   rarity = "Legendary", color = Color3.fromRGB(132, 244, 120), sparkle = true,  shape = "donut" },
+	{ id = "glowdonut",   name = "Glow Doughnut",   rarity = "Legendary", color = Color3.fromRGB(132, 244, 120), sparkle = true,  shape = "glowdonutmesh" },
 }
 
 -- ---------- lookups (built once) ----------

@@ -116,6 +116,7 @@ Three models live in `assets/`, each needing the same one-time import:
 | `banana/` | `BananaSquishy` | Stretch Banana | one baked texture |
 | `butter/` | `ButterSquishy` | Butter Stick | one baked texture |
 | `rainbow-butter/` | `RainbowButter` | Rainbow Butter | one baked texture |
+| `glow-donut/` | `GlowDonut` | Glow Doughnut | one baked texture |
 
 Do all of this in **Edit mode, with the playtest stopped** — anything you create
 while the game is running is discarded the moment you press Stop.
