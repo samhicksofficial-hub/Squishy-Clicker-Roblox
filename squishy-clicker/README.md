@@ -97,11 +97,15 @@ Squishies marked `sparkle = true` wear a glitter surface, tinted to their own
 colour — one gold glitter sheet becomes pink, green or gold glitter depending
 on who's wearing it. Roblox needs the image uploaded first:
 
-1. Save the glitter image into `assets/glitter/` (any name).
-2. **View → Asset Manager → Images → Add Images**, pick it, wait for it to
-   process, then right-click → **Copy ID**.
+1. Upload `assets/glitter/glitter.png` — Asset Manager → **Import**.
+2. Right-click it once it has processed → **Copy ID**.
 3. Paste it into `GLITTER_TEXTURE` at the top of `Models.luau`, as
    `rbxassetid://…`.
+
+That texture is deliberately **greyscale**, not gold. A material's colour map
+multiplies by the part's colour, so neutral flakes become gold on the gold
+squishy, pink on the pink one and so on. A gold sheet would only ever tint
+toward mud. It is also generated seamlessly, so it tiles without visible seams.
 
 Left empty, the glittery squishies just wear their flat colour and nothing
 breaks. Glass and neon squishies are skipped deliberately — being see-through

@@ -26,12 +26,13 @@ local Models = {}
 
 -- ---------- glitter ----------
 -- The glittery squishies get a real sparkly surface rather than flat plastic.
--- Roblox can't be handed a local image, so upload the glitter texture (View →
--- Asset Manager → Images → Add Images) and paste its id here. Leave it empty
--- and the glittery ones simply wear their colour, no harm done.
+-- Roblox can't be handed a local image, so upload assets/glitter/glitter.png
+-- (Asset Manager → Import) and paste its id here. Leave it empty and the
+-- glittery ones simply wear their colour, no harm done.
 local GLITTER_TEXTURE = ""
--- Smaller tiles the flecks more tightly; a squishy is only ~2.7 studs across.
-local GLITTER_STUDS_PER_TILE = 0.9
+-- Roughly one tile across a squishy. Tiling any tighter and the flakes shrink
+-- below a pixel on screen, where they average back into flat grey.
+local GLITTER_STUDS_PER_TILE = 2.5
 
 local glitterVariant: MaterialVariant? = nil
 
