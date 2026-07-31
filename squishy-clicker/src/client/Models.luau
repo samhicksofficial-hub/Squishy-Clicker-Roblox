@@ -404,6 +404,9 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	-- Rainbow Butter has its own tie-dye model, so it needs no tinting.
 	rainbuttermesh = { template = "RainbowButter", yaw = 0, fallback = "butter" },
 	glowdonutmesh = { template = "GlowDonut", yaw = 0, fallback = "donut" },
+	-- All five jelly cubes are one mould in different colours, so they share a
+	-- model and tint it — the same trick the dumplings use.
+	cubemesh = { template = "SquishyCube", yaw = 0, tint = true, fallback = "jellycube" },
 }
 
 -- Debug hook: nudge a mesh's facing at runtime so the right angle can be found
@@ -432,11 +435,31 @@ end
 -- itself — either which mesh is in use, or precisely what is missing.
 local meshReported: { [string]: boolean } = {}
 
+-- Names get typed by hand in Studio, so case, spaces and underscores shouldn't
+-- decide whether a model is found: "Squishy Cube" and "squishy_cube" both mean
+-- SquishyCube.
+local function loosen(name: string): string
+	return (name:lower():gsub("[^%a%d]", ""))
+end
+
 local function findMeshEntry(templateName: string): Instance?
 	-- Searched recursively. The tidy home is ReplicatedStorage/SquishyMeshes,
 	-- but ANYWHERE in ReplicatedStorage works — a model dragged straight in
 	-- shouldn't be a silent failure over a missing folder.
-	return ReplicatedStorage:FindFirstChild(templateName, true)
+	local exact = ReplicatedStorage:FindFirstChild(templateName, true)
+	if exact then
+		return exact
+	end
+
+	local wanted = loosen(templateName)
+	for _, descendant in ReplicatedStorage:GetDescendants() do
+		if descendant:IsA("MeshPart") or descendant:IsA("Model") then
+			if loosen(descendant.Name) == wanted then
+				return descendant
+			end
+		end
+	end
+	return nil
 end
 
 -- Import 3D wraps meshes in a Model, and SPLITS anything too dense into
