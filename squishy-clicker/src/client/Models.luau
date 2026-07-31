@@ -387,8 +387,14 @@ export type MeshConfig = {
 	-- True when the texture already paints a face on. The billboard face stays
 	-- off for these, or the squishy ends up with two.
 	bakedFace: boolean?,
-	-- Primitive builder to use when the imported mesh isn't in the place, so a
-	-- missing banana falls back to the banana rather than to a dumpling.
+	-- A naming suffix shared by a set of interchangeable models, e.g. every
+	-- cube colour is named <Colour>CubeSquishy. When `template` isn't in the
+	-- place, any model from the family stands in and gets tinted — so the set
+	-- works however many colours have actually been made, and new ones are
+	-- picked up just by being named to match.
+	family: string?,
+	-- Primitive builder to use when no mesh at all is available, so a missing
+	-- banana falls back to the banana rather than to a dumpling.
 	fallback: string?,
 }
 
@@ -404,9 +410,14 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	-- Rainbow Butter has its own tie-dye model, so it needs no tinting.
 	rainbuttermesh = { template = "RainbowButter", yaw = 0, fallback = "butter" },
 	glowdonutmesh = { template = "GlowDonut", yaw = 0, fallback = "donut" },
-	-- All five jelly cubes are one mould in different colours, so they share a
-	-- model and tint it — the same trick the dumplings use.
-	cubemesh = { template = "SquishyCube", yaw = 0, tint = true, fallback = "jellycube" },
+	-- The cubes come as one model per colour, named <Colour>CubeSquishy. Each
+	-- asks for its own colour and settles for a tinted sibling if that one
+	-- hasn't been made yet.
+	cubeorange = { template = "OrangeCubeSquishy", family = "CubeSquishy", yaw = 0, fallback = "jellycube" },
+	cubepink = { template = "PinkCubeSquishy", family = "CubeSquishy", yaw = 0, fallback = "jellycube" },
+	cubeblue = { template = "BlueCubeSquishy", family = "CubeSquishy", yaw = 0, fallback = "jellycube" },
+	cubegreen = { template = "GreenCubeSquishy", family = "CubeSquishy", yaw = 0, fallback = "jellycube" },
+	cubepurple = { template = "PurpleCubeSquishy", family = "CubeSquishy", yaw = 0, fallback = "jellycube" },
 }
 
 -- Debug hook: nudge a mesh's facing at runtime so the right angle can be found
@@ -455,6 +466,21 @@ local function findMeshEntry(templateName: string): Instance?
 	for _, descendant in ReplicatedStorage:GetDescendants() do
 		if descendant:IsA("MeshPart") or descendant:IsA("Model") then
 			if loosen(descendant.Name) == wanted then
+				return descendant
+			end
+		end
+	end
+	return nil
+end
+
+-- Any model whose name ends in the family suffix, e.g. the first thing called
+-- <something>CubeSquishy. Used to stand in for a colour nobody has made yet.
+local function findMeshFamily(family: string): Instance?
+	local suffix = loosen(family)
+	for _, descendant in ReplicatedStorage:GetDescendants() do
+		if descendant:IsA("MeshPart") or descendant:IsA("Model") then
+			local name = loosen(descendant.Name)
+			if #name >= #suffix and name:sub(-#suffix) == suffix then
 				return descendant
 			end
 		end
@@ -530,6 +556,14 @@ end
 local function tryBuildMesh(rig: Rig, shape: string, config: MeshConfig, color: Color3): BasePart?
 	local templateName = config.template
 	local entry = findMeshEntry(templateName)
+
+	-- No model in this exact colour? Borrow a sibling and paint it.
+	local borrowed = false
+	if not entry and config.family then
+		entry = findMeshFamily(config.family)
+		borrowed = entry ~= nil
+	end
+
 	local parts = if entry then collectMeshParts(entry) else {}
 	if #parts == 0 then
 		if not meshReported[templateName] then
@@ -568,7 +602,9 @@ local function tryBuildMesh(rig: Rig, shape: string, config: MeshConfig, color: 
 		clone.CanCollide = false
 		clone.CanQuery = false
 		clone.CanTouch = false
-		if config.tint then
+		-- A borrowed model is always tinted, whatever the config says: it is
+		-- wearing the wrong colour by definition.
+		if config.tint or borrowed then
 			tintMesh(clone, color)
 		end
 		clone.Size = part.Size * scale
@@ -586,14 +622,25 @@ local function tryBuildMesh(rig: Rig, shape: string, config: MeshConfig, color: 
 
 	if not meshReported[templateName] then
 		meshReported[templateName] = true
-		print(
-			("[SquishyClicker] Using imported mesh '%s' for '%s' (%d part%s)."):format(
-				templateName,
-				shape,
-				#parts,
-				#parts == 1 and "" or "s"
+		if borrowed then
+			print(
+				("[SquishyClicker] '%s': no %s in the place, so %q is standing in, tinted. Add one named '%s' to give it its own."):format(
+					shape,
+					templateName,
+					(entry :: Instance).Name,
+					templateName
+				)
 			)
-		)
+		else
+			print(
+				("[SquishyClicker] Using imported mesh '%s' for '%s' (%d part%s)."):format(
+					templateName,
+					shape,
+					#parts,
+					#parts == 1 and "" or "s"
+				)
+			)
+		end
 	end
 	return primary
 end

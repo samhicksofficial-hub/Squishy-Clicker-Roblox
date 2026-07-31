@@ -150,7 +150,14 @@ imported, and `dumplingmesh` tints it via `SurfaceAppearance.Color` — the
 texture is pale and pearly, so multiplying by a colour keeps the glitter and
 the baked-in face while changing the shade. One mould, thirteen colours. Both
 fall back to the primitive dumpling when the template is missing, so nothing
-breaks in a place without the import. New mesh squishies follow the same pattern: add the source
+breaks in a place without the import.
+
+Where a set comes as one model per colour — the cubes, named
+`<Colour>CubeSquishy` — a mesh config names a `family` suffix as well as its
+preferred `template`. Each cube asks for its own colour and settles for a
+tinted sibling when that colour hasn't been made yet, so the set works however
+far along the models are and picks up new colours just by their being named to
+match. New mesh squishies follow the same pattern: add the source
 files under `assets/`, an entry in `MESH_SHAPES` in `Models.luau`, and a
 template part under SquishyMeshes.
 
