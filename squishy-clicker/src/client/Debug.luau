@@ -182,6 +182,24 @@ function Debug.mount(gui: ScreenGui, scene: any)
 			notMesh(shape)
 		end
 	end)
+	-- Every importable thing sitting in ReplicatedStorage, so a newly added
+	-- model's exact name can be read off rather than guessed at. Names are
+	-- what MESH_SHAPES matches on, and they are case and space sensitive.
+	quickButton(12, "List Meshes", function()
+		print("[SquishyClicker] Mesh templates in ReplicatedStorage:")
+		local found = 0
+		for _, descendant in ReplicatedStorage:GetDescendants() do
+			if descendant:IsA("MeshPart") or descendant:IsA("Model") then
+				found += 1
+				local parent = descendant.Parent
+				print(("   %q [%s] in %q"):format(descendant.Name, descendant.ClassName, parent and parent.Name or "?"))
+			end
+		end
+		if found == 0 then
+			print("   nothing — imported models need to live in ReplicatedStorage.")
+		end
+	end)
+
 	quickButton(11, "Lower Clicker", function()
 		local offset, shape = scene.nudgeClicker(Vector3.new(0, -0.1, 0))
 		if offset then
