@@ -24,6 +24,7 @@ local Config = require(Shared:WaitForChild("Config"))
 -- moved — put it back at src/shared/Squishies.luau or update this path.
 local Squishies = require(Shared:WaitForChild("Squishies"))
 local Scene = require(script:WaitForChild("Scene"))
+local Models = require(script:WaitForChild("Models"))
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local ClickSteamer = Remotes:WaitForChild("ClickSteamer") :: RemoteEvent
@@ -80,20 +81,6 @@ local function starString(stars: number): string
 	return string.rep("★", stars) .. string.rep("☆", Config.MaxStars - stars)
 end
 
--- Matches the 3D models: only dumplings have faces. The rest keep a sparkle
--- mark when they glitter, so the collection still shows that at a glance.
-local DUMPLING_SHAPES: { [string]: boolean } = {
-	dumpling = true,
-	dumplingmesh = true,
-	opalmesh = true,
-}
-
-local function iconText(squishy: { sparkle: boolean, shape: string? }): string
-	if DUMPLING_SHAPES[squishy.shape or "dumpling"] then
-		return squishy.sparkle and "✧•ᴗ•✧" or "•ᴗ•"
-	end
-	return squishy.sparkle and "✦" or ""
-end
 
 -- Copies needed for a squishy's next star (mirrors the server's math for display).
 local function prestigeCost(squishyId: string, currentStar: number): number
@@ -362,8 +349,43 @@ type Row = {
 	prestige: TextButton,
 	icon: TextButton,
 	equipStroke: UIStroke,
+	viewport: ViewportFrame?,
 }
 local rows: { [string]: Row } = {}
+
+-- The little 3D preview inside a collection icon: the real model, same as the
+-- one you'd get on the cushion. Built lazily the first time a squishy is
+-- discovered — a ViewportFrame is its own render pass, so standing up all 31
+-- at launch would cost far more than it's worth while most are question marks.
+local function buildIconPreview(row: Row, squishy: { shape: string?, color: Color3, sparkle: boolean })
+	if row.viewport then
+		return
+	end
+
+	local viewport = make("ViewportFrame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Ambient = Color3.fromRGB(170, 165, 160),
+		LightColor = Color3.fromRGB(255, 250, 244),
+		LightDirection = Vector3.new(-0.5, -1, -0.6),
+		ZIndex = 2,
+		Parent = row.icon,
+	})
+
+	local stage = make("Folder", { Name = "Model", Parent = viewport })
+	local model = Models.buildSquishy(stage, squishy.shape, squishy.color, squishy.sparkle)
+	Models.apply(model.rig, CFrame.identity, Vector3.one)
+
+	-- Narrow lens from further back: less perspective distortion than the
+	-- default, so the shape reads cleanly at 56 pixels.
+	local camera = Instance.new("Camera")
+	camera.FieldOfView = 28
+	camera.CFrame = CFrame.lookAt(Vector3.new(0, 0.9, 7), Vector3.zero)
+	camera.Parent = viewport
+	viewport.CurrentCamera = camera
+
+	row.viewport = viewport
+end
 
 for index, squishy in Squishies.list do
 	local rarity = Squishies.rarityByName[squishy.rarity]
@@ -380,17 +402,19 @@ for index, squishy in Squishies.list do
 	})
 	corner(14, row)
 
-	-- The squishy itself — also the button that equips it as the click toy.
+	-- The squishy's preview — also the button that equips it as the click toy.
+	-- ClipsDescendants keeps the 3D preview inside the round swatch.
 	local icon = make("TextButton", {
 		Size = UDim2.new(0, 56, 0, 56),
 		Position = UDim2.new(0, 10, 0.5, 0),
 		AnchorPoint = Vector2.new(0, 0.5),
 		BackgroundColor3 = squishy.color,
 		AutoButtonColor = false,
+		ClipsDescendants = true,
 		Font = Enum.Font.FredokaOne,
-		Text = iconText(squishy),
+		Text = "?",
 		TextColor3 = COLOR.text,
-		TextSize = squishy.sparkle and 13 or 18,
+		TextSize = 18,
 		Parent = row,
 	})
 	make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = icon })
@@ -654,12 +678,20 @@ local function refresh()
 		row.starLabel.Text = starString(star)
 		row.equipStroke.Transparency = (id == state.clickerId) and 0 or 1
 
-		-- Undiscovered squishies show as dark silhouettes — the collection tease.
+		-- Undiscovered squishies stay dark question marks — the collection
+		-- tease. Discovering one builds its 3D preview, once.
 		local squishy = Squishies.byId[id]
 		local discovered = held > 0 or star > 0
 		if squishy then
 			row.icon.BackgroundColor3 = discovered and squishy.color or Color3.fromRGB(90, 82, 76)
-			row.icon.Text = discovered and iconText(squishy) or "?"
+			row.icon.Text = discovered and "" or "?"
+			if discovered then
+				buildIconPreview(row, squishy)
+			end
+			local preview = row.viewport
+			if preview then
+				preview.Visible = discovered
+			end
 		end
 
 		if star >= Config.MaxStars then
