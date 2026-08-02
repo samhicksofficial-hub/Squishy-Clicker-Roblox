@@ -242,9 +242,9 @@ local lidRig = Models.buildSteamerLid(stage)
 -- placeholder dumpling just fills the tub before the first open.
 local squishyModel = Models.buildSquishy(stage, "dumpling", Color3.fromRGB(226, 190, 142), false)
 
-local function swapSquishy(shape: string?, color: Color3, sparkle: boolean)
+local function swapSquishy(shape: string?, color: Color3, sparkle: boolean, sizeScale: number)
 	squishyModel.rig.folder:Destroy()
-	squishyModel = Models.buildSquishy(stage, shape, color, sparkle)
+	squishyModel = Models.buildSquishy(stage, shape, color, sparkle, sizeScale)
 end
 
 -- ---------- the click toy ----------
@@ -269,7 +269,7 @@ cushion.Parent = stage
 
 local clickerModel: Models.SquishyModel? = nil
 -- Remembered so the debug menu can rebuild the toy after nudging its facing.
-local clickerSpec: { shape: string?, color: Color3, sparkle: boolean, id: string }? = nil
+local clickerSpec: { shape: string?, color: Color3, sparkle: boolean, id: string, sizeScale: number }? = nil
 
 -- ---------- spinning the click toy ----------
 -- Drag the squishy and it turns on its cushion, then coasts to a stop like a
@@ -535,12 +535,16 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	-- so it needs no showing and hiding — it just climbs out and drops back.
 	local risen = rise.value
 	local jg = jiggle.value
-	local squishyY = DUMPLING_HIDDEN_Y + (DUMPLING_RISEN_Y - DUMPLING_HIDDEN_Y) * risen
+	local revealScale = squishyModel.sizeScale
+	-- An oversized squishy has to sit deeper at rest, or it pokes up through
+	-- the closed lid while it is meant to be a surprise.
+	local hiddenY = DUMPLING_HIDDEN_Y - math.max(revealScale - 1, 0) * 1.5
+	local squishyY = hiddenY + (DUMPLING_RISEN_Y - hiddenY) * risen
 	Models.apply(
 		squishyModel.rig,
 		CFrame.new(STEAMER_ORIGIN + Vector3.new(0, squishyY + math.sin(elapsed * 3) * 0.08 * risen, 0))
 			* CFrame.fromEulerAnglesXYZ(0, dumplingSpin, math.sin(elapsed * 2.2) * 0.05 * risen),
-		Vector3.new(1 + jg * 0.18, 1 - jg * 0.22, 1 + jg * 0.18)
+		Vector3.new(1 + jg * 0.18, 1 - jg * 0.22, 1 + jg * 0.18) * revealScale
 	)
 	local revealFace = squishyModel.billboard
 	if revealFace then
@@ -573,7 +577,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			toy.rig,
 			CFrame.new(CLICKER_POS + Vector3.new(0, math.sin(elapsed * 2.1) * 0.05, 0))
 				* CFrame.fromEulerAnglesXYZ(0, spinAngle + math.sin(elapsed * 1.3) * 0.08 * swayAmount, 0),
-			Vector3.new(1 + cs * 0.28, 1 - cs * 0.34, 1 + cs * 0.28) * CLICKER_SCALE
+			Vector3.new(1 + cs * 0.28, 1 - cs * 0.34, 1 + cs * 0.28) * CLICKER_SCALE * toy.sizeScale
 		)
 	end
 
@@ -654,14 +658,15 @@ function Scene.click()
 end
 
 -- Equip an owned squishy as the click toy on the cushion.
-function Scene.setClicker(shape: string?, color: Color3, sparkle: boolean, id: string)
+function Scene.setClicker(shape: string?, color: Color3, sparkle: boolean, id: string, sizeScale: number?)
 	local previous = clickerModel
 	if previous then
 		previous.rig.folder:Destroy()
 	end
-	clickerSpec = { shape = shape, color = color, sparkle = sparkle, id = id }
+	local scale = sizeScale or 1
+	clickerSpec = { shape = shape, color = color, sparkle = sparkle, id = id, sizeScale = scale }
 
-	local toy = Models.buildSquishy(stage, shape, color, sparkle)
+	local toy = Models.buildSquishy(stage, shape, color, sparkle, scale)
 	if toy.billboard then
 		toy.billboard.Enabled = true
 	end
@@ -685,7 +690,7 @@ function Scene.rotateClicker(): (number?, string?)
 	if not yaw then
 		return nil, spec.shape
 	end
-	Scene.setClicker(spec.shape, spec.color, spec.sparkle, spec.id)
+	Scene.setClicker(spec.shape, spec.color, spec.sparkle, spec.id, spec.sizeScale)
 	return yaw, spec.shape
 end
 
@@ -700,7 +705,7 @@ function Scene.nudgeClicker(delta: Vector3): (Vector3?, string?)
 	if not offset then
 		return nil, spec.shape
 	end
-	Scene.setClicker(spec.shape, spec.color, spec.sparkle, spec.id)
+	Scene.setClicker(spec.shape, spec.color, spec.sparkle, spec.id, spec.sizeScale)
 	return offset, spec.shape
 end
 
@@ -711,8 +716,15 @@ end
 -- tier is the squishy's rarity rank, 1 for Common up to 6 for Mythical. The
 -- whole show scales off it, so adding a rarity in Squishies.luau automatically
 -- gets a bigger reveal than the one below it.
-function Scene.open(shape: string?, bodyColor: Color3, sparkle: boolean, rarityColor: Color3, tier: number)
-	swapSquishy(shape, bodyColor, sparkle)
+function Scene.open(
+	shape: string?,
+	bodyColor: Color3,
+	sparkle: boolean,
+	rarityColor: Color3,
+	tier: number,
+	sizeScale: number?
+)
+	swapSquishy(shape, bodyColor, sparkle, sizeScale or 1)
 
 	-- Up AND well off to the side: a lid that only rises hovers directly over
 	-- the squishy and hides it from the camera. It slides left because the

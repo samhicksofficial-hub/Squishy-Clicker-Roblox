@@ -93,6 +93,9 @@ export type SquishyModel = {
 	-- True when this squishy has a billboard face to switch on. Only dumplings
 	-- do, and not even those when their texture already paints one.
 	wearsFace: boolean,
+	-- The catalog's size multiplier, carried here so every place that draws
+	-- this squishy scales it the same way.
+	sizeScale: number,
 }
 
 -- ---------- rig plumbing ----------
@@ -704,7 +707,13 @@ local FACE_SHAPES: { [string]: boolean } = {
 	opalmesh = true,
 }
 
-function Models.buildSquishy(parent: Instance, shape: string?, color: Color3, sparkle: boolean): SquishyModel
+function Models.buildSquishy(
+	parent: Instance,
+	shape: string?,
+	color: Color3,
+	sparkle: boolean,
+	sizeScale: number?
+): SquishyModel
 	local rig = Models.newRig("Squishy", parent)
 
 	local primary: BasePart? = nil
@@ -795,6 +804,7 @@ function Models.buildSquishy(parent: Instance, shape: string?, color: Color3, sp
 		billboard = billboard,
 		sparkles = sparkles,
 		wearsFace = wearsFace,
+		sizeScale = sizeScale or 1,
 	}
 end
 

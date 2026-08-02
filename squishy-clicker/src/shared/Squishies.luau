@@ -28,6 +28,9 @@ export type Squishy = {
 	-- Which 3D model the client builds for the reveal (see the shape builders
 	-- in Models.luau). Absent = "dumpling", so the original 13 stay untouched.
 	shape: string?,
+	-- Size multiplier, for the ones whose name promises a size. Absent = 1,
+	-- meaning every squishy is normalised to the same on-screen size.
+	scale: number?,
 }
 
 -- Order matters only for display (least → most rare).
@@ -73,13 +76,13 @@ local list: { Squishy } = {
 	-- Commons: everyday squishies
 	{ id = "banana",     name = "Stretch Banana",   rarity = "Common",    color = Color3.fromRGB(250, 216, 88),  sparkle = false, shape = "bananamesh" },
 	{ id = "coconut",    name = "Coconut Ball",     rarity = "Common",    color = Color3.fromRGB(196, 228, 200), sparkle = false, shape = "coconutmesh" },
-	{ id = "jellycube",  name = "Mini Jelly Cube",  rarity = "Common",    color = Color3.fromRGB(242, 150, 62),  sparkle = false, shape = "cubeorange" },
+	{ id = "jellycube",  name = "Mini Jelly Cube",  rarity = "Common",    color = Color3.fromRGB(242, 150, 62),  sparkle = false, shape = "cubeorange", scale = 0.7 },
 	{ id = "cloud",      name = "Dough Cloud",      rarity = "Common",    color = Color3.fromRGB(250, 248, 244), sparkle = false, shape = "cloud" },
 	{ id = "butter",     name = "Butter Stick",     rarity = "Common",    color = Color3.fromRGB(247, 210, 96),  sparkle = false, shape = "buttermesh" },
 
 	-- Uncommons
 	{ id = "cheese",     name = "Squeeze Cheese",   rarity = "Uncommon",  color = Color3.fromRGB(245, 196, 54),  sparkle = false, shape = "cheesemesh" },
-	{ id = "strawberry", name = "Giant Strawberry", rarity = "Uncommon",  color = Color3.fromRGB(219, 58, 62),   sparkle = false, shape = "strawberry" },
+	{ id = "strawberry", name = "Giant Strawberry", rarity = "Uncommon",  color = Color3.fromRGB(219, 58, 62),   sparkle = false, shape = "strawberry", scale = 1.35 },
 	{ id = "swirlcube",  name = "Swirl Cube",       rarity = "Uncommon",  color = Color3.fromRGB(235, 122, 168), sparkle = false, shape = "cubepink" },
 	{ id = "snowcube",   name = "Snowflake Cube",   rarity = "Uncommon",  color = Color3.fromRGB(138, 200, 240), sparkle = false, shape = "cubeblue" },
 

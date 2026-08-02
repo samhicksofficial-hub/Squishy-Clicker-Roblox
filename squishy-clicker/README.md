@@ -80,6 +80,9 @@ If the game is ever a blank screen, open View → Output first: an orange
   from the builders in `Models.luau` (or leave it off for a dumpling). The
   reveal scales off rarity rank automatically, so a new top rarity gets the
   biggest show.
+- Squishy sizes: every model is normalised to the same size, so a `scale` on a
+  catalog entry is what makes a Mini small or a Giant big. It applies on the
+  cushion, in the reveal and in the collection icon alike.
 - Add a shape: one builder function in `shapeBuilders` in `Models.luau`.
 - Reshape the models or the toy-shop backdrop: `Models.luau` and the shop
   section of `Scene.luau`. Camera angle, lighting and reveal timing: the

@@ -357,7 +357,7 @@ local rows: { [string]: Row } = {}
 -- one you'd get on the cushion. Built lazily the first time a squishy is
 -- discovered — a ViewportFrame is its own render pass, so standing up all 31
 -- at launch would cost far more than it's worth while most are question marks.
-local function buildIconPreview(row: Row, squishy: { shape: string?, color: Color3, sparkle: boolean })
+local function buildIconPreview(row: Row, squishy: { shape: string?, color: Color3, sparkle: boolean, scale: number? })
 	if row.viewport then
 		return
 	end
@@ -373,14 +373,17 @@ local function buildIconPreview(row: Row, squishy: { shape: string?, color: Colo
 	})
 
 	local stage = make("Folder", { Name = "Model", Parent = viewport })
-	local model = Models.buildSquishy(stage, squishy.shape, squishy.color, squishy.sparkle)
-	Models.apply(model.rig, CFrame.identity, Vector3.one)
+	local model = Models.buildSquishy(stage, squishy.shape, squishy.color, squishy.sparkle, squishy.scale)
+	-- Scaled here too, so a Mini reads small and a Giant reads big in the list
+	-- rather than every squishy looking the same size.
+	Models.apply(model.rig, CFrame.identity, Vector3.one * model.sizeScale)
 
 	-- Narrow lens from further back: less perspective distortion than the
-	-- default, so the shape reads cleanly at 56 pixels.
+	-- default, so the shape reads cleanly at 56 pixels. Far enough out that an
+	-- oversized squishy still fits.
 	local camera = Instance.new("Camera")
 	camera.FieldOfView = 28
-	camera.CFrame = CFrame.lookAt(Vector3.new(0, 0.9, 7), Vector3.zero)
+	camera.CFrame = CFrame.lookAt(Vector3.new(0, 0.9, 8), Vector3.zero)
 	camera.Parent = viewport
 	viewport.CurrentCamera = camera
 
@@ -521,7 +524,7 @@ local function playReveal(squishyId: string)
 	local tier = rarityTier[squishy.rarity] or 1
 	local rarityColor = rarity and rarity.color or COLOR.gold
 
-	Scene.open(squishy.shape, squishy.color, squishy.sparkle, rarityColor, tier)
+	Scene.open(squishy.shape, squishy.color, squishy.sparkle, rarityColor, tier, squishy.scale)
 
 	local banner = make("TextLabel", {
 		Size = UDim2.new(0, 320, 0, 56),
@@ -650,7 +653,7 @@ local function refresh()
 		appliedClickerId = state.clickerId
 		local equipped = appliedClickerId and Squishies.byId[appliedClickerId]
 		if equipped then
-			Scene.setClicker(equipped.shape, equipped.color, equipped.sparkle, equipped.id)
+			Scene.setClicker(equipped.shape, equipped.color, equipped.sparkle, equipped.id, equipped.scale)
 		end
 	end
 
