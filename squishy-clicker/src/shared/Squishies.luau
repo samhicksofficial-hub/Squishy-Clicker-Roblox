@@ -78,7 +78,7 @@ local list: { Squishy } = {
 	{ id = "butter",     name = "Butter Stick",     rarity = "Common",    color = Color3.fromRGB(247, 210, 96),  sparkle = false, shape = "buttermesh" },
 
 	-- Uncommons
-	{ id = "cheese",     name = "Squeeze Cheese",   rarity = "Uncommon",  color = Color3.fromRGB(245, 196, 54),  sparkle = false, shape = "cheese" },
+	{ id = "cheese",     name = "Squeeze Cheese",   rarity = "Uncommon",  color = Color3.fromRGB(245, 196, 54),  sparkle = false, shape = "cheesemesh" },
 	{ id = "strawberry", name = "Giant Strawberry", rarity = "Uncommon",  color = Color3.fromRGB(219, 58, 62),   sparkle = false, shape = "strawberry" },
 	{ id = "swirlcube",  name = "Swirl Cube",       rarity = "Uncommon",  color = Color3.fromRGB(235, 122, 168), sparkle = false, shape = "cubepink" },
 	{ id = "snowcube",   name = "Snowflake Cube",   rarity = "Uncommon",  color = Color3.fromRGB(138, 200, 240), sparkle = false, shape = "cubeblue" },

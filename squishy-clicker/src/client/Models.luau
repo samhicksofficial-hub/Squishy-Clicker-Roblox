@@ -456,6 +456,7 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	-- Rainbow Butter has its own tie-dye model, so it needs no tinting.
 	rainbuttermesh = { template = "RainbowButter", yaw = 0, fallback = "butter" },
 	glowdonutmesh = { template = "GlowDonut", yaw = 0, fallback = "donut" },
+	cheesemesh = { template = "SquishCheese", yaw = 0, fallback = "cheese" },
 	-- The cubes come as one model per colour, named <Colour>CubeSquishy. Each
 	-- asks for its own colour and settles for a tinted sibling if that one
 	-- hasn't been made yet.
