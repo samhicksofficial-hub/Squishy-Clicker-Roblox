@@ -43,6 +43,11 @@ local rarities: { Rarity } = {
 	{ name = "Mythical",  weight = 5,   baseCopies = 3,  color = Color3.fromRGB(240, 95, 150) },
 }
 
+-- Size multipliers for the squishies whose name promises one. Kept here so
+-- every Mini and every Giant agree with each other.
+local MINI = 0.7
+local GIANT = 1.45
+
 local list: { Squishy } = {
 	-- The dumplings all share the imported opal mesh, tinted — one mould in a
 	-- range of colours, the way the real squishies are made.
@@ -76,13 +81,13 @@ local list: { Squishy } = {
 	-- Commons: everyday squishies
 	{ id = "banana",     name = "Stretch Banana",   rarity = "Common",    color = Color3.fromRGB(250, 216, 88),  sparkle = false, shape = "bananamesh" },
 	{ id = "coconut",    name = "Coconut Ball",     rarity = "Common",    color = Color3.fromRGB(196, 228, 200), sparkle = false, shape = "coconutmesh" },
-	{ id = "jellycube",  name = "Mini Jelly Cube",  rarity = "Common",    color = Color3.fromRGB(242, 150, 62),  sparkle = false, shape = "cubeorange", scale = 0.7 },
+	{ id = "jellycube",  name = "Mini Jelly Cube",  rarity = "Common",    color = Color3.fromRGB(242, 150, 62),  sparkle = false, shape = "cubeorange", scale = MINI },
 	{ id = "cloud",      name = "Dough Cloud",      rarity = "Common",    color = Color3.fromRGB(250, 248, 244), sparkle = false, shape = "cloud" },
 	{ id = "butter",     name = "Butter Stick",     rarity = "Common",    color = Color3.fromRGB(247, 210, 96),  sparkle = false, shape = "buttermesh" },
 
 	-- Uncommons
 	{ id = "cheese",     name = "Squeeze Cheese",   rarity = "Uncommon",  color = Color3.fromRGB(245, 196, 54),  sparkle = false, shape = "cheesemesh" },
-	{ id = "strawberry", name = "Giant Strawberry", rarity = "Uncommon",  color = Color3.fromRGB(219, 58, 62),   sparkle = false, shape = "strawberry", scale = 1.35 },
+	{ id = "strawberry", name = "Giant Strawberry", rarity = "Uncommon",  color = Color3.fromRGB(219, 58, 62),   sparkle = false, shape = "strawberry", scale = GIANT },
 	{ id = "swirlcube",  name = "Swirl Cube",       rarity = "Uncommon",  color = Color3.fromRGB(235, 122, 168), sparkle = false, shape = "cubepink" },
 	{ id = "snowcube",   name = "Snowflake Cube",   rarity = "Uncommon",  color = Color3.fromRGB(138, 200, 240), sparkle = false, shape = "cubeblue" },
 
@@ -100,6 +105,15 @@ local list: { Squishy } = {
 	-- Legendaries: the glow-in-the-dark ones
 	{ id = "sparkledrop", name = "Sparkle Drop",    rarity = "Legendary", color = Color3.fromRGB(140, 226, 198), sparkle = true,  shape = "drop" },
 	{ id = "glowdonut",   name = "Glow Doughnut",   rarity = "Legendary", color = Color3.fromRGB(132, 244, 120), sparkle = true,  shape = "glowdonutmesh" },
+
+	-- ===== Giant editions =====
+	-- Same model as their everyday twin, just enormous, and one rarity tier
+	-- harder to pull. The Opal has nowhere higher to go, so it shares Mythical
+	-- with the original.
+	{ id = "giantbanana",     name = "Giant Banana",       rarity = "Uncommon",  color = Color3.fromRGB(250, 216, 88),  sparkle = false, shape = "bananamesh",     scale = GIANT },
+	{ id = "giantbutter",     name = "Giant Butter Stick", rarity = "Uncommon",  color = Color3.fromRGB(247, 210, 96),  sparkle = false, shape = "buttermesh",     scale = GIANT },
+	{ id = "giantrainbutter", name = "Giant Rainbow Butter", rarity = "Epic",    color = Color3.fromRGB(196, 124, 220), sparkle = false, shape = "rainbuttermesh", scale = GIANT },
+	{ id = "giantopal",       name = "Giant Opal Dumpling", rarity = "Mythical", color = Color3.fromRGB(232, 225, 245), sparkle = true,  shape = "opalmesh",       scale = GIANT },
 }
 
 -- ---------- lookups (built once) ----------
