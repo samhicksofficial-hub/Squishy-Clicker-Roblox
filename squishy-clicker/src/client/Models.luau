@@ -457,6 +457,7 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	rainbuttermesh = { template = "RainbowButter", yaw = 0, fallback = "butter" },
 	glowdonutmesh = { template = "GlowDonut", yaw = 0, fallback = "donut" },
 	cheesemesh = { template = "SquishCheese", yaw = 0, fallback = "cheese" },
+	coconutmesh = { template = "CoconutBall", yaw = 0, fallback = "ball" },
 	-- The cubes come as one model per colour, named <Colour>CubeSquishy. Each
 	-- asks for its own colour and settles for a tinted sibling if that one
 	-- hasn't been made yet.
