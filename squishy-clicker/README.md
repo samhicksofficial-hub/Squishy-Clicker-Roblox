@@ -144,6 +144,7 @@ Three models live in `assets/`, each needing the same one-time import:
 | `glow-donut/` | `GlowDonut` | Glow Doughnut | one baked texture |
 | `cheese/` | `SquishCheese` | Squeeze Cheese | one baked texture |
 | `coconut/` | `CoconutBall` | Coconut Ball | one baked texture |
+| `glitter-baby/` | `GlitterBaby` | Sugar Baby | one baked texture |
 
 Do all of this in **Edit mode, with the playtest stopped** — anything you create
 while the game is running is discarded the moment you press Stop.

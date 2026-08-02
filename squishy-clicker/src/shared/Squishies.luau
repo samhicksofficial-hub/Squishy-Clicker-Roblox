@@ -100,7 +100,7 @@ local list: { Squishy } = {
 	-- Epics
 	{ id = "brain",      name = "Pink Brain",       rarity = "Epic",      color = Color3.fromRGB(240, 158, 170), sparkle = false, shape = "brain" },
 	{ id = "blobfish",   name = "Blobfish",         rarity = "Epic",      color = Color3.fromRGB(122, 170, 230), sparkle = false, shape = "blobfish" },
-	{ id = "sugarbaby",  name = "Sugar Baby",       rarity = "Epic",      color = Color3.fromRGB(230, 120, 198), sparkle = true,  shape = "baby" },
+	{ id = "sugarbaby",  name = "Sugar Baby",       rarity = "Epic",      color = Color3.fromRGB(230, 120, 198), sparkle = true,  shape = "babymesh" },
 
 	-- Legendaries: the glow-in-the-dark ones
 	{ id = "sparkledrop", name = "Sparkle Drop",    rarity = "Legendary", color = Color3.fromRGB(140, 226, 198), sparkle = true,  shape = "drop" },
