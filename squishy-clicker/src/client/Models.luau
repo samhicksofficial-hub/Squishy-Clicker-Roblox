@@ -467,11 +467,11 @@ export type MeshConfig = {
 	-- True when the texture already paints a face on. The billboard face stays
 	-- off for these, or the squishy ends up with two.
 	bakedFace: boolean?,
-	-- A naming suffix shared by a set of interchangeable models, e.g. every
-	-- cube colour is named <Colour>CubeSquishy. When `template` isn't in the
-	-- place, any model from the family stands in and gets tinted — so the set
-	-- works however many colours have actually been made, and new ones are
-	-- picked up just by being named to match.
+	-- Groups a set of genuinely interchangeable models, e.g. the cube colours.
+	-- When `template` isn't in the place, another model from the same family
+	-- stands in and gets tinted, so the set works however many colours have
+	-- actually been made. Only configs sharing this exact family may lend to
+	-- each other — a model is never borrowed just for having a similar name.
 	family: string?,
 	-- Primitive builder to use when no mesh at all is available, so a missing
 	-- banana falls back to the banana rather than to a dumpling.
@@ -574,14 +574,22 @@ local function findMeshEntry(templateName: string): Instance?
 	return nil
 end
 
--- Any model whose name ends in the family suffix, e.g. the first thing called
--- <something>CubeSquishy. Used to stand in for a colour nobody has made yet.
+-- A model belonging to the same family, to stand in for a colour nobody has
+-- made yet. Only models another config actually claims for that family count:
+-- matching on the name alone once let IceCubeSquishy — a squishy in its own
+-- right, not a colour of the jelly cube — get borrowed by whichever cube
+-- colour happened to be missing.
 local function findMeshFamily(family: string): Instance?
-	local suffix = loosen(family)
+	local kin: { [string]: boolean } = {}
+	for _, config in MESH_SHAPES do
+		if config.family == family then
+			kin[loosen(config.template)] = true
+		end
+	end
+
 	for _, descendant in ReplicatedStorage:GetDescendants() do
 		if descendant:IsA("MeshPart") or descendant:IsA("Model") then
-			local name = loosen(descendant.Name)
-			if #name >= #suffix and name:sub(-#suffix) == suffix then
+			if kin[loosen(descendant.Name)] then
 				return descendant
 			end
 		end
