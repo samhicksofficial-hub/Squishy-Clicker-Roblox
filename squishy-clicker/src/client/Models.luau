@@ -96,6 +96,12 @@ export type SquishyModel = {
 	-- The catalog's size multiplier, carried here so every place that draws
 	-- this squishy scales it the same way.
 	sizeScale: number,
+	-- Where the model's underside and top sit relative to its own origin, in
+	-- rig space before scaling. Imported models put their origin wherever they
+	-- like, so this is what lets one be stood on a surface rather than centred
+	-- on a height guessed to suit the average.
+	lowestY: number,
+	highestY: number,
 }
 
 -- ---------- rig plumbing ----------
@@ -135,6 +141,26 @@ function Models.apply(rig: Rig, cf: CFrame, scale: Vector3)
 		-- Parts refuse sizes below 0.05 on any axis.
 		piece.inst.Size = Vector3.new(math.max(size.X, 0.05), math.max(size.Y, 0.05), math.max(size.Z, 0.05))
 	end
+end
+
+-- How far a finished rig reaches below and above its own origin. Every
+-- rotation in use is a multiple of 90°, so the box maths is exact.
+local function verticalBounds(rig: Rig): (number, number)
+	local low, high = math.huge, -math.huge
+	for _, piece in rig.pieces do
+		local rot = piece.offset.Rotation
+		local half = piece.size * 0.5
+		local reach = math.abs(rot.RightVector.Y) * half.X
+			+ math.abs(rot.UpVector.Y) * half.Y
+			+ math.abs(rot.LookVector.Y) * half.Z
+		local middle = piece.offset.Position.Y
+		low = math.min(low, middle - reach)
+		high = math.max(high, middle + reach)
+	end
+	if low == math.huge then
+		return 0, 0
+	end
+	return low, high
 end
 
 -- ---------- part helper ----------
@@ -819,6 +845,8 @@ function Models.buildSquishy(
 	sparkles.Enabled = false
 	sparkles.Parent = primary
 
+	local lowestY, highestY = verticalBounds(rig)
+
 	return {
 		rig = rig,
 		primary = primary,
@@ -827,6 +855,8 @@ function Models.buildSquishy(
 		sparkles = sparkles,
 		wearsFace = wearsFace,
 		sizeScale = sizeScale or 1,
+		lowestY = lowestY,
+		highestY = highestY,
 	}
 end
 

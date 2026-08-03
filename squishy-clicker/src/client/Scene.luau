@@ -42,9 +42,10 @@ local STEAMER_ORIGIN = ORIGIN + Vector3.new(-16, 0, 17)
 local BACKDROP_COLOR = Color3.fromRGB(240, 222, 206) -- invisible helper parts only
 
 local LID_REST_Y = 2.15 -- where the lid sits on the tub
--- Low enough that the dumpling sits entirely below the tub's interior floor at
--- rest, so it needs no hiding: the tub's own walls do it.
-local DUMPLING_HIDDEN_Y = 0.95
+-- The highest a hidden squishy's top may reach and still be swallowed by the
+-- tub walls. Resting height is worked back from this per squishy, so the tub
+-- hides it whatever its size and shape.
+local TUB_TOP_INSIDE = 1.9
 local DUMPLING_RISEN_Y = 4.0
 local REVEAL_SECONDS = 1.7
 
@@ -252,7 +253,10 @@ end
 -- big cushion, alone in frame, and squishes with every click. The steamer is
 -- off in its nook, out of view until an unbox turns the camera.
 
-local CLICKER_POS = ORIGIN + Vector3.new(1.9, 1.75, 3.0)
+local CLICKER_SPOT = ORIGIN + Vector3.new(1.9, 0, 3.0)
+-- The cushion's top face is at 0.425; this leaves a clear gap above it, so
+-- every squishy floats rather than sinking in.
+local CLICKER_REST_Y = 0.58
 local CLICKER_SCALE = 1.35 -- centrepiece, so a touch bigger than the reveal size
 
 local cushion = Instance.new("Part")
@@ -536,9 +540,9 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	local risen = rise.value
 	local jg = jiggle.value
 	local revealScale = squishyModel.sizeScale
-	-- An oversized squishy has to sit deeper at rest, or it pokes up through
-	-- the closed lid while it is meant to be a surprise.
-	local hiddenY = DUMPLING_HIDDEN_Y - math.max(revealScale - 1, 0) * 1.5
+	-- Tucked so its very top clears the rim, whatever size and shape it is,
+	-- or it pokes up through the closed lid while meant to be a surprise.
+	local hiddenY = TUB_TOP_INSIDE - squishyModel.highestY * revealScale
 	local squishyY = hiddenY + (DUMPLING_RISEN_Y - hiddenY) * risen
 	Models.apply(
 		squishyModel.rig,
@@ -573,11 +577,17 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	local toy = clickerModel
 	if toy then
 		local cs = clickerSquash.value
+		local toyScale = Vector3.new(1 + cs * 0.28, 1 - cs * 0.34, 1 + cs * 0.28) * CLICKER_SCALE * toy.sizeScale
+		-- Stood on the cushion by its own underside rather than centred on a
+		-- fixed height, so a tall model doesn't sink through it. Using the live
+		-- Y scale also means a squash presses down onto the cushion rather than
+		-- shrinking away from it.
+		local restY = CLICKER_REST_Y - toy.lowestY * toyScale.Y
 		Models.apply(
 			toy.rig,
-			CFrame.new(CLICKER_POS + Vector3.new(0, math.sin(elapsed * 2.1) * 0.05, 0))
+			CFrame.new(CLICKER_SPOT + Vector3.new(0, restY + math.sin(elapsed * 2.1) * 0.05, 0))
 				* CFrame.fromEulerAnglesXYZ(0, spinAngle + math.sin(elapsed * 1.3) * 0.08 * swayAmount, 0),
-			Vector3.new(1 + cs * 0.28, 1 - cs * 0.34, 1 + cs * 0.28) * CLICKER_SCALE * toy.sizeScale
+			toyScale
 		)
 	end
 
