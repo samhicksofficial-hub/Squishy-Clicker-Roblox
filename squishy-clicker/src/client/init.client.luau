@@ -25,6 +25,7 @@ local Config = require(Shared:WaitForChild("Config"))
 local Squishies = require(Shared:WaitForChild("Squishies"))
 local Scene = require(script:WaitForChild("Scene"))
 local Models = require(script:WaitForChild("Models"))
+local Launch = require(script:WaitForChild("Launch"))
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local ClickSteamer = Remotes:WaitForChild("ClickSteamer") :: RemoteEvent
@@ -56,6 +57,7 @@ local state = {
 	totalStars = 0,
 	unopened = 0,
 	clickerId = nil :: string?,
+	launchReadyIn = 0,
 }
 
 -- Rarity rank (Common = 1 ... Mythical = 6). The reveal scales off this.
@@ -647,6 +649,9 @@ local appliedClickerId: string? = nil
 local function refresh()
 	headerLabel.Text = ("🥟 Opens: %d    ⭐ Stars: %d"):format(state.totalOpens, state.totalStars)
 
+	-- The cannon's cooldown is the server's to know, not ours to guess.
+	Launch.setReadyIn(state.launchReadyIn or 0)
+
 	unboxButton.Text = ("🥡 Unbox (%d)"):format(state.unopened)
 	unboxButton.BackgroundColor3 = state.unopened > 0 and COLOR.mint or COLOR.locked
 	unboxButton.AutoButtonColor = state.unopened > 0
@@ -738,6 +743,11 @@ SyncData.OnClientEvent:Connect(function(payload)
 		end
 	end
 	hasSynced = true
+end)
+
+-- Spawned because mounting waits on remotes; the HUD must not wait with it.
+task.spawn(function()
+	Launch.mount(gui, Scene)
 end)
 
 refresh()
