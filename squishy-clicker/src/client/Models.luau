@@ -423,6 +423,11 @@ export type MeshConfig = {
 	-- right angles. Find the right value live with the debug menu's
 	-- "Rotate Clicker" button, then write it in here.
 	yaw: number,
+	-- Tips the model forward about X, in degrees. Yaw alone can only spin a
+	-- model on the spot: a face pointing at the sky stays pointing at the sky
+	-- however far you turn it, so bringing one toward the camera takes pitch.
+	-- 90° stands a flat-lying model up to face the viewer.
+	pitch: number?,
 	-- Repaint the mesh in the squishy's colour. The opal texture is pale and
 	-- pearly, so multiplying it by a colour keeps the glitter and the baked-in
 	-- face while changing the shade — one mould, thirteen dumplings, exactly
@@ -456,8 +461,9 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	-- at all — real bananas and butter sticks don't have one.
 	bananamesh = { template = "BananaSquishy", yaw = 180, fallback = "banana" },
 	buttermesh = { template = "ButterSquishy", yaw = 180, fallback = "butter" },
-	-- Rainbow Butter has its own tie-dye model, so it needs no tinting.
-	rainbuttermesh = { template = "RainbowButter", yaw = 90, fallback = "butter" },
+	-- Rainbow Butter has its own tie-dye model, so it needs no tinting. Its
+	-- wrapper text sits on the top face, so it gets stood upright.
+	rainbuttermesh = { template = "RainbowButter", yaw = 0, pitch = 90, fallback = "butter" },
 	glowdonutmesh = { template = "GlowDonut", yaw = 0, fallback = "donut" },
 	cheesemesh = { template = "SquishCheese", yaw = 0, fallback = "cheese" },
 	coconutmesh = { template = "CoconutBall", yaw = 0, fallback = "ball" },
@@ -482,6 +488,15 @@ function Models.bumpMeshYaw(shape: string?, delta: number): number?
 	end
 	config.yaw = (config.yaw + delta) % 360
 	return config.yaw
+end
+
+function Models.bumpMeshPitch(shape: string?, delta: number): number?
+	local config = MESH_SHAPES[shape or ""]
+	if not config then
+		return nil
+	end
+	config.pitch = ((config.pitch or 0) + delta) % 360
+	return config.pitch
 end
 
 -- Debug hook: shift a mesh at runtime, same idea as bumpMeshYaw.
@@ -640,7 +655,9 @@ local function tryBuildMesh(rig: Rig, shape: string, config: MeshConfig, color: 
 	-- Normalise the largest dimension to squishy size, however the import came
 	-- in — Import 3D scales are wildly inconsistent between models.
 	local scale = 2.7 / math.max(extents.X, extents.Y, extents.Z, 0.05)
-	local yaw = CFrame.fromEulerAnglesXYZ(0, math.rad(config.yaw), 0)
+	-- Pitch first in the model's own frame, then yaw about the world's.
+	local orient = CFrame.fromEulerAnglesXYZ(0, math.rad(config.yaw), 0)
+		* CFrame.fromEulerAnglesXYZ(math.rad(config.pitch or 0), 0, 0)
 	-- Applied outside the yaw, so a nudge always moves the model the way the
 	-- camera sees it regardless of how the model is turned.
 	local shift = CFrame.new(config.offset or Vector3.zero)
@@ -664,7 +681,7 @@ local function tryBuildMesh(rig: Rig, shape: string, config: MeshConfig, color: 
 
 		-- Configured yaw first, then whatever rotation the piece carries, so
 		-- the assembly turns as a unit and each piece keeps its orientation.
-		Models.add(rig, clone, shift * yaw * CFrame.new((part.Position - centre) * scale) * part.CFrame.Rotation)
+		Models.add(rig, clone, shift * orient * CFrame.new((part.Position - centre) * scale) * part.CFrame.Rotation)
 
 		local volume = clone.Size.X * clone.Size.Y * clone.Size.Z
 		if volume > biggest then

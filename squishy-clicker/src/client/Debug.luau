@@ -94,7 +94,7 @@ function Debug.mount(gui: ScreenGui, scene: any)
 
 	-- ---------- quick actions ----------
 	local grid = make("Frame", {
-		Size = UDim2.new(1, -16, 0, 232),
+		Size = UDim2.new(1, -16, 0, 272),
 		Position = UDim2.new(0, 8, 0, 32),
 		BackgroundTransparency = 1,
 		ZIndex = 41,
@@ -167,6 +167,15 @@ function Debug.mount(gui: ScreenGui, scene: any)
 			notMesh(shape)
 		end
 	end)
+	quickButton(13, "Tilt Clicker", function()
+		local pitch, shape = scene.tiltClicker()
+		if pitch then
+			print(("[SquishyClicker] %s: pitch = %d — write it into MESH_SHAPES in Models.luau."):format(shape, pitch))
+		else
+			notMesh(shape)
+		end
+	end)
+
 	quickButton(10, "Raise Clicker", function()
 		local offset, shape = scene.nudgeClicker(Vector3.new(0, 0.1, 0))
 		if offset then
@@ -219,7 +228,7 @@ function Debug.mount(gui: ScreenGui, scene: any)
 	-- ---------- force a reveal ----------
 	make("TextLabel", {
 		Size = UDim2.new(1, -16, 0, 18),
-		Position = UDim2.new(0, 8, 0, 270),
+		Position = UDim2.new(0, 8, 0, 310),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		Text = "Force reveal (also grants a copy)",
@@ -231,8 +240,8 @@ function Debug.mount(gui: ScreenGui, scene: any)
 	})
 
 	local list = make("ScrollingFrame", {
-		Size = UDim2.new(1, -16, 1, -300),
-		Position = UDim2.new(0, 8, 0, 292),
+		Size = UDim2.new(1, -16, 1, -340),
+		Position = UDim2.new(0, 8, 0, 332),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 4,

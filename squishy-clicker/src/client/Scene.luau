@@ -694,6 +694,21 @@ function Scene.rotateClicker(): (number?, string?)
 	return yaw, spec.shape
 end
 
+-- Debug: tip the equipped mesh forward 90°, for a model whose front is facing
+-- the sky rather than the camera.
+function Scene.tiltClicker(): (number?, string?)
+	local spec = clickerSpec
+	if not spec then
+		return nil, nil
+	end
+	local pitch = Models.bumpMeshPitch(spec.shape, 90)
+	if not pitch then
+		return nil, spec.shape
+	end
+	Scene.setClicker(spec.shape, spec.color, spec.sparkle, spec.id, spec.sizeScale)
+	return pitch, spec.shape
+end
+
 -- Debug: shift the equipped mesh, for one that sits too low or too high on the
 -- cushion. Same deal — returns the offset to write into MESH_SHAPES.
 function Scene.nudgeClicker(delta: Vector3): (Vector3?, string?)
