@@ -16,9 +16,11 @@
 
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local Models = require(script.Parent:WaitForChild("Models"))
 
 local Scene = {}
@@ -38,6 +40,15 @@ local FIELD_OF_VIEW = 50
 -- position is ORIGIN rotated 90° around the camera, so after the turn the
 -- steamer occupies the same spot on screen the squisher does in the main view.
 local STEAMER_ORIGIN = ORIGIN + Vector3.new(-16, 0, 17)
+
+-- The cannon sits the same 90° out on the other side, so the three views are
+-- one camera turning left, centre and right rather than three cameras.
+local CANNON_ORIGIN = ORIGIN + Vector3.new(17, 0, 18)
+-- Studs of floor drawn per stud of scored range. The scoring distances in
+-- Config are a game currency, not a room measurement: at 1:1 a 90-stud shot
+-- would sail off the end of the shop.
+local RANGE_SCALE = 0.4
+local MUZZLE_HEIGHT = 2.2
 
 local BACKDROP_COLOR = Color3.fromRGB(240, 222, 206) -- invisible helper parts only
 
@@ -137,8 +148,9 @@ local function toyColor(): Color3
 	return TOY_COLORS[shopRandom:NextInteger(1, #TOY_COLORS)]
 end
 
--- Wooden floor, big enough to run under both the main view and the steamer nook
-local shopFloor = block(Vector3.new(110, 0.5, 100), ORIGIN + Vector3.new(0, -0.25, 0), Color3.fromRGB(206, 172, 134))
+-- Wooden floor, wide enough to run under all three views: the steamer nook to
+-- the left, the squisher ahead, and the cannon range to the right.
+local shopFloor = block(Vector3.new(160, 0.5, 100), ORIGIN + Vector3.new(0, -0.25, 0), Color3.fromRGB(206, 172, 134))
 shopFloor.Material = Enum.Material.WoodPlanks
 
 -- Teal back wall with a white upper band and skylight strip above
@@ -206,6 +218,98 @@ unboxSkylight.Material = Enum.Material.Glass
 for _, z in { -2, 12, 26 } do
 	block(Vector3.new(1.2, 16.2, 1.4), ORIGIN + Vector3.new(-31.3, 8.1, z), Color3.fromRGB(250, 248, 244))
 end
+
+-- ---------- the cannon range ----------
+-- The third view: a cannon, a firing line down +X and target rings painted on
+-- the floor. Geometry only — the server decides where any shot lands.
+
+-- Backstop, so the range doesn't end in open sky.
+local rangeWall = block(Vector3.new(0.8, 13, 60), ORIGIN + Vector3.new(66, 6.5, 14), Color3.fromRGB(62, 178, 186))
+rangeWall.Material = Enum.Material.SmoothPlastic
+block(Vector3.new(0.8, 3.2, 60), ORIGIN + Vector3.new(66, 14.6, 14), Color3.fromRGB(248, 246, 242))
+local rangeSkylight = block(Vector3.new(0.6, 6, 60), ORIGIN + Vector3.new(65.8, 19.2, 14), Color3.fromRGB(198, 224, 242))
+rangeSkylight.Material = Enum.Material.Glass
+
+-- Target rings: concentric discs centred on the bullseye. Drawn outermost
+-- first and stacked in 0.02-stud steps so they don't z-fight.
+local RING_COLORS = {
+	Color3.fromRGB(240, 90, 90), -- bullseye
+	Color3.fromRGB(250, 200, 80),
+	Color3.fromRGB(120, 205, 235),
+	Color3.fromRGB(238, 232, 224),
+}
+local bullseyeSpot = CANNON_ORIGIN + Vector3.new(Config.LaunchTargetDistance * RANGE_SCALE, 0, 0)
+for ring = #Config.LaunchRingPays, 1, -1 do
+	local radius = ring * Config.LaunchRingWidth * RANGE_SCALE
+	local disc = Instance.new("Part")
+	disc.Shape = Enum.PartType.Cylinder
+	disc.Size = Vector3.new(0.08, radius * 2, radius * 2)
+	disc.CFrame = CFrame.new(bullseyeSpot + Vector3.new(0, 0.06 + (#Config.LaunchRingPays - ring) * 0.02, 0))
+		* CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
+	disc.Color = RING_COLORS[ring] or Color3.fromRGB(238, 232, 224)
+	disc.Material = Enum.Material.SmoothPlastic
+	disc.Anchored = true
+	disc.CanCollide = false
+	disc.CanQuery = false
+	disc.CanTouch = false
+	disc.Parent = stage
+end
+
+-- The cannon itself: a wheeled base and a barrel that tilts to the aim.
+local cannonBase = Instance.new("Part")
+cannonBase.Shape = Enum.PartType.Cylinder
+cannonBase.Size = Vector3.new(1.4, 3.2, 3.2)
+cannonBase.CFrame = CFrame.new(CANNON_ORIGIN + Vector3.new(0, 0.7, 0)) * CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
+cannonBase.Color = Color3.fromRGB(120, 96, 78)
+cannonBase.Material = Enum.Material.Wood
+cannonBase.Anchored = true
+cannonBase.CanCollide = false
+cannonBase.CanQuery = false
+cannonBase.CanTouch = false
+cannonBase.Parent = stage
+
+for _, side in { -1, 1 } do
+	local wheel = Instance.new("Part")
+	wheel.Shape = Enum.PartType.Cylinder
+	wheel.Size = Vector3.new(0.35, 2.2, 2.2)
+	wheel.CFrame = CFrame.new(CANNON_ORIGIN + Vector3.new(0, 1.1, side * 1.7))
+	wheel.Color = Color3.fromRGB(86, 68, 54)
+	wheel.Material = Enum.Material.Wood
+	wheel.Anchored = true
+	wheel.CanCollide = false
+	wheel.CanQuery = false
+	wheel.CanTouch = false
+	wheel.Parent = stage
+end
+
+local BARREL_LENGTH = 5
+local cannonBarrel = Instance.new("Part")
+cannonBarrel.Shape = Enum.PartType.Cylinder
+cannonBarrel.Size = Vector3.new(BARREL_LENGTH, 1.6, 1.6)
+cannonBarrel.Color = Color3.fromRGB(72, 78, 92)
+cannonBarrel.Material = Enum.Material.Metal
+cannonBarrel.Anchored = true
+cannonBarrel.CanCollide = false
+cannonBarrel.CanQuery = false
+cannonBarrel.CanTouch = false
+cannonBarrel.Parent = stage
+
+local muzzleSmoke = Instance.new("ParticleEmitter")
+muzzleSmoke.Texture = "rbxasset://textures/particles/smoke_main.dds"
+muzzleSmoke.Rate = 0
+muzzleSmoke.Lifetime = NumberRange.new(0.5, 1.1)
+muzzleSmoke.Speed = NumberRange.new(8, 16)
+muzzleSmoke.SpreadAngle = Vector2.new(14, 14)
+muzzleSmoke.Size = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0.6),
+	NumberSequenceKeypoint.new(1, 3.4),
+})
+muzzleSmoke.Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0.35),
+	NumberSequenceKeypoint.new(1, 1),
+})
+muzzleSmoke.LightEmission = 0.3
+muzzleSmoke.Parent = cannonBarrel
 
 -- The blur that fades the shop out behind the squisher and the steamer.
 -- Everything nearer than the focus distance stays sharp; the walls sit past it.
@@ -289,6 +393,20 @@ local spinDragging = false
 local spinPending = 0
 -- The idle sway steps aside while the squishy is being spun, then eases back.
 local swayAmount = 1
+
+-- ---------- cannon state ----------
+-- The barrel follows the aim dial live, so the player sees the angle they are
+-- choosing before committing to it.
+local aimTilt = spring(60, 11)
+-- A shot in the air. The squisher itself is the projectile — it leaves the
+-- cushion, flies, and comes back — so there is nothing extra to build.
+local flight = {
+	active = false,
+	progress = 1, -- 1 means landed, which is where we start
+	seconds = 1,
+	reach = 0, -- studs of stage the shot covers, already range-scaled
+	apex = 0,
+}
 
 -- ---------- lights and particles ----------
 
@@ -574,21 +692,51 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	swayAmount += (swayTarget - swayAmount) * math.min(dt * 4, 1)
 
 	-- The click toy on its cushion: idle breathing, hard squash on clicks.
+	-- The barrel tracks the aim dial, and a shot in the air carries the clock.
+	advance(aimTilt, dt)
+	if flight.active then
+		flight.progress += dt / flight.seconds
+		if flight.progress >= 1 then
+			flight.progress = 1
+			flight.active = false
+		end
+	end
+
+	local barrelTilt = aimTilt.value
+	cannonBarrel.CFrame = CFrame.new(CANNON_ORIGIN + Vector3.new(0, MUZZLE_HEIGHT, 0))
+		* CFrame.fromEulerAnglesXYZ(0, 0, barrelTilt)
+		* CFrame.new(BARREL_LENGTH * 0.5, 0, 0)
+
 	local toy = clickerModel
 	if toy then
 		local cs = clickerSquash.value
 		local toyScale = Vector3.new(1 + cs * 0.28, 1 - cs * 0.34, 1 + cs * 0.28) * CLICKER_SCALE * toy.sizeScale
-		-- Stood on the cushion by its own underside rather than centred on a
-		-- fixed height, so a tall model doesn't sink through it. Using the live
-		-- Y scale also means a squash presses down onto the cushion rather than
-		-- shrinking away from it.
-		local restY = CLICKER_REST_Y - toy.lowestY * toyScale.Y
-		Models.apply(
-			toy.rig,
-			CFrame.new(CLICKER_SPOT + Vector3.new(0, restY + math.sin(elapsed * 2.1) * 0.05, 0))
-				* CFrame.fromEulerAnglesXYZ(0, spinAngle + math.sin(elapsed * 1.3) * 0.08 * swayAmount, 0),
-			toyScale
-		)
+
+		if flight.progress < 1 then
+			-- Mid-shot the squisher IS the cannonball: it leaves the cushion,
+			-- arcs down the range and comes back, so there is no second model
+			-- to build and the cushion is visibly empty while it's away.
+			local t = flight.progress
+			local height = MUZZLE_HEIGHT + flight.apex * 4 * t * (1 - t)
+			Models.apply(
+				toy.rig,
+				CFrame.new(CANNON_ORIGIN + Vector3.new(flight.reach * t, height, 0))
+					* CFrame.fromEulerAnglesXYZ(0, 0, -t * math.pi * 5),
+				toyScale
+			)
+		else
+			-- Stood on the cushion by its own underside rather than centred on
+			-- a fixed height, so a tall model doesn't sink through it. Using
+			-- the live Y scale also means a squash presses down onto the
+			-- cushion rather than shrinking away from it.
+			local restY = CLICKER_REST_Y - toy.lowestY * toyScale.Y
+			Models.apply(
+				toy.rig,
+				CFrame.new(CLICKER_SPOT + Vector3.new(0, restY + math.sin(elapsed * 2.1) * 0.05, 0))
+					* CFrame.fromEulerAnglesXYZ(0, spinAngle + math.sin(elapsed * 1.3) * 0.08 * swayAmount, 0),
+				toyScale
+			)
+		end
 	end
 
 	glowLight.Brightness = math.max(glow.value, 0)
@@ -611,8 +759,10 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			camera.CameraType = Enum.CameraType.Scriptable
 		end
 		-- The camera stands still and TURNS: viewYaw 0 faces the squisher,
-		-- 1 is 90° left onto the steamer nook. (+yaw about Y turns left.)
-		local yaw = math.clamp(viewYaw.value, -0.15, 1.15) * math.rad(90)
+		-- 1 is 90° left onto the steamer nook, -1 is 90° right onto the
+		-- cannon. (+yaw about Y turns left.) The clamp allows a little past
+		-- each end so the spring's overshoot isn't cut off.
+		local yaw = math.clamp(viewYaw.value, -1.15, 1.15) * math.rad(90)
 		local dir = CFrame.fromEulerAnglesXYZ(0, yaw, 0):VectorToWorldSpace(BASE_LOOK_DIR)
 		-- Shake in view space, so it reads as shake from either angle.
 		local right = dir:Cross(Vector3.new(0, 1, 0)).Unit
@@ -639,10 +789,44 @@ function Scene.releaseClicker()
 	spinDragging = false
 end
 
--- Turn the camera: "unbox" swings 90° left onto the steamer nook, anything
--- else swings back to the squisher.
+-- Point the barrel, 0 for the flattest shot and 1 for the steepest. Purely a
+-- preview of the aim dial; the server is told the same number and does its own
+-- sums with it.
+function Scene.setCannonAim(angle: number)
+	local degrees = Config.LaunchMinAngle + (Config.LaunchMaxAngle - Config.LaunchMinAngle) * math.clamp(angle, 0, 1)
+	aimTilt.target = math.rad(degrees)
+end
+
+-- Fly the squisher to where the SERVER said the shot landed. Distance comes
+-- back from the server; this only draws an arc that ends there.
+function Scene.playLaunch(angle: number, distance: number)
+	local degrees = Config.LaunchMinAngle + (Config.LaunchMaxAngle - Config.LaunchMinAngle) * math.clamp(angle, 0, 1)
+	local reach = math.max(distance, 0) * RANGE_SCALE
+
+	flight.reach = reach
+	-- Apex of a parabola that covers `reach` leaving at this angle. Derived
+	-- rather than guessed so a steep shot visibly lobs and a flat one skims.
+	flight.apex = reach * math.tan(math.rad(degrees)) * 0.25
+	-- Longer shots hang longer, but not linearly, or a max-range lob crawls.
+	flight.seconds = math.clamp(0.5 + reach * 0.022, 0.6, 1.7)
+	flight.progress = 0
+	flight.active = true
+
+	muzzleSmoke:Emit(14)
+	openSound.PlaybackSpeed = 0.75
+	openSound:Play()
+end
+
+-- Turn the camera: "unbox" swings 90° left onto the steamer nook, "cannon"
+-- swings 90° right onto the range, anything else back to the squisher.
 function Scene.setView(view: string)
-	viewYaw.target = view == "unbox" and 1 or 0
+	if view == "unbox" then
+		viewYaw.target = 1
+	elseif view == "cannon" then
+		viewYaw.target = -1
+	else
+		viewYaw.target = 0
+	end
 end
 
 function Scene.click()

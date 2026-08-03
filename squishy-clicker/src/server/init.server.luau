@@ -46,6 +46,17 @@ local SetClicker = Instance.new("RemoteEvent")
 SetClicker.Name = "SetClicker"
 SetClicker.Parent = Remotes
 
+-- Client asks to fire the cannon: (power, angle), both 0-1. Nothing else —
+-- the client never says where it landed or what it won.
+local LaunchShot = Instance.new("RemoteEvent")
+LaunchShot.Name = "LaunchShot"
+LaunchShot.Parent = Remotes
+
+-- The server's verdict on a shot, for the client to animate.
+local LaunchResult = Instance.new("RemoteEvent")
+LaunchResult.Name = "LaunchResult"
+LaunchResult.Parent = Remotes
+
 local SyncData = Instance.new("RemoteEvent")
 SyncData.Name = "SyncData"
 SyncData.Parent = Remotes
@@ -77,6 +88,9 @@ local function isDebugAllowed(player: Player): boolean
 end
 
 -- ---------- Data types ----------
+-- One per-second bucket per rate-limited remote.
+type RateLimit = { bucket: number, count: number }
+
 type PlayerData = {
 	counts: { [string]: number }, -- copies of each squishy currently held
 	stars: { [string]: number },  -- star level (0-5) per squishy
@@ -84,8 +98,8 @@ type PlayerData = {
 	totalOpens: number,           -- lifetime steamers opened (for leaderboard)
 	unopened: number,             -- banked steamers waiting in the Unbox tray
 	clickerId: string?,           -- which owned squishy is the click toy
-	lastSecondBucket: number,     -- click rate limiting
-	clicksThisSecond: number,
+	lastLaunch: number,           -- os.clock of the last cannon shot
+	limits: { [string]: RateLimit }, -- rate limiting, keyed by remote
 }
 
 -- GetDataStore THROWS in an unpublished place (and in Studio without API
@@ -107,8 +121,30 @@ local dataByPlayer: { [Player]: PlayerData } = {}
 local rng = Random.new()
 
 local MAX_CLICKS_PER_SECOND = 25
+-- The cannon has its own cooldown measured in seconds; this is only here to
+-- stop a flood of requests costing us anything before that check runs.
+local MAX_LAUNCHES_PER_SECOND = 4
 
 -- ---------- Helpers ----------
+
+-- True when this player has already used up their allowance of a remote for
+-- the current second. Every remote gets one of these — assume the client is
+-- hostile and calling as fast as it can.
+local function overRate(data: PlayerData, key: string, perSecond: number): boolean
+	local limit = data.limits[key]
+	if not limit then
+		limit = { bucket = 0, count = 0 }
+		data.limits[key] = limit
+	end
+
+	local bucket = math.floor(os.clock())
+	if bucket ~= limit.bucket then
+		limit.bucket = bucket
+		limit.count = 0
+	end
+	limit.count += 1
+	return limit.count > perSecond
+end
 
 local function totalStars(data: PlayerData): number
 	local total = 0
@@ -127,6 +163,23 @@ local function clicksToOpen(data: PlayerData): number
 	local discount = math.min(totalStars(data) * Config.StarDiscountPerStar, Config.MaxStarDiscount)
 	local needed = math.ceil(raw * (1 - discount))
 	return math.clamp(needed, Config.MinClicksToOpen, Config.MaxClicksToOpen)
+end
+
+-- The single place steamer progress is added, so every source — clicking,
+-- the cannon, anything later — banks a full steamer the same way. Loops
+-- because one big award can fill more than one steamer at a time.
+local function addProgress(data: PlayerData, amount: number)
+	if amount <= 0 then
+		return
+	end
+	data.clickProgress += amount
+
+	local needed = clicksToOpen(data)
+	while data.clickProgress >= needed do
+		data.clickProgress -= needed
+		data.unopened += 1
+		needed = clicksToOpen(data) -- clamped to at least 3, so this terminates
+	end
 end
 
 -- Copies needed for a squishy's NEXT star, given its rarity and current star.
@@ -157,6 +210,9 @@ local function sync(player: Player)
 		totalStars = totalStars(data),
 		unopened = data.unopened,
 		clickerId = data.clickerId,
+		-- Seconds until the cannon is usable again, so the UI can show the
+		-- wait rather than the client guessing at it.
+		launchReadyIn = math.max(Config.LaunchCooldownSeconds - (os.clock() - data.lastLaunch), 0),
 	})
 end
 
@@ -206,8 +262,11 @@ local function loadData(player: Player): PlayerData
 		totalOpens = loaded and loaded.totalOpens or 0,
 		unopened = loaded and loaded.unopened or 0,
 		clickerId = loaded and loaded.clickerId or nil,
-		lastSecondBucket = 0,
-		clicksThisSecond = 0,
+		-- Deliberately not persisted: a cannon cooldown surviving a rejoin
+		-- would punish reconnecting, and rejoining to skip 15 seconds is not
+		-- an exploit worth defending against.
+		lastLaunch = 0,
+		limits = {},
 	}
 
 	-- Starter gift: the squisher IS the main clicker, so nobody may start
@@ -290,26 +349,67 @@ ClickSteamer.OnServerEvent:Connect(function(player)
 		return
 	end
 
-	-- Rate limit: bucket clicks per whole second.
-	local bucket = math.floor(os.clock())
-	if bucket ~= data.lastSecondBucket then
-		data.lastSecondBucket = bucket
-		data.clicksThisSecond = 0
-	end
-	data.clicksThisSecond += 1
-	if data.clicksThisSecond > MAX_CLICKS_PER_SECOND then
+	if overRate(data, "click", MAX_CLICKS_PER_SECOND) then
 		return
 	end
 
-	data.clickProgress += 1
+	-- A full bar BANKS a steamer rather than opening it: opening is its own
+	-- moment, and its own choice.
+	addProgress(data, 1)
+	sync(player)
+end)
 
-	if data.clickProgress >= clicksToOpen(data) then
-		-- Full! The steamer is BANKED, not opened: it waits in the Unbox
-		-- tray so opening is its own moment — and its own choice.
-		data.clickProgress = 0
-		data.unopened += 1
+-- ---------- Squishy Launch (the cannon) ----------
+
+LaunchShot.OnServerEvent:Connect(function(player, power, angle)
+	local data = dataByPlayer[player]
+	if not data then
+		return
+	end
+	if overRate(data, "launch", MAX_LAUNCHES_PER_SECOND) then
+		return
 	end
 
+	-- Everything past here treats the payload as hostile: wrong types, NaN
+	-- (which slips through math.clamp) and out-of-range are all rejected
+	-- before a single number is trusted.
+	if typeof(power) ~= "number" or typeof(angle) ~= "number" then
+		return
+	end
+	if power ~= power or angle ~= angle then
+		return
+	end
+	power = math.clamp(power, 0, 1)
+	angle = math.clamp(angle, 0, 1)
+
+	local now = os.clock()
+	if now - data.lastLaunch < Config.LaunchCooldownSeconds then
+		return
+	end
+	data.lastLaunch = now
+
+	-- Stars' second job: a prestiged collection throws further.
+	local starBonus = math.min(totalStars(data) * Config.LaunchPowerPerStar, Config.LaunchMaxStarPower)
+	local speed = Config.LaunchSpeed
+		* (Config.LaunchMinPowerFraction + (1 - Config.LaunchMinPowerFraction) * power)
+		* (1 + starBonus)
+	local radians = math.rad(Config.LaunchMinAngle + (Config.LaunchMaxAngle - Config.LaunchMinAngle) * angle)
+	local distance = speed * speed * math.sin(2 * radians) / Config.LaunchGravity
+
+	-- Score by how far off the bullseye it landed, in ring widths.
+	local miss = math.abs(distance - Config.LaunchTargetDistance)
+	local ring = math.floor(miss / Config.LaunchRingWidth) + 1
+	local pays = Config.LaunchRingPays[ring] or 0
+	local bonus = math.floor(Config.LaunchBullseyeBonus * pays + 0.5)
+	addProgress(data, bonus)
+
+	-- The client animates to THIS distance. It gets no say in it.
+	LaunchResult:FireClient(player, {
+		angle = angle,
+		distance = distance,
+		ring = pays > 0 and ring or 0,
+		bonus = bonus,
+	})
 	sync(player)
 end)
 
@@ -427,6 +527,8 @@ if DebugAction then
 				data.counts[squishy.id] = (data.counts[squishy.id] or 0) + 1
 				SteamerOpened:FireClient(player, squishy.id)
 			end
+		elseif action == "readyCannon" then
+			data.lastLaunch = 0 -- sitting out a 15s cooldown while testing is misery
 		elseif action == "reset" then
 			-- Back to a fresh save, starter Red Dumpling and all.
 			data.counts = { red = 1 }

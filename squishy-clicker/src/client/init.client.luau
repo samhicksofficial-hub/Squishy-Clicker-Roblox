@@ -374,10 +374,8 @@ local function buildIconPreview(row: Row, squishy: { shape: string?, color: Colo
 	local stage = make("Folder", { Name = "Model", Parent = viewport })
 	local model = Models.buildSquishy(stage, squishy.shape, squishy.color, squishy.sparkle, squishy.scale)
 	-- Scaled here too, so a Mini reads small and a Giant reads big in the list
-	-- rather than every squishy looking the same size. Centred on its own
-	-- height as well, since models don't agree about where their origin is.
-	local middleY = (model.lowestY + model.highestY) * 0.5 * model.sizeScale
-	Models.apply(model.rig, CFrame.new(0, -middleY, 0), Vector3.one * model.sizeScale)
+	-- rather than every squishy looking the same size.
+	Models.apply(model.rig, CFrame.identity, Vector3.one * model.sizeScale)
 
 	-- Narrow lens from further back: less perspective distortion than the
 	-- default, so the shape reads cleanly at 56 pixels. Far enough out that an

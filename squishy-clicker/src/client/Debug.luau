@@ -94,7 +94,7 @@ function Debug.mount(gui: ScreenGui, scene: any)
 
 	-- ---------- quick actions ----------
 	local grid = make("Frame", {
-		Size = UDim2.new(1, -16, 0, 272),
+		Size = UDim2.new(1, -16, 0, 312),
 		Position = UDim2.new(0, 8, 0, 32),
 		BackgroundTransparency = 1,
 		ZIndex = 41,
@@ -140,6 +140,9 @@ function Debug.mount(gui: ScreenGui, scene: any)
 	end)
 	quickButton(6, "Reset Save", function()
 		fire:FireServer("reset")
+	end)
+	quickButton(14, "Ready Cannon", function()
+		fire:FireServer("readyCannon")
 	end)
 
 	local backdropFaded = true
@@ -228,7 +231,7 @@ function Debug.mount(gui: ScreenGui, scene: any)
 	-- ---------- force a reveal ----------
 	make("TextLabel", {
 		Size = UDim2.new(1, -16, 0, 18),
-		Position = UDim2.new(0, 8, 0, 310),
+		Position = UDim2.new(0, 8, 0, 350),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		Text = "Force reveal (also grants a copy)",
@@ -240,8 +243,8 @@ function Debug.mount(gui: ScreenGui, scene: any)
 	})
 
 	local list = make("ScrollingFrame", {
-		Size = UDim2.new(1, -16, 1, -340),
-		Position = UDim2.new(0, 8, 0, 332),
+		Size = UDim2.new(1, -16, 1, -380),
+		Position = UDim2.new(0, 8, 0, 372),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 4,

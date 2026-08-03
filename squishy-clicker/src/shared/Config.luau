@@ -33,6 +33,42 @@ local Config = {
 	-- (The per-rarity starting amounts live in Squishies.luau: Common 10 ... Mythical 3.)
 	PrestigeGrowth = 2,
 
+	-- ===== Squishy Launch (the cannon) =====
+	-- The only thing stopping the cannon from out-earning the steamer, so it
+	-- is the number to raise if launching ever feels like the better loop.
+	LaunchCooldownSeconds = 15,
+
+	-- Clicks of steamer progress a dead-centre shot pays.
+	LaunchBullseyeBonus = 10,
+
+	-- How far out the bullseye sits, and how wide each scoring ring is.
+	LaunchTargetDistance = 70,
+	LaunchRingWidth = 7,
+
+	-- What each ring pays as a fraction of the bullseye, centre outwards.
+	-- Miss past the last one and the shot is worth nothing.
+	LaunchRingPays = { 1.0, 0.6, 0.35, 0.15 },
+
+	-- Muzzle speed at full power and the gravity the shot falls under. Range
+	-- works out at speed^2 * sin(2 * angle) / gravity, so these two together
+	-- decide whether the target is even reachable — 90/90 puts maximum range
+	-- at 90 studs, comfortably past the 70-stud bullseye.
+	LaunchSpeed = 90,
+	LaunchGravity = 90,
+
+	-- A limp shot still leaves the barrel: power maps onto this fraction of
+	-- muzzle speed upwards, rather than starting from nothing.
+	LaunchMinPowerFraction = 0.35,
+
+	-- The angle dial sweeps between these, in degrees.
+	LaunchMinAngle = 15,
+	LaunchMaxAngle = 75,
+
+	-- Stars' SECOND job: every star adds this fraction to muzzle speed, so a
+	-- prestiged collection reaches further. Capped, or late players can't miss.
+	LaunchPowerPerStar = 0.01,
+	LaunchMaxStarPower = 0.3,
+
 	-- ===== Debug menu =====
 	-- The debug menu is Studio-only: in a published game the server never even
 	-- creates the remote that powers it, so there is nothing for an exploiter
