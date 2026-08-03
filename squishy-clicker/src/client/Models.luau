@@ -470,6 +470,7 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	babymesh = { template = "GlitterBaby", yaw = 0, fallback = "baby" },
 	dropmesh = { template = "SparkleDrop", yaw = 0, fallback = "drop" },
 	brainmesh = { template = "SquishyBrain", yaw = 0, fallback = "brain" },
+	cloudmesh = { template = "DoughCloud", yaw = 0, fallback = "cloud" },
 	-- The cubes come as one model per colour, named <Colour>CubeSquishy. Each
 	-- asks for its own colour and settles for a tinted sibling if that one
 	-- hasn't been made yet.

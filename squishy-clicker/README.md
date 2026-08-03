@@ -147,6 +147,7 @@ Three models live in `assets/`, each needing the same one-time import:
 | `glitter-baby/` | `GlitterBaby` | Sugar Baby | one baked texture |
 | `sparkle-drop/` | `SparkleDrop` | Sparkle Drop | one baked texture |
 | `brain/` | `SquishyBrain` | Pink Brain | one baked texture |
+| `cloud/` | `DoughCloud` | Dough Cloud | one baked texture |
 
 Do all of this in **Edit mode, with the playtest stopped** — anything you create
 while the game is running is discarded the moment you press Stop.
