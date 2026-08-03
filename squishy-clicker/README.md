@@ -20,6 +20,27 @@ mouse or finger — to spin it on its cushion; let go and it coasts. The steamer
 waits in its own nook 90° to the left — pressing Unbox turns the camera to it
 for the reveal, then turns back.
 
+## Minigames
+
+**Squishy Launch** — a cannon on the third camera view, right of the squisher.
+Tap once to stop the power bar, once more for the angle, and your squisher
+flies down the range at the target rings; how close it lands converts into
+bonus progress toward your next steamer. Stars earn their second keep here,
+adding muzzle speed so a prestiged collection reaches further. One shot every
+`LaunchCooldownSeconds`.
+
+The client sends nothing but `{power, angle}` as two 0-1 numbers. The server
+validates them, works out where the shot lands, scores the ring and awards the
+bonus; the animation is drawn to the server's answer, not the other way round.
+
+**King of the Steamer** — one giant steamer the whole server clicks together,
+in the panel on the right. The goal scales with how many people are in the
+server, fixed at the start of each round. When it opens, everyone who helped
+gets a squishy and whoever helped most gets a better one — the bonus roll is
+the same odds rolled twice keeping the rarer result, so there is no second
+odds table to drift out of step with `Squishies.luau`. A short cooldown, then
+a fresh round.
+
 ## The files
 
 ```
@@ -37,6 +58,8 @@ for the reveal, then turns back.
 │       ├── init.client.luau   the HUD, and wiring it to the stage
 │       ├── Scene.luau         the 3D stage: toy shop, camera, lights, reveals
 │       ├── Models.luau        builds the steamer and every squishy shape
+│       ├── Launch.luau        the cannon minigame's aiming UI
+│       ├── King.luau          the shared-steamer minigame's panel
 │       └── Debug.luau         the Studio-only test menu
 ```
 

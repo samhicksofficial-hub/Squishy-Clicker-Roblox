@@ -69,6 +69,24 @@ local Config = {
 	LaunchPowerPerStar = 0.01,
 	LaunchMaxStarPower = 0.3,
 
+	-- ===== King of the Steamer (the shared minigame) =====
+	-- Goal for a server of one, plus this much for every player beyond the
+	-- first. Scaling on player count is what keeps it beatable alone without
+	-- being over in seconds when twenty people pile on.
+	KingBaseGoal = 60,
+	KingGoalPerPlayer = 45,
+
+	-- Breather between rounds, so a win can be read before the next starts.
+	KingCooldownSeconds = 15,
+
+	-- Progress broadcasts per second, at most. Firing on every click would
+	-- mean hundreds of remote calls a second on a busy server.
+	KingBroadcastsPerSecond = 5,
+
+	-- Per-player click ceiling for the shared steamer, same idea as the
+	-- personal one.
+	KingClicksPerSecond = 20,
+
 	-- ===== Debug menu =====
 	-- The debug menu is Studio-only: in a published game the server never even
 	-- creates the remote that powers it, so there is nothing for an exploiter

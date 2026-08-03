@@ -26,6 +26,7 @@ local Squishies = require(Shared:WaitForChild("Squishies"))
 local Scene = require(script:WaitForChild("Scene"))
 local Models = require(script:WaitForChild("Models"))
 local Launch = require(script:WaitForChild("Launch"))
+local King = require(script:WaitForChild("King"))
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local ClickSteamer = Remotes:WaitForChild("ClickSteamer") :: RemoteEvent
@@ -748,6 +749,9 @@ end)
 -- Spawned because mounting waits on remotes; the HUD must not wait with it.
 task.spawn(function()
 	Launch.mount(gui, Scene)
+end)
+task.spawn(function()
+	King.mount(gui)
 end)
 
 refresh()

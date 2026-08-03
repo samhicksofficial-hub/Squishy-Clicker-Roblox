@@ -57,6 +57,21 @@ local LaunchResult = Instance.new("RemoteEvent")
 LaunchResult.Name = "LaunchResult"
 LaunchResult.Parent = Remotes
 
+-- Client asks to add one click to the shared steamer. No payload at all.
+local ClickShared = Instance.new("RemoteEvent")
+ClickShared.Name = "ClickShared"
+ClickShared.Parent = Remotes
+
+-- Shared steamer state, broadcast to everyone: progress, goal, standings.
+local KingUpdate = Instance.new("RemoteEvent")
+KingUpdate.Name = "KingUpdate"
+KingUpdate.Parent = Remotes
+
+-- A round ended: who won, what they got, what everyone else got.
+local KingFinished = Instance.new("RemoteEvent")
+KingFinished.Name = "KingFinished"
+KingFinished.Parent = Remotes
+
 local SyncData = Instance.new("RemoteEvent")
 SyncData.Name = "SyncData"
 SyncData.Parent = Remotes
@@ -545,6 +560,178 @@ if DebugAction then
 		sync(player)
 	end)
 end
+
+-- ---------- King of the Steamer ----------
+-- One giant steamer the whole server clicks together. Everyone who helped
+-- gets a squishy when it opens; whoever helped most gets a better one.
+
+-- Rank by position in the rarity table, so "rarer" is derived from the one
+-- existing set of odds rather than a second table that could drift from it.
+local rarityRank: { [string]: number } = {}
+for index, rarity in Squishies.rarities do
+	rarityRank[rarity.name] = index
+end
+
+-- The top contributor's prize: roll the SAME odds twice and keep the rarer
+-- result. No separate bonus odds to maintain — add a rarity to Squishies and
+-- this improves with it automatically.
+local function rollBest(attempts: number): Squishies.Squishy
+	local best = Squishies.roll(rng)
+	for _ = 2, attempts do
+		local other = Squishies.roll(rng)
+		if (rarityRank[other.rarity] or 0) > (rarityRank[best.rarity] or 0) then
+			best = other
+		end
+	end
+	return best
+end
+
+local king = {
+	clicks = 0,
+	goal = Config.KingBaseGoal,
+	contributions = {} :: { [Player]: number },
+	active = true,
+	nextRoundAt = 0,
+	dirty = false, -- progress moved since the last broadcast
+}
+
+-- Fixed at the start of each round rather than recomputed as people come and
+-- go: a goal that moved underneath players mid-round would feel broken.
+local function kingGoal(): number
+	local population = math.max(#Players:GetPlayers(), 1)
+	return Config.KingBaseGoal + (population - 1) * Config.KingGoalPerPlayer
+end
+
+local function kingSnapshot()
+	local standings: { { name: string, clicks: number } } = {}
+	for contributor, clicks in king.contributions do
+		-- dataByPlayer is cleared on leave, so this also skips anyone gone.
+		if dataByPlayer[contributor] then
+			table.insert(standings, { name = contributor.DisplayName, clicks = clicks })
+		end
+	end
+	table.sort(standings, function(a, b)
+		return a.clicks > b.clicks
+	end)
+	while #standings > 5 do -- nobody reads past fifth place
+		table.remove(standings)
+	end
+
+	return {
+		clicks = king.clicks,
+		goal = king.goal,
+		active = king.active,
+		standings = standings,
+	}
+end
+
+local function broadcastKing()
+	KingUpdate:FireAllClients(kingSnapshot())
+	king.dirty = false
+end
+
+local function startKingRound()
+	king.clicks = 0
+	king.goal = kingGoal()
+	king.contributions = {}
+	king.active = true
+	broadcastKing()
+end
+
+local function finishKingRound()
+	king.active = false
+	king.nextRoundAt = os.clock() + Config.KingCooldownSeconds
+
+	-- Settle who won before handing anything out, so the winner's own prize
+	-- is decided by the same pass as everyone else's.
+	local topPlayer: Player? = nil
+	local topClicks = 0
+	for contributor, clicks in king.contributions do
+		if clicks > topClicks and dataByPlayer[contributor] then
+			topClicks = clicks
+			topPlayer = contributor
+		end
+	end
+
+	local winnerName = ""
+	local winnerPrize = ""
+
+	for contributor, clicks in king.contributions do
+		local data = dataByPlayer[contributor]
+		-- A contributor who left mid-round simply isn't here to pay; their
+		-- clicks still counted toward opening it.
+		if data and clicks > 0 then
+			local squishy = if contributor == topPlayer then rollBest(2) else Squishies.roll(rng)
+			data.counts[squishy.id] = (data.counts[squishy.id] or 0) + 1
+			SteamerOpened:FireClient(contributor, squishy.id)
+			updateLeaderstats(contributor)
+			sync(contributor)
+
+			if contributor == topPlayer then
+				winnerName = contributor.DisplayName
+				winnerPrize = squishy.name
+			end
+		end
+	end
+
+	KingFinished:FireAllClients({
+		winner = winnerName,
+		prize = winnerPrize,
+		clicks = topClicks,
+		cooldown = Config.KingCooldownSeconds,
+	})
+	broadcastKing()
+end
+
+ClickShared.OnServerEvent:Connect(function(player)
+	local data = dataByPlayer[player]
+	if not data or not king.active then
+		return
+	end
+	if overRate(data, "king", Config.KingClicksPerSecond) then
+		return
+	end
+
+	king.clicks += 1
+	king.contributions[player] = (king.contributions[player] or 0) + 1
+	king.dirty = true
+
+	if king.clicks >= king.goal then
+		finishKingRound()
+	end
+end)
+
+-- Progress goes out on a timer, not on every click: a busy server would
+-- otherwise fire hundreds of remotes a second to say the bar moved a pixel.
+task.spawn(function()
+	local interval = 1 / Config.KingBroadcastsPerSecond
+	while true do
+		task.wait(interval)
+		if king.dirty then
+			broadcastKing()
+		elseif not king.active and os.clock() >= king.nextRoundAt then
+			startKingRound()
+		end
+	end
+end)
+
+-- Newcomers need the current state or their panel sits empty until someone
+-- clicks. Same GetPlayers catch-up as the main join handler, for anyone who
+-- arrived before this script ran.
+local function sendKingStateTo(player: Player)
+	KingUpdate:FireClient(player, kingSnapshot())
+end
+
+Players.PlayerAdded:Connect(sendKingStateTo)
+for _, existing in Players:GetPlayers() do
+	task.spawn(sendKingStateTo, existing)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	king.contributions[player] = nil
+end)
+
+startKingRound()
 
 -- ---------- Autosave ----------
 
