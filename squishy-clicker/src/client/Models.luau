@@ -501,6 +501,7 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	-- No pug among the primitives, so a plain ball stands in if the model
 	-- isn't in the place.
 	pugmesh = { template = "PugSquishy", yaw = 0, fallback = "ball" },
+	icecubemesh = { template = "IceCubeSquishy", yaw = 0, fallback = "jellycube" },
 	-- The cubes come as one model per colour, named <Colour>CubeSquishy. Each
 	-- asks for its own colour and settles for a tinted sibling if that one
 	-- hasn't been made yet.
