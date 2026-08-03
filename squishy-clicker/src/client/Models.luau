@@ -498,6 +498,9 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	brainmesh = { template = "SquishyBrain", yaw = 0, fallback = "brain" },
 	cloudmesh = { template = "DoughCloud", yaw = 0, fallback = "cloud" },
 	strawberrymesh = { template = "StrawberrySquishy", yaw = 0, fallback = "strawberry" },
+	-- No pug among the primitives, so a plain ball stands in if the model
+	-- isn't in the place.
+	pugmesh = { template = "PugSquishy", yaw = 0, fallback = "ball" },
 	-- The cubes come as one model per colour, named <Colour>CubeSquishy. Each
 	-- asks for its own colour and settles for a tinted sibling if that one
 	-- hasn't been made yet.

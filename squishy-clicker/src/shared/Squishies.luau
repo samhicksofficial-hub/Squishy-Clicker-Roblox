@@ -98,6 +98,7 @@ local list: { Squishy } = {
 	{ id = "glitcube",   name = "Glitter Cube",     rarity = "Rare",      color = Color3.fromRGB(112, 218, 122), sparkle = true,  shape = "cubegreen" },
 	{ id = "twotone",    name = "Two-Tone Glitter", rarity = "Rare",      color = Color3.fromRGB(186, 142, 235), sparkle = true,  shape = "cubepurple" },
 	{ id = "cake",       name = "Boxed Cake",       rarity = "Rare",      color = Color3.fromRGB(246, 204, 158), sparkle = true,  shape = "tub" },
+	{ id = "pug",        name = "Pug Squishy",      rarity = "Rare",      color = Color3.fromRGB(214, 178, 128), sparkle = false, shape = "pugmesh" },
 
 	-- Epics
 	{ id = "brain",      name = "Pink Brain",       rarity = "Epic",      color = Color3.fromRGB(240, 158, 170), sparkle = false, shape = "brainmesh" },
