@@ -457,7 +457,7 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	bananamesh = { template = "BananaSquishy", yaw = 180, fallback = "banana" },
 	buttermesh = { template = "ButterSquishy", yaw = 180, fallback = "butter" },
 	-- Rainbow Butter has its own tie-dye model, so it needs no tinting.
-	rainbuttermesh = { template = "RainbowButter", yaw = 0, fallback = "butter" },
+	rainbuttermesh = { template = "RainbowButter", yaw = 90, fallback = "butter" },
 	glowdonutmesh = { template = "GlowDonut", yaw = 0, fallback = "donut" },
 	cheesemesh = { template = "SquishCheese", yaw = 0, fallback = "cheese" },
 	coconutmesh = { template = "CoconutBall", yaw = 0, fallback = "ball" },
