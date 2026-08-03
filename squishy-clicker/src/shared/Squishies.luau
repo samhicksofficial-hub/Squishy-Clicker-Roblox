@@ -91,7 +91,6 @@ local list: { Squishy } = {
 
 	-- Uncommons
 	{ id = "cheese",     name = "Squeeze Cheese",   rarity = "Uncommon",  color = Color3.fromRGB(245, 196, 54),  sparkle = false, shape = "cheesemesh" },
-	{ id = "strawberry", name = "Giant Strawberry", rarity = "Uncommon",  color = Color3.fromRGB(219, 58, 62),   sparkle = false, shape = "strawberrymesh", scale = GIANT },
 	{ id = "swirlcube",  name = "Swirl Cube",       rarity = "Uncommon",  color = Color3.fromRGB(235, 122, 168), sparkle = false, shape = "cubepink" },
 	{ id = "snowcube",   name = "Snowflake Cube",   rarity = "Uncommon",  color = Color3.fromRGB(138, 200, 240), sparkle = false, shape = "cubeblue" },
 
@@ -111,13 +110,14 @@ local list: { Squishy } = {
 	{ id = "glowdonut",   name = "Glow Doughnut",   rarity = "Legendary", color = Color3.fromRGB(132, 244, 120), sparkle = true,  shape = "glowdonutmesh" },
 
 	-- ===== Giant editions =====
-	-- Same model as their everyday twin, just enormous, and one rarity tier
-	-- harder to pull. The Opal has nowhere higher to go, so it shares Mythical
-	-- with the original.
-	{ id = "giantbanana",     name = "Giant Banana",       rarity = "Uncommon",  color = Color3.fromRGB(250, 216, 88),  sparkle = false, shape = "bananamesh",     scale = GIANT },
-	{ id = "giantbutter",     name = "Giant Butter Stick", rarity = "Uncommon",  color = Color3.fromRGB(247, 210, 96),  sparkle = false, shape = "buttermesh",     scale = GIANT },
+	-- Same model as their everyday twin, just enormous. Every giant is Epic or
+	-- better, so pulling one always feels like an event — which means a giant
+	-- is at least two tiers above an everyday Common twin, not merely one.
+	{ id = "giantbanana",     name = "Giant Banana",         rarity = "Epic",      color = Color3.fromRGB(250, 216, 88),  sparkle = false, shape = "bananamesh",     scale = GIANT },
+	{ id = "giantbutter",     name = "Giant Butter Stick",   rarity = "Epic",      color = Color3.fromRGB(247, 210, 96),  sparkle = false, shape = "buttermesh",     scale = GIANT },
+	{ id = "strawberry",      name = "Giant Strawberry",     rarity = "Epic",      color = Color3.fromRGB(219, 58, 62),   sparkle = false, shape = "strawberrymesh", scale = GIANT },
 	{ id = "giantrainbutter", name = "Giant Rainbow Butter", rarity = "Legendary", color = Color3.fromRGB(196, 124, 220), sparkle = false, shape = "rainbuttermesh", scale = GIANT },
-	{ id = "giantopal",       name = "Giant Opal Dumpling", rarity = "Mythical", color = Color3.fromRGB(232, 225, 245), sparkle = true,  shape = "opalmesh",       scale = GIANT },
+	{ id = "giantopal",       name = "Giant Opal Dumpling",  rarity = "Mythical",  color = Color3.fromRGB(232, 225, 245), sparkle = true,  shape = "opalmesh",       scale = GIANT },
 }
 
 -- ---------- lookups (built once) ----------
