@@ -84,6 +84,10 @@ local list: { Squishy } = {
 	{ id = "jellycube",  name = "Mini Jelly Cube",  rarity = "Common",    color = Color3.fromRGB(242, 150, 62),  sparkle = false, shape = "cubeorange", scale = MINI },
 	{ id = "cloud",      name = "Dough Cloud",      rarity = "Common",    color = Color3.fromRGB(250, 248, 244), sparkle = false, shape = "cloudmesh" },
 	{ id = "butter",     name = "Butter Stick",     rarity = "Common",    color = Color3.fromRGB(247, 210, 96),  sparkle = false, shape = "buttermesh" },
+	-- Everyday twin of the Giant Strawberry. Its id is "plainstrawberry"
+	-- because "strawberry" was taken by the giant, which shipped first and
+	-- cannot be renamed without orphaning anyone who already owns one.
+	{ id = "plainstrawberry", name = "Strawberry", rarity = "Common",    color = Color3.fromRGB(219, 58, 62),   sparkle = false, shape = "strawberrymesh" },
 
 	-- Uncommons
 	{ id = "cheese",     name = "Squeeze Cheese",   rarity = "Uncommon",  color = Color3.fromRGB(245, 196, 54),  sparkle = false, shape = "cheesemesh" },
