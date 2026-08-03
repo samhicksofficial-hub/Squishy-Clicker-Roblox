@@ -94,16 +94,16 @@ local list: { Squishy } = {
 	-- Rares
 	{ id = "glitcube",   name = "Glitter Cube",     rarity = "Rare",      color = Color3.fromRGB(112, 218, 122), sparkle = true,  shape = "cubegreen" },
 	{ id = "twotone",    name = "Two-Tone Glitter", rarity = "Rare",      color = Color3.fromRGB(186, 142, 235), sparkle = true,  shape = "cubepurple" },
-	{ id = "rainbutter", name = "Rainbow Butter",   rarity = "Rare",      color = Color3.fromRGB(196, 124, 220), sparkle = false, shape = "rainbuttermesh" },
 	{ id = "cake",       name = "Boxed Cake",       rarity = "Rare",      color = Color3.fromRGB(246, 204, 158), sparkle = true,  shape = "tub" },
 
 	-- Epics
 	{ id = "brain",      name = "Pink Brain",       rarity = "Epic",      color = Color3.fromRGB(240, 158, 170), sparkle = false, shape = "brain" },
 	{ id = "blobfish",   name = "Blobfish",         rarity = "Epic",      color = Color3.fromRGB(122, 170, 230), sparkle = false, shape = "blobfish" },
 	{ id = "sugarbaby",  name = "Sugar Baby",       rarity = "Epic",      color = Color3.fromRGB(230, 120, 198), sparkle = true,  shape = "babymesh" },
+	{ id = "rainbutter", name = "Rainbow Butter",   rarity = "Epic",      color = Color3.fromRGB(196, 124, 220), sparkle = false, shape = "rainbuttermesh" },
+	{ id = "sparkledrop", name = "Sparkle Drop",    rarity = "Epic",      color = Color3.fromRGB(140, 226, 198), sparkle = true,  shape = "dropmesh" },
 
-	-- Legendaries: the glow-in-the-dark ones
-	{ id = "sparkledrop", name = "Sparkle Drop",    rarity = "Legendary", color = Color3.fromRGB(140, 226, 198), sparkle = true,  shape = "drop" },
+	-- Legendary
 	{ id = "glowdonut",   name = "Glow Doughnut",   rarity = "Legendary", color = Color3.fromRGB(132, 244, 120), sparkle = true,  shape = "glowdonutmesh" },
 
 	-- ===== Giant editions =====
@@ -112,7 +112,7 @@ local list: { Squishy } = {
 	-- with the original.
 	{ id = "giantbanana",     name = "Giant Banana",       rarity = "Uncommon",  color = Color3.fromRGB(250, 216, 88),  sparkle = false, shape = "bananamesh",     scale = GIANT },
 	{ id = "giantbutter",     name = "Giant Butter Stick", rarity = "Uncommon",  color = Color3.fromRGB(247, 210, 96),  sparkle = false, shape = "buttermesh",     scale = GIANT },
-	{ id = "giantrainbutter", name = "Giant Rainbow Butter", rarity = "Epic",    color = Color3.fromRGB(196, 124, 220), sparkle = false, shape = "rainbuttermesh", scale = GIANT },
+	{ id = "giantrainbutter", name = "Giant Rainbow Butter", rarity = "Legendary", color = Color3.fromRGB(196, 124, 220), sparkle = false, shape = "rainbuttermesh", scale = GIANT },
 	{ id = "giantopal",       name = "Giant Opal Dumpling", rarity = "Mythical", color = Color3.fromRGB(232, 225, 245), sparkle = true,  shape = "opalmesh",       scale = GIANT },
 }
 

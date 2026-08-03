@@ -81,7 +81,6 @@ local function starString(stars: number): string
 	return string.rep("★", stars) .. string.rep("☆", Config.MaxStars - stars)
 end
 
-
 -- Copies needed for a squishy's next star (mirrors the server's math for display).
 local function prestigeCost(squishyId: string, currentStar: number): number
 	local squishy = Squishies.byId[squishyId]
@@ -558,18 +557,22 @@ local function playReveal(squishyId: string)
 			ZIndex = 20,
 			Parent = gui,
 		})
-		TweenService
-			:Create(flash, TweenInfo.new(0.75, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
-			:Play()
+		TweenService:Create(
+			flash,
+			TweenInfo.new(0.75, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ BackgroundTransparency = 1 }
+		):Play()
 		task.delay(0.85, function()
 			flash:Destroy()
 		end)
 	end
 
 	task.delay(1.7, function()
-		TweenService
-			:Create(banner, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { TextTransparency = 1, BackgroundTransparency = 1 })
-			:Play()
+		TweenService:Create(
+			banner,
+			TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ TextTransparency = 1, BackgroundTransparency = 1 }
+		):Play()
 		task.delay(0.3, function()
 			banner:Destroy()
 		end)
