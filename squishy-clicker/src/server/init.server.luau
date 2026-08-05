@@ -17,6 +17,7 @@ local Config = require(Shared:WaitForChild("Config"))
 -- with an orange "Infinite yield possible" warning in Output, the file was
 -- moved — put it back at src/shared/Squishies.luau or update this path.
 local Squishies = require(Shared:WaitForChild("Squishies"))
+local Pets = require(Shared:WaitForChild("Pets"))
 
 -- ---------- Remotes ----------
 local Remotes = Instance.new("Folder")
@@ -57,12 +58,41 @@ local LaunchResult = Instance.new("RemoteEvent")
 LaunchResult.Name = "LaunchResult"
 LaunchResult.Parent = Remotes
 
--- Where the mid-air pickups are for this player's NEXT shot. Sent on join and
--- after every shot rather than folded into the ordinary sync, which fires on
--- every single click and doesn't need a dozen extra tables riding along.
+-- Where the pickups are for this player's NEXT shot. Sent on join and after
+-- every shot rather than folded into the ordinary sync, which fires on every
+-- single click and doesn't need a couple of dozen extra tables riding along.
 local LaunchField = Instance.new("RemoteEvent")
 LaunchField.Name = "LaunchField"
 LaunchField.Parent = Remotes
+
+-- Cannon progression. Every one of these is a bare "I would like to" — the
+-- payload is at most an id, never an amount, a price or a reward.
+local BuyPower = Instance.new("RemoteEvent")
+BuyPower.Name = "BuyPower"
+BuyPower.Parent = Remotes
+
+local DoRebirth = Instance.new("RemoteEvent")
+DoRebirth.Name = "DoRebirth"
+DoRebirth.Parent = Remotes
+
+local HatchEgg = Instance.new("RemoteEvent")
+HatchEgg.Name = "HatchEgg"
+HatchEgg.Parent = Remotes
+
+-- Which pets are equipped: (petId, shouldBeEquipped). The server owns the
+-- five-slot limit, not the UI.
+local TogglePet = Instance.new("RemoteEvent")
+TogglePet.Name = "TogglePet"
+TogglePet.Parent = Remotes
+
+local ActivateBoost = Instance.new("RemoteEvent")
+ActivateBoost.Name = "ActivateBoost"
+ActivateBoost.Parent = Remotes
+
+-- A hatch just happened: (petId), so the client can play the reveal.
+local EggHatched = Instance.new("RemoteEvent")
+EggHatched.Name = "EggHatched"
+EggHatched.Parent = Remotes
 
 -- Client asks to add one click to the shared steamer. No payload at all.
 local ClickShared = Instance.new("RemoteEvent")
@@ -113,9 +143,9 @@ end
 -- One per-second bucket per rate-limited remote.
 type RateLimit = { bucket: number, count: number }
 
--- One floating sweet on the cannon range. Positions are in GAME studs; the
--- client scales them down to fit the stage.
-type Pickup = { distance: number, height: number, value: number }
+-- One pickup on the track. Positions are in GAME studs; the client scales
+-- them to fit the stage.
+type Pickup = { distance: number, height: number, kind: string, value: number, vip: boolean }
 
 type PlayerData = {
 	counts: { [string]: number }, -- copies of each squishy currently held
@@ -127,6 +157,19 @@ type PlayerData = {
 	lastLaunch: number,           -- os.clock of the last cannon shot
 	bestDistance: number,         -- furthest cannon shot ever, in studs
 	launchField: { Pickup },      -- pickups waiting for their NEXT shot
+
+	-- The cannon's own economy, separate from the steamer's.
+	tnt: number,                  -- buys launch power
+	coins: number,                -- buys eggs; reset by rebirth
+	gems: number,                 -- buys the premium egg; survives rebirth
+	powerLevel: number,           -- launch power upgrades bought
+	rebirths: number,             -- permanent multipliers earned
+	milestones: { [string]: boolean }, -- distance signs already paid out
+	pets: { string },             -- every pet owned, duplicates and all
+	equipped: { string },         -- the (at most five) that follow the squishy
+	boostUntil: number,           -- os.clock while Rain TNT is running
+	lastBoost: number,            -- os.clock of the last activation
+
 	limits: { [string]: RateLimit }, -- rate limiting, keyed by remote
 }
 
@@ -211,124 +254,283 @@ local function addProgress(data: PlayerData, amount: number)
 end
 
 -- ---------- Cannon ballistics ----------
--- Every number the cannon minigame turns on is worked out here, on the server.
--- The client is sent the finished shape of the flight and draws it; it never
+-- Every number the cannon turns on is worked out here, on the server. The
+-- client is sent the finished shape of the flight and draws it; it never
 -- computes a distance, a pickup or a payout of its own.
+--
+-- The flight is simulated rather than solved: a ballistic arc, then a skip,
+-- then another, each one keeping a share of its speed, until the skips die out
+-- and it rolls to a stop. Skipping is where most of a good run's distance
+-- comes from, and it is the reason the best angle is under 45° rather than at
+-- it — a flatter shot keeps more forward speed into the first bounce.
+--
+-- This is a closed-form simulation on purpose. Roblox's own physics would be
+-- the obvious way to bounce something, but physics runs on whoever owns the
+-- part and is not reproducible, which would mean trusting a client's word for
+-- how far it went. Deterministic arithmetic on the server cannot be argued
+-- with, and it also means a 40-second flight costs no simulation time at all.
 
--- One flight, fully described. Distances and heights are in game studs.
+-- One hop of a flight. `peak` is 0 for the final rolling segment.
+type Arc = { fromX: number, toX: number, peak: number, seconds: number, rolling: boolean }
+
 type Flight = {
 	distance: number, -- total ground covered, and the score
-	apexAt: number, -- how far along the top of the arc is
-	apexHeight: number, -- how high that top is
-	glideRange: number, -- ground covered gliding down from the apex
-	riseSeconds: number, -- time spent climbing, for pacing the animation
-	glideSeconds: number,
+	arcs: { Arc },
+	launchSpeed: number,
+	peakHeight: number,
+	seconds: number, -- real flight time, for pacing the animation
 }
 
--- A shot is two phases: a normal ballistic climb to the apex, then a glide
--- that sinks in a straight line to the floor. Splitting it there is what makes
--- the angle dial a real choice — see the glide comments in Config.
-local function flightFor(power: number, angleFraction: number, starPower: number): Flight
-	local speed = Config.LaunchSpeed
-		* (Config.LaunchMinPowerFraction + (1 - Config.LaunchMinPowerFraction) * power)
-		* (1 + starPower)
+-- How far a bare launch of this power carries, before any bonuses. Kept apart
+-- from the simulation so the two callers that only want a distance estimate
+-- don't pay for the whole thing.
+local function launchSpeedFor(power: number): number
+	-- Range of an arc is v²/g, so this makes distance linear in power.
+	return math.sqrt(math.max(power, 1) * Config.LaunchGravity * Config.LaunchStudsPerPower)
+end
+
+local function simulateFlight(power: number, angleFraction: number): Flight
+	local speed = launchSpeedFor(power)
 	local radians = math.rad(Config.LaunchMinAngle + (Config.LaunchMaxAngle - Config.LaunchMinAngle) * angleFraction)
 	local vx = speed * math.cos(radians)
 	local vy = speed * math.sin(radians)
 
-	local riseSeconds = vy / Config.LaunchGravity
-	local apexHeight = vy * riseSeconds * 0.5
-	local apexAt = vx * riseSeconds
-	local glideSeconds = Config.LaunchGlideSeconds + apexHeight * Config.LaunchGlideSecondsPerStud
-	local glideRange = vx * Config.LaunchGlideSpeedFactor * glideSeconds
+	local arcs: { Arc } = {}
+	local x = 0
+	local seconds = 0
+	local peakHeight = 0
+
+	for _ = 1, Config.LaunchMaxBounces do
+		if vy < Config.LaunchMinBounceSpeed then
+			break
+		end
+		-- Up and back down to the same height, so one hop is 2v/g.
+		local hang = 2 * vy / Config.LaunchGravity
+		local peak = vy * vy / (2 * Config.LaunchGravity)
+		local span = vx * hang
+
+		table.insert(arcs, { fromX = x, toX = x + span, peak = peak, seconds = hang, rolling = false })
+		x += span
+		seconds += hang
+		peakHeight = math.max(peakHeight, peak)
+
+		vy *= Config.LaunchRestitution
+		vx *= Config.LaunchBounceFriction
+	end
+
+	-- Whatever forward speed survived the last skip is spent rolling.
+	local rollSpan = vx * vx / (2 * Config.LaunchRollDeceleration)
+	local rollSeconds = vx / Config.LaunchRollDeceleration
+	table.insert(arcs, { fromX = x, toX = x + rollSpan, peak = 0, seconds = rollSeconds, rolling = true })
 
 	return {
-		distance = apexAt + glideRange,
-		apexAt = apexAt,
-		apexHeight = apexHeight,
-		glideRange = glideRange,
-		riseSeconds = riseSeconds,
-		glideSeconds = glideSeconds,
+		distance = x + rollSpan,
+		arcs = arcs,
+		launchSpeed = speed,
+		peakHeight = peakHeight,
+		seconds = seconds + rollSeconds,
 	}
 end
 
 -- How high the shot is when it has travelled `x`. The client redraws this same
--- curve to animate; only this copy decides what was collected.
+-- curve from the same arcs to animate; only this copy decides what was
+-- collected, so the two drifting apart is a cosmetic bug, never an exploit.
 local function heightAt(flight: Flight, x: number): number
-	if x <= 0 or flight.apexAt <= 0 then
-		return 0
+	for _, arc in flight.arcs do
+		if x <= arc.toX then
+			local span = arc.toX - arc.fromX
+			if arc.rolling or span <= 0 then
+				return 0
+			end
+			-- Parabola meeting the ground at both ends of the hop.
+			local along = (x - arc.fromX) / span
+			return arc.peak * 4 * along * (1 - along)
+		end
 	end
-	if x <= flight.apexAt then
-		-- Parabola peaking at the apex and meeting the floor at the muzzle.
-		local offset = (x - flight.apexAt) / flight.apexAt
-		return flight.apexHeight * (1 - offset * offset)
-	end
-	if flight.glideRange <= 0 then
-		return 0
-	end
-	return math.max(flight.apexHeight * (1 - (x - flight.apexAt) / flight.glideRange), 0)
+	return 0
 end
+
+-- ---------- What the player brings to a shot ----------
 
 local function starPowerFor(data: PlayerData): number
 	return math.min(totalStars(data) * Config.LaunchPowerPerStar, Config.LaunchMaxStarPower)
 end
 
--- The furthest this player could possibly throw right now. Found by sampling
--- the angle dial rather than solving for it: the glide term makes the maximum
--- messy to derive, and twenty samples of arithmetic costs nothing once a shot.
-local function bestPossibleDistance(starPower: number): number
+local function petBonuses(data: PlayerData): Pets.Bonuses
+	return Pets.bonuses(data.equipped)
+end
+
+local function rebirthMultiplier(data: PlayerData, per: number): number
+	return 1 + data.rebirths * per
+end
+
+-- TNT cost of the player's NEXT power level.
+local function powerUpgradeCost(level: number): number
+	return math.floor(Config.PowerUpgradeBaseCost * Config.PowerUpgradeCostGrowth ^ level + 0.5)
+end
+
+-- Everything that makes a shot go further, gathered in one place so the
+-- upgrade screen and the shot itself can never disagree about the total.
+local function launchPowerFor(data: PlayerData): number
+	local base = Config.LaunchBasePower * Config.LaunchPowerGrowth ^ data.powerLevel
+	return base
+		* (1 + starPowerFor(data))
+		* rebirthMultiplier(data, Config.RebirthDistanceBonus)
+		* petBonuses(data).power
+end
+
+-- The player's magnet, in the SCREEN units Config quotes it in.
+local function magnetFor(data: PlayerData): number
+	return Config.LaunchPickupMagnet
+		+ math.min(totalStars(data) * Config.LaunchMagnetPerStar, Config.LaunchMaxStarMagnet)
+		+ petBonuses(data).magnet
+end
+
+-- The same magnet converted into the game studs a shot is actually measured
+-- in. The track is drawn so that a flight's envelope is always about
+-- MagnetReferenceHeight tall on screen, so scaling by this field's own tallest
+-- pickup undoes that and lands on the equivalent real reach. See the comment
+-- on Config.LaunchPickupMagnet for why this cannot be a fixed number.
+local function effectiveMagnet(data: PlayerData): number
+	local tallest = 1
+	for _, pickup in data.launchField do
+		tallest = math.max(tallest, pickup.height)
+	end
+	return magnetFor(data) * tallest / Config.MagnetReferenceHeight
+end
+
+local function boostActive(data: PlayerData): boolean
+	return os.clock() < data.boostUntil
+end
+
+-- Distance needed for the player's next rebirth.
+local function rebirthRequirement(rebirths: number): number
+	return Config.RebirthBaseRequirement * Config.RebirthRequirementGrowth ^ rebirths
+end
+
+-- The distance a good shot at full charge would cover right now. Used to lay
+-- the pickup field out where the player can actually reach it, so the track
+-- stretches out with them instead of bunching at the cannon forever.
+local function expectedReach(data: PlayerData): number
+	local power = launchPowerFor(data)
 	local best = 0
-	for step = 0, 20 do
-		local candidate = flightFor(1, step / 20, starPower).distance
+	for step = 0, 8 do
+		local candidate = simulateFlight(power, step / 8).distance
 		if candidate > best then
 			best = candidate
 		end
 	end
-	return best
+	return math.max(best, 1)
 end
 
--- Lay out the sweets for a shot. They spread across the player's OWN reachable
--- range, so the field stretches further down the course as their stars grow
--- and never sits somewhere they cannot get to.
+-- ---------- The pickup field ----------
+
+-- VIP zones: bands of the track where pickups cluster and pay several times
+-- over. Placed as fractions of the player's own reach, so they stay relevant
+-- at every power level rather than being left behind at 500 studs.
+local function makeVipZones(reach: number): { { from: number, to: number } }
+	local zones = {}
+	for index = 1, Config.VipZoneCount do
+		-- Spread across the back half of the reach: a VIP zone at the cannon's
+		-- feet would be free money on every shot.
+		local centre = reach * (0.45 + 0.5 * (index - 0.5) / Config.VipZoneCount)
+		local half = reach * Config.VipZoneWidthFraction * 0.5
+		table.insert(zones, { from = centre - half, to = centre + half })
+	end
+	return zones
+end
+
+local function inVipZone(zones: { { from: number, to: number } }, at: number): boolean
+	for _, zone in zones do
+		if at >= zone.from and at <= zone.to then
+			return true
+		end
+	end
+	return false
+end
+
 local function makeLaunchField(data: PlayerData): { Pickup }
-	local starPower = starPowerFor(data)
-	local reach = bestPossibleDistance(starPower)
+	local reach = expectedReach(data)
 	local spread = Config.LaunchPickupFarFraction - Config.LaunchPickupNearFraction
+	local zones = makeVipZones(reach)
+	local boosted = boostActive(data)
+
+	-- Rain TNT and VIP zones both work by adding EXTRA pickups rather than
+	-- replacing the ordinary ones, so neither can ever make a shot worse.
+	local count = Config.LaunchPickupCount
+	if boosted then
+		count = math.floor(count * Config.BoostDensityMultiplier)
+	end
 
 	local field: { Pickup } = {}
-	for index = 1, Config.LaunchPickupCount do
-		-- Evenly spaced slots with a jitter inside each, rather than twelve
-		-- free rolls — free rolls clump, and a clumped field is a dead field.
-		local slot = (index - 0.5) / Config.LaunchPickupCount
-		local at = reach * (Config.LaunchPickupNearFraction + spread * slot)
-		at += (rng:NextNumber() - 0.5) * reach * spread / Config.LaunchPickupCount
+	local function place(at: number, forceVip: boolean)
+		at = math.max(at, 1)
+		local vip = forceVip or inVipZone(zones, at)
 
-		-- Height is read off a real arc rather than picked out of the air, so
-		-- every sweet sits on SOME flyable path — a different one each time,
-		-- which is what makes one angle right for this field and not the next.
-		local reference = flightFor(0.7 + rng:NextNumber() * 0.3, rng:NextNumber(), starPower)
-		local golden = rng:NextNumber() < Config.LaunchPickupGoldenChance
+		-- Height is read off a REAL arc rather than picked out of the air, so
+		-- every pickup sits on some flyable path — a different one each time,
+		-- which is what stops one angle being the answer to every field.
+		local reference = simulateFlight(launchPowerFor(data) * (0.55 + rng:NextNumber() * 0.5), rng:NextNumber())
+		local height = heightAt(reference, at)
+
+		local roll = rng:NextNumber()
+		local kind, value
+		if roll < Config.PickupGemChance then
+			kind, value = "gem", Config.PickupGemValue
+		elseif roll < Config.PickupGemChance + Config.PickupCoinChance then
+			kind, value = "coin", Config.PickupCoinValue
+		else
+			kind, value = "tnt", Config.PickupTntValue
+		end
+
+		-- Further out is worth more, or a six-figure run pays the same per
+		-- pickup as a five-hundred-stud one and the track stops mattering.
+		value *= 1 + (at / 1000) * Config.PickupValuePer1kStuds
+		if vip then
+			value *= Config.VipZoneValueMultiplier
+		end
+		if boosted and kind == "tnt" then
+			value *= Config.BoostPickupMultiplier
+		end
 
 		table.insert(field, {
-			distance = math.max(at, 1),
-			height = math.max(heightAt(reference, at), 1.5),
-			value = golden and Config.LaunchPickupGoldenValue or Config.LaunchPickupValue,
+			distance = at,
+			height = math.max(height, 2),
+			kind = kind,
+			value = math.max(math.floor(value + 0.5), 1),
+			vip = vip,
 		})
 	end
+
+	for index = 1, count do
+		-- Evenly spaced slots with a jitter inside each, rather than free
+		-- rolls — free rolls clump, and a clumped field is a dead field.
+		local slot = (index - 0.5) / count
+		local at = reach * (Config.LaunchPickupNearFraction + spread * slot)
+		place(at + (rng:NextNumber() - 0.5) * reach * spread / count, false)
+	end
+
+	-- The VIP clusters on top.
+	for _, zone in zones do
+		for _ = 1, Config.VipZoneDensityMultiplier do
+			place(zone.from + rng:NextNumber() * (zone.to - zone.from), true)
+		end
+	end
+
 	return field
 end
 
--- The furthest zone this distance has reached. Config.LaunchZones ascends, so
--- the last one still below the distance is the one landed in.
-local function zoneFor(distance: number)
-	local current = Config.LaunchZones[1]
-	for _, zone in Config.LaunchZones do
-		if distance < zone.from then
-			break
+-- Milestones the player has just passed for the first time. Paid once each,
+-- and the main early source of gems.
+local function newMilestones(data: PlayerData, distance: number): { { name: string, gems: number } }
+	local reached = {}
+	for _, milestone in Config.DistanceMilestones do
+		if distance >= milestone.at and not data.milestones[milestone.name] then
+			data.milestones[milestone.name] = true
+			table.insert(reached, { name = milestone.name, gems = milestone.gems })
 		end
-		current = zone
 	end
-	return current
+	return reached
 end
 
 -- Copies needed for a squishy's NEXT star, given its rarity and current star.
@@ -363,6 +565,24 @@ local function sync(player: Player)
 		-- wait rather than the client guessing at it.
 		launchReadyIn = math.max(Config.LaunchCooldownSeconds - (os.clock() - data.lastLaunch), 0),
 		bestDistance = data.bestDistance,
+
+		-- The cannon's economy. Prices and totals are computed HERE and sent
+		-- as finished numbers: the client showing a different price from the
+		-- one the server charges is the classic way these two drift apart.
+		tnt = data.tnt,
+		coins = data.coins,
+		gems = data.gems,
+		powerLevel = data.powerLevel,
+		powerCost = powerUpgradeCost(data.powerLevel),
+		launchPower = launchPowerFor(data),
+		magnet = magnetFor(data),
+		rebirths = data.rebirths,
+		rebirthAt = rebirthRequirement(data.rebirths),
+		rebirthReady = data.bestDistance >= rebirthRequirement(data.rebirths),
+		pets = data.pets,
+		equipped = data.equipped,
+		boostReadyIn = math.max(Config.BoostCooldownSeconds - (os.clock() - data.lastBoost), 0),
+		boostLeft = math.max(data.boostUntil - os.clock(), 0),
 	})
 end
 
@@ -391,6 +611,14 @@ local function loadData(player: Player): PlayerData
 		unopened: number?,
 		clickerId: string?,
 		bestDistance: number?,
+		tnt: number?,
+		coins: number?,
+		gems: number?,
+		powerLevel: number?,
+		rebirths: number?,
+		milestones: { [string]: boolean }?,
+		pets: { string }?,
+		equipped: { string }?,
 	}? =
 		nil
 
@@ -418,11 +646,49 @@ local function loadData(player: Player): PlayerData
 		-- an exploit worth defending against.
 		lastLaunch = 0,
 		-- Saves that predate the distance cannon simply have no record yet.
+		-- Every field below follows the same shape, so a save written before
+		-- this update loads as a player who has never touched the cannon
+		-- rather than as an error.
 		bestDistance = loaded and loaded.bestDistance or 0,
 		-- Laid out in onPlayerAdded, once the stars this reads are in place.
 		launchField = {},
+
+		tnt = loaded and loaded.tnt or 0,
+		coins = loaded and loaded.coins or 0,
+		gems = loaded and loaded.gems or 0,
+		powerLevel = loaded and loaded.powerLevel or 0,
+		rebirths = loaded and loaded.rebirths or 0,
+		milestones = loaded and loaded.milestones or {},
+		pets = loaded and loaded.pets or {},
+		equipped = loaded and loaded.equipped or {},
+		-- Not persisted: a boost cooldown surviving a rejoin would punish
+		-- reconnecting, and rejoining to skip two minutes is not an exploit
+		-- worth defending against.
+		boostUntil = 0,
+		lastBoost = 0,
+
 		limits = {},
 	}
+
+	-- A save can name pets that were since removed from the catalog, or more
+	-- equipped than the limit allows if the limit was lowered. Both are
+	-- filtered on load rather than trusted, so the rest of the file can assume
+	-- every id in here is real.
+	local ownedPets: { string } = {}
+	for _, id in data.pets do
+		if Pets.byId[id] and #ownedPets < Config.MaxOwnedPets then
+			table.insert(ownedPets, id)
+		end
+	end
+	data.pets = ownedPets
+
+	local equipped: { string } = {}
+	for _, id in data.equipped do
+		if Pets.byId[id] and #equipped < Config.MaxEquippedPets then
+			table.insert(equipped, id)
+		end
+	end
+	data.equipped = equipped
 
 	-- Starter gift: the squisher IS the main clicker, so nobody may start
 	-- without one. Everyone gets a Red Dumpling; players who never picked a
@@ -451,6 +717,14 @@ local function saveData(player: Player)
 			unopened = data.unopened,
 			clickerId = data.clickerId,
 			bestDistance = data.bestDistance,
+			tnt = data.tnt,
+			coins = data.coins,
+			gems = data.gems,
+			powerLevel = data.powerLevel,
+			rebirths = data.rebirths,
+			milestones = data.milestones,
+			pets = data.pets,
+			equipped = data.equipped,
 		})
 	end)
 	if not ok then
@@ -548,52 +822,83 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 	end
 	data.lastLaunch = now
 
-	local flight = flightFor(power, angle, starPowerFor(data))
+	-- Charge maps onto a fraction of full power, so even a badly timed tap
+	-- still flies — it just doesn't fly far.
+	local charged = launchPowerFor(data)
+		* (Config.LaunchMinPowerFraction + (1 - Config.LaunchMinPowerFraction) * power)
+	local flight = simulateFlight(charged, angle)
 	local distance = flight.distance
 
-	-- Sweep up every sweet the arc passed close enough to. The magnet is the
-	-- other half of what stars buy: a prestiged collection both flies further
-	-- and hoovers up more on the way past.
-	local magnet = Config.LaunchPickupMagnet
-		+ math.min(totalStars(data) * Config.LaunchMagnetPerStar, Config.LaunchMaxStarMagnet)
+	-- Sweep up everything the path passed close enough to. The magnet is the
+	-- other half of what stars and pets buy: a built-up account both flies
+	-- further AND hoovers up more on the way past.
+	local magnet = effectiveMagnet(data)
+	local bonuses = petBonuses(data)
 
 	local collected: { number } = {}
-	local pickupBonus = 0
+	local earnedTnt, earnedCoins, earnedGems = 0, 0, 0
 	for index, pickup in data.launchField do
 		if pickup.distance <= distance and math.abs(heightAt(flight, pickup.distance) - pickup.height) <= magnet then
 			table.insert(collected, index)
-			pickupBonus += pickup.value
+			if pickup.kind == "coin" then
+				earnedCoins += pickup.value * bonuses.coins * rebirthMultiplier(data, Config.RebirthCoinBonus)
+			elseif pickup.kind == "gem" then
+				earnedGems += pickup.value * bonuses.gems
+			else
+				earnedTnt += pickup.value * bonuses.tnt * rebirthMultiplier(data, Config.RebirthTntBonus)
+			end
 		end
 	end
 
-	-- The zone multiplies the sweets too, so pushing for distance is worth
-	-- more than the extra studs on their own.
-	local zone = zoneFor(distance)
-	local bonus = math.floor((distance * Config.LaunchClicksPerStud + pickupBonus) * zone.multiplier + 0.5)
-	addProgress(data, bonus)
+	earnedTnt = math.floor(earnedTnt)
+	earnedCoins = math.floor(earnedCoins)
+	earnedGems = math.floor(earnedGems)
+
+	-- Distance milestones pay their gem bounty the first time only.
+	local milestones = newMilestones(data, distance)
+	local milestoneGems = 0
+	for _, milestone in milestones do
+		milestoneGems += milestone.gems
+	end
+
+	data.tnt += earnedTnt
+	data.coins += earnedCoins
+	data.gems += earnedGems + milestoneGems
+
+	-- The two halves of the game still touch: distance nudges the steamer bar
+	-- along too, at a rate small enough that nobody launches to fill it.
+	local steamerBonus = math.floor(distance * Config.LaunchClicksPerStud + 0.5)
+	addProgress(data, steamerBonus)
 
 	local record = distance > data.bestDistance
 	if record then
 		data.bestDistance = distance
 	end
 
-	-- The client animates THIS flight — the shape of the arc, which sweets
+	-- The client animates THIS flight — the shape of every hop, which pickups
 	-- were taken and what it all paid. It gets no say in any of it.
 	LaunchResult:FireClient(player, {
 		angle = angle,
 		distance = distance,
-		apexAt = flight.apexAt,
-		apexHeight = flight.apexHeight,
-		glideRange = flight.glideRange,
-		riseSeconds = flight.riseSeconds,
-		glideSeconds = flight.glideSeconds,
+		arcs = flight.arcs,
+		peakHeight = flight.peakHeight,
+		launchSpeed = flight.launchSpeed,
+		seconds = flight.seconds,
+		bounces = #flight.arcs - 1,
 		collected = collected,
-		pickupBonus = pickupBonus,
-		zone = zone.name,
-		multiplier = zone.multiplier,
-		bonus = bonus,
+		tnt = earnedTnt,
+		coins = earnedCoins,
+		gems = earnedGems + milestoneGems,
+		milestones = milestones,
+		steamerBonus = steamerBonus,
 		best = data.bestDistance,
 		record = record,
+		-- Shown as the summary's multiplier breakdown, so the player can see
+		-- what each part of their account is actually contributing.
+		rebirths = data.rebirths,
+		coinMultiplier = bonuses.coins * rebirthMultiplier(data, Config.RebirthCoinBonus),
+		tntMultiplier = bonuses.tnt * rebirthMultiplier(data, Config.RebirthTntBonus),
+		boosted = boostActive(data),
 	})
 
 	-- A fresh field for next time, so the angle that worked once isn't simply
@@ -601,6 +906,176 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 	data.launchField = makeLaunchField(data)
 	LaunchField:FireClient(player, data.launchField)
 	sync(player)
+end)
+
+-- ---------- Cannon progression ----------
+
+-- Buying power. The client sends nothing at all: it cannot name a level, a
+-- price or a quantity, so the only thing it can do is ask for the next one.
+BuyPower.OnServerEvent:Connect(function(player)
+	local data = dataByPlayer[player]
+	if not data or overRate(data, "buyPower", 8) then
+		return
+	end
+	if data.powerLevel >= Config.LaunchMaxPowerLevel then
+		return
+	end
+
+	local cost = powerUpgradeCost(data.powerLevel)
+	if data.tnt < cost then
+		return -- server says no
+	end
+
+	data.tnt -= cost
+	data.powerLevel += 1
+
+	-- Reach just grew, so the track's pickups belong further out.
+	data.launchField = makeLaunchField(data)
+	LaunchField:FireClient(player, data.launchField)
+	sync(player)
+end)
+
+-- Rebirth: spend the cannon's whole run for a permanent multiplier. Gated on
+-- the distance RECORD rather than on a currency, so it is earned by playing
+-- the game rather than by sitting on a pile of TNT.
+DoRebirth.OnServerEvent:Connect(function(player)
+	local data = dataByPlayer[player]
+	if not data or overRate(data, "rebirth", 4) then
+		return
+	end
+	if data.bestDistance < rebirthRequirement(data.rebirths) then
+		return
+	end
+
+	data.rebirths += 1
+	-- What resets, and what deliberately does not: gems, pets and the
+	-- milestone record all survive, or a rebirth would cost more than it pays.
+	data.tnt = 0
+	data.coins = 0
+	data.powerLevel = 0
+	data.bestDistance = 0
+
+	data.launchField = makeLaunchField(data)
+	LaunchField:FireClient(player, data.launchField)
+	sync(player)
+	print(("[SquishyClicker] %s rebirthed to %d"):format(player.Name, data.rebirths))
+end)
+
+-- ---------- Eggs and pets ----------
+
+HatchEgg.OnServerEvent:Connect(function(player, eggId)
+	local data = dataByPlayer[player]
+	if not data or overRate(data, "hatch", 6) then
+		return
+	end
+	if typeof(eggId) ~= "string" then
+		return
+	end
+
+	local egg = Pets.eggById[eggId]
+	if not egg then
+		return -- unknown id
+	end
+	if #data.pets >= Config.MaxOwnedPets then
+		return -- the save is full; the UI says so, but the server enforces it
+	end
+
+	-- Costs are read from the catalog, never from the request.
+	if egg.costGems and data.gems < egg.costGems then
+		return
+	end
+	if egg.costCoins and data.coins < egg.costCoins then
+		return
+	end
+	data.gems -= egg.costGems or 0
+	data.coins -= egg.costCoins or 0
+
+	local pet = Pets.roll(egg, rng)
+	table.insert(data.pets, pet.id)
+
+	-- Auto-equip while there is a free slot, so a new player's first pets
+	-- actually do something without them finding the inventory first.
+	if #data.equipped < Config.MaxEquippedPets then
+		table.insert(data.equipped, pet.id)
+	end
+
+	EggHatched:FireClient(player, pet.id)
+	sync(player)
+end)
+
+TogglePet.OnServerEvent:Connect(function(player, petId, shouldEquip)
+	local data = dataByPlayer[player]
+	if not data or overRate(data, "pet", 12) then
+		return
+	end
+	if typeof(petId) ~= "string" or typeof(shouldEquip) ~= "boolean" then
+		return
+	end
+	if not Pets.byId[petId] then
+		return
+	end
+
+	-- Count what they own and what is already equipped: equipping a pet you
+	-- own two of should be allowed twice, and a third time should not.
+	local owned, equippedSame = 0, 0
+	for _, id in data.pets do
+		if id == petId then
+			owned += 1
+		end
+	end
+	for _, id in data.equipped do
+		if id == petId then
+			equippedSame += 1
+		end
+	end
+
+	if shouldEquip then
+		if #data.equipped >= Config.MaxEquippedPets or equippedSame >= owned then
+			return
+		end
+		table.insert(data.equipped, petId)
+	else
+		local at = table.find(data.equipped, petId)
+		if not at then
+			return
+		end
+		table.remove(data.equipped, at)
+	end
+
+	sync(player)
+end)
+
+-- ---------- Rain TNT ----------
+
+ActivateBoost.OnServerEvent:Connect(function(player)
+	local data = dataByPlayer[player]
+	if not data or overRate(data, "boost", 4) then
+		return
+	end
+
+	local now = os.clock()
+	if now - data.lastBoost < Config.BoostCooldownSeconds then
+		return
+	end
+	data.lastBoost = now
+	data.boostUntil = now + Config.BoostSeconds
+
+	-- Relay the field immediately: the whole point of the button is seeing the
+	-- track fill up with TNT the moment it is pressed.
+	data.launchField = makeLaunchField(data)
+	LaunchField:FireClient(player, data.launchField)
+	sync(player)
+
+	-- And put it back to normal when it runs out, so the track visibly empties
+	-- again rather than staying rich until the next shot.
+	task.delay(Config.BoostSeconds, function()
+		local current = dataByPlayer[player]
+		if current == data and not boostActive(data) then
+			data.launchField = makeLaunchField(data)
+			LaunchField:FireClient(player, data.launchField)
+			sync(player)
+		end
+	end)
 end)
 
 -- ---------- unboxing a banked steamer ----------
@@ -718,7 +1193,21 @@ if DebugAction then
 				SteamerOpened:FireClient(player, squishy.id)
 			end
 		elseif action == "readyCannon" then
-			data.lastLaunch = 0 -- sitting out a 15s cooldown while testing is misery
+			-- Sitting out a cooldown while testing is misery.
+			data.lastLaunch = 0
+			data.lastBoost = 0
+		elseif action == "richCannon" then
+			-- Enough of everything to reach every screen the cannon has.
+			data.tnt += 1000000
+			data.coins += 1000000
+			data.gems += 500
+		elseif action == "powerUp" then
+			local levels = (typeof(argument) == "number") and argument or 10
+			data.powerLevel = math.min(data.powerLevel + levels, Config.LaunchMaxPowerLevel)
+		elseif action == "readyRebirth" then
+			-- Records the distance rather than the rebirth itself, so the
+			-- button still has to be pressed and its own path still gets run.
+			data.bestDistance = rebirthRequirement(data.rebirths)
 		elseif action == "reset" then
 			-- Back to a fresh save, starter Red Dumpling and all.
 			data.counts = { red = 1 }
@@ -728,6 +1217,14 @@ if DebugAction then
 			data.unopened = 0
 			data.clickerId = "red"
 			data.bestDistance = 0
+			data.tnt = 0
+			data.coins = 0
+			data.gems = 0
+			data.powerLevel = 0
+			data.rebirths = 0
+			data.milestones = {}
+			data.pets = {}
+			data.equipped = {}
 		else
 			return
 		end
