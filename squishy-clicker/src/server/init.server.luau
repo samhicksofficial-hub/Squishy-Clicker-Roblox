@@ -17,7 +17,15 @@ local Config = require(Shared:WaitForChild("Config"))
 -- with an orange "Infinite yield possible" warning in Output, the file was
 -- moved — put it back at src/shared/Squishies.luau or update this path.
 local Squishies = require(Shared:WaitForChild("Squishies"))
-local Pets = require(Shared:WaitForChild("Pets"))
+
+-- Rank by position in the rarity table (Common 1 ... Mythical 6), so "rarer"
+-- is derived from the one existing set of odds rather than a second table that
+-- could drift away from it. Used by the active-squishy buffs, the Lucky
+-- Steamer and King of the Steamer alike.
+local rarityRank: { [string]: number } = {}
+for index, rarity in Squishies.rarities do
+	rarityRank[rarity.name] = index
+end
 
 -- ---------- Remotes ----------
 local Remotes = Instance.new("Folder")
@@ -75,24 +83,29 @@ local DoRebirth = Instance.new("RemoteEvent")
 DoRebirth.Name = "DoRebirth"
 DoRebirth.Parent = Remotes
 
-local HatchEgg = Instance.new("RemoteEvent")
-HatchEgg.Name = "HatchEgg"
-HatchEgg.Parent = Remotes
+-- Cash or gems for a steamer: ("coin") or ("gem"). Nothing but the kind — the
+-- price and what comes out are both the server's.
+local BuySteamer = Instance.new("RemoteEvent")
+BuySteamer.Name = "BuySteamer"
+BuySteamer.Parent = Remotes
 
--- Which pets are equipped: (petId, shouldBeEquipped). The server owns the
--- five-slot limit, not the UI.
-local TogglePet = Instance.new("RemoteEvent")
-TogglePet.Name = "TogglePet"
-TogglePet.Parent = Remotes
+-- Summon or dismiss a squishy: (squishyId, shouldBeActive). The server owns
+-- the three-slot limit and the "do you even own it" check, not the UI.
+local SetActive = Instance.new("RemoteEvent")
+SetActive.Name = "SetActive"
+SetActive.Parent = Remotes
 
 local ActivateBoost = Instance.new("RemoteEvent")
 ActivateBoost.Name = "ActivateBoost"
 ActivateBoost.Parent = Remotes
 
--- A hatch just happened: (petId), so the client can play the reveal.
-local EggHatched = Instance.new("RemoteEvent")
-EggHatched.Name = "EggHatched"
-EggHatched.Parent = Remotes
+-- Somebody launched. Goes to EVERY client so the lobby can watch the shot fly
+-- and list it in the feed. Carries the shape of the flight and a name, and
+-- deliberately nothing about what it earned — that is the launcher's business
+-- and nobody else's.
+local LaunchBroadcast = Instance.new("RemoteEvent")
+LaunchBroadcast.Name = "LaunchBroadcast"
+LaunchBroadcast.Parent = Remotes
 
 -- Client asks to add one click to the shared steamer. No payload at all.
 local ClickShared = Instance.new("RemoteEvent")
@@ -160,13 +173,13 @@ type PlayerData = {
 
 	-- The cannon's own economy, separate from the steamer's.
 	tnt: number,                  -- buys launch power
-	coins: number,                -- buys eggs; reset by rebirth
-	gems: number,                 -- buys the premium egg; survives rebirth
+	coins: number,                -- buys steamers; reset by rebirth
+	gems: number,                 -- buys Lucky Steamers; survives rebirth
 	powerLevel: number,           -- launch power upgrades bought
 	rebirths: number,             -- permanent multipliers earned
 	milestones: { [string]: boolean }, -- distance signs already paid out
-	pets: { string },             -- every pet owned, duplicates and all
-	equipped: { string },         -- the (at most five) that follow the squishy
+	steamersBought: number,       -- cash-bought steamers, for the price curve
+	active: { string },           -- the (at most three) squishies summoned
 	boostUntil: number,           -- os.clock while Rain TNT is running
 	lastBoost: number,            -- os.clock of the last activation
 
@@ -356,8 +369,29 @@ local function starPowerFor(data: PlayerData): number
 	return math.min(totalStars(data) * Config.LaunchPowerPerStar, Config.LaunchMaxStarPower)
 end
 
-local function petBonuses(data: PlayerData): Pets.Bonuses
-	return Pets.bonuses(data.equipped)
+-- What the summoned squishies are worth. Bonuses ADD across the three slots
+-- rather than multiplying: additive keeps the third summon worth roughly what
+-- the first was, where multiplicative stacking runs away the moment somebody
+-- has three good ones. Magnet is the exception — it is flat screen studs, so
+-- it stays an addend rather than becoming a multiplier.
+type Bonuses = { power: number, coins: number, tnt: number, magnet: number }
+
+local function squishyBonuses(data: PlayerData): Bonuses
+	local total: Bonuses = { power = 1, coins = 1, tnt = 1, magnet = 0 }
+	for _, id in data.active do
+		local squishy = Squishies.byId[id]
+		if squishy then
+			local rank = rarityRank[squishy.rarity] or 1
+			-- Stars on THIS squishy, so prestiging the one you actually summon
+			-- is what pays rather than stars anywhere in the collection.
+			local starred = 1 + (data.stars[id] or 0) * Config.ActiveSquishyStarBonus
+			total.power += rank * Config.ActiveSquishyPowerPerRank * starred
+			total.coins += rank * Config.ActiveSquishyCoinPerRank * starred
+			total.tnt += rank * Config.ActiveSquishyTntPerRank * starred
+			total.magnet += rank * Config.ActiveSquishyMagnetPerRank * starred
+		end
+	end
+	return total
 end
 
 local function rebirthMultiplier(data: PlayerData, per: number): number
@@ -369,6 +403,52 @@ local function powerUpgradeCost(level: number): number
 	return math.floor(Config.PowerUpgradeBaseCost * Config.PowerUpgradeCostGrowth ^ level + 0.5)
 end
 
+-- Cash cost of the player's NEXT bought steamer. Geometric, because cash
+-- income grows geometrically too — a flat price would be meaningful for an
+-- hour and then free forever.
+local function steamerCost(bought: number): number
+	return math.floor(Config.SteamerCoinCost * Config.SteamerCostGrowth ^ bought + 0.5)
+end
+
+-- A Lucky Steamer's roll: the real odds, but with everything below the
+-- minimum rank removed. Keeping the SHAPE of the table matters — a Mythical
+-- should still be far rarer than a Rare inside a Lucky Steamer, which a flat
+-- pick from everything that qualifies would throw away.
+local function rollAtLeastRank(minRank: number): Squishies.Squishy
+	local pool = {}
+	local total = 0
+	for _, rarity in Squishies.rarities do
+		if (rarityRank[rarity.name] or 0) >= minRank then
+			total += rarity.weight
+			table.insert(pool, rarity)
+		end
+	end
+	if total <= 0 then
+		return Squishies.roll(rng) -- nothing qualifies; fall back to normal odds
+	end
+
+	local ticket = rng:NextNumber() * total
+	local chosen = pool[#pool]
+	for _, rarity in pool do
+		ticket -= rarity.weight
+		if ticket <= 0 then
+			chosen = rarity
+			break
+		end
+	end
+
+	local members = {}
+	for _, squishy in Squishies.list do
+		if squishy.rarity == chosen.name then
+			table.insert(members, squishy)
+		end
+	end
+	if #members == 0 then
+		return Squishies.roll(rng)
+	end
+	return members[rng:NextInteger(1, #members)]
+end
+
 -- Everything that makes a shot go further, gathered in one place so the
 -- upgrade screen and the shot itself can never disagree about the total.
 local function launchPowerFor(data: PlayerData): number
@@ -376,14 +456,14 @@ local function launchPowerFor(data: PlayerData): number
 	return base
 		* (1 + starPowerFor(data))
 		* rebirthMultiplier(data, Config.RebirthDistanceBonus)
-		* petBonuses(data).power
+		* squishyBonuses(data).power
 end
 
 -- The player's magnet, in the SCREEN units Config quotes it in.
 local function magnetFor(data: PlayerData): number
 	return Config.LaunchPickupMagnet
 		+ math.min(totalStars(data) * Config.LaunchMagnetPerStar, Config.LaunchMaxStarMagnet)
-		+ petBonuses(data).magnet
+		+ squishyBonuses(data).magnet
 end
 
 -- The same magnet converted into the game studs a shot is actually measured
@@ -579,8 +659,9 @@ local function sync(player: Player)
 		rebirths = data.rebirths,
 		rebirthAt = rebirthRequirement(data.rebirths),
 		rebirthReady = data.bestDistance >= rebirthRequirement(data.rebirths),
-		pets = data.pets,
-		equipped = data.equipped,
+		active = data.active,
+		steamerCost = steamerCost(data.steamersBought),
+		luckySteamerCost = Config.LuckySteamerGemCost,
 		boostReadyIn = math.max(Config.BoostCooldownSeconds - (os.clock() - data.lastBoost), 0),
 		boostLeft = math.max(data.boostUntil - os.clock(), 0),
 	})
@@ -617,8 +698,8 @@ local function loadData(player: Player): PlayerData
 		powerLevel: number?,
 		rebirths: number?,
 		milestones: { [string]: boolean }?,
-		pets: { string }?,
-		equipped: { string }?,
+		steamersBought: number?,
+		active: { string }?,
 	}? =
 		nil
 
@@ -659,8 +740,8 @@ local function loadData(player: Player): PlayerData
 		powerLevel = loaded and loaded.powerLevel or 0,
 		rebirths = loaded and loaded.rebirths or 0,
 		milestones = loaded and loaded.milestones or {},
-		pets = loaded and loaded.pets or {},
-		equipped = loaded and loaded.equipped or {},
+		steamersBought = loaded and loaded.steamersBought or 0,
+		active = loaded and loaded.active or {},
 		-- Not persisted: a boost cooldown surviving a rejoin would punish
 		-- reconnecting, and rejoining to skip two minutes is not an exploit
 		-- worth defending against.
@@ -670,25 +751,19 @@ local function loadData(player: Player): PlayerData
 		limits = {},
 	}
 
-	-- A save can name pets that were since removed from the catalog, or more
-	-- equipped than the limit allows if the limit was lowered. Both are
-	-- filtered on load rather than trusted, so the rest of the file can assume
-	-- every id in here is real.
-	local ownedPets: { string } = {}
-	for _, id in data.pets do
-		if Pets.byId[id] and #ownedPets < Config.MaxOwnedPets then
-			table.insert(ownedPets, id)
+	-- A save can name squishies that were since removed from the catalog, or
+	-- more summoned than the limit allows if the limit was lowered, or ones
+	-- that were prestiged away since. All three are filtered on load rather
+	-- than trusted, so the rest of the file can assume every id in here is
+	-- real and owned.
+	local active: { string } = {}
+	for _, id in data.active do
+		local owns = (data.counts[id] or 0) > 0 or (data.stars[id] or 0) > 0
+		if Squishies.byId[id] and owns and #active < Config.MaxActiveSquishies then
+			table.insert(active, id)
 		end
 	end
-	data.pets = ownedPets
-
-	local equipped: { string } = {}
-	for _, id in data.equipped do
-		if Pets.byId[id] and #equipped < Config.MaxEquippedPets then
-			table.insert(equipped, id)
-		end
-	end
-	data.equipped = equipped
+	data.active = active
 
 	-- Starter gift: the squisher IS the main clicker, so nobody may start
 	-- without one. Everyone gets a Red Dumpling; players who never picked a
@@ -723,8 +798,8 @@ local function saveData(player: Player)
 			powerLevel = data.powerLevel,
 			rebirths = data.rebirths,
 			milestones = data.milestones,
-			pets = data.pets,
-			equipped = data.equipped,
+			steamersBought = data.steamersBought,
+			active = data.active,
 		})
 	end)
 	if not ok then
@@ -830,10 +905,10 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 	local distance = flight.distance
 
 	-- Sweep up everything the path passed close enough to. The magnet is the
-	-- other half of what stars and pets buy: a built-up account both flies
+	-- other half of what stars and summons buy: a built-up account both flies
 	-- further AND hoovers up more on the way past.
 	local magnet = effectiveMagnet(data)
-	local bonuses = petBonuses(data)
+	local bonuses = squishyBonuses(data)
 
 	local collected: { number } = {}
 	local earnedTnt, earnedCoins, earnedGems = 0, 0, 0
@@ -901,6 +976,20 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 		boosted = boostActive(data),
 	})
 
+	-- Everyone in the lobby watches the shot fly. Deliberately carries the
+	-- SHAPE of the flight and a name and nothing else: what a launch earned is
+	-- the launcher's business, and broadcasting balances to the whole server
+	-- would be handing every client a list of who is worth targeting.
+	LaunchBroadcast:FireAllClients({
+		name = player.DisplayName,
+		userId = player.UserId,
+		distance = distance,
+		arcs = flight.arcs,
+		seconds = flight.seconds,
+		-- So the ghost is drawn as the squishy they actually launched.
+		clickerId = data.clickerId,
+	})
+
 	-- A fresh field for next time, so the angle that worked once isn't simply
 	-- the answer forever.
 	data.launchField = makeLaunchField(data)
@@ -948,7 +1037,7 @@ DoRebirth.OnServerEvent:Connect(function(player)
 	end
 
 	data.rebirths += 1
-	-- What resets, and what deliberately does not: gems, pets and the
+	-- What resets, and what deliberately does not: gems, squishies and the
 	-- milestone record all survive, or a rebirth would cost more than it pays.
 	data.tnt = 0
 	data.coins = 0
@@ -961,87 +1050,90 @@ DoRebirth.OnServerEvent:Connect(function(player)
 	print(("[SquishyClicker] %s rebirthed to %d"):format(player.Name, data.rebirths))
 end)
 
--- ---------- Eggs and pets ----------
+-- ---------- The steamer shop ----------
+-- What the launcher's cash and gems are FOR. Both buy steamers, which is the
+-- join between the two halves of the game: launching earns the currency,
+-- the currency buys squishies, and squishies make the next launch go further.
 
-HatchEgg.OnServerEvent:Connect(function(player, eggId)
+BuySteamer.OnServerEvent:Connect(function(player, kind)
 	local data = dataByPlayer[player]
-	if not data or overRate(data, "hatch", 6) then
+	if not data or overRate(data, "buySteamer", 6) then
 		return
 	end
-	if typeof(eggId) ~= "string" then
+	if typeof(kind) ~= "string" then
 		return
 	end
 
-	local egg = Pets.eggById[eggId]
-	if not egg then
-		return -- unknown id
-	end
-	if #data.pets >= Config.MaxOwnedPets then
-		return -- the save is full; the UI says so, but the server enforces it
+	if kind == "gem" then
+		if data.gems < Config.LuckySteamerGemCost then
+			return -- server says no
+		end
+		data.gems -= Config.LuckySteamerGemCost
+		-- A Lucky Steamer is opened on the spot rather than banked: the
+		-- guaranteed rarity is the whole product, and making the player go and
+		-- unbox it separately would only hide it.
+		local squishy = rollAtLeastRank(Config.LuckySteamerMinRank)
+		data.counts[squishy.id] = (data.counts[squishy.id] or 0) + 1
+		data.totalOpens += 1
+		SteamerOpened:FireClient(player, squishy.id)
+		updateLeaderstats(player)
+	elseif kind == "coin" then
+		local cost = steamerCost(data.steamersBought)
+		if data.coins < cost then
+			return
+		end
+		data.coins -= cost
+		data.steamersBought += 1
+		-- Banked rather than opened, so a bought steamer behaves exactly like
+		-- an earned one and the Unbox tray stays the only place they open.
+		data.unopened += 1
+	else
+		return -- unknown kind
 	end
 
-	-- Costs are read from the catalog, never from the request.
-	if egg.costGems and data.gems < egg.costGems then
-		return
-	end
-	if egg.costCoins and data.coins < egg.costCoins then
-		return
-	end
-	data.gems -= egg.costGems or 0
-	data.coins -= egg.costCoins or 0
-
-	local pet = Pets.roll(egg, rng)
-	table.insert(data.pets, pet.id)
-
-	-- Auto-equip while there is a free slot, so a new player's first pets
-	-- actually do something without them finding the inventory first.
-	if #data.equipped < Config.MaxEquippedPets then
-		table.insert(data.equipped, pet.id)
-	end
-
-	EggHatched:FireClient(player, pet.id)
 	sync(player)
 end)
 
-TogglePet.OnServerEvent:Connect(function(player, petId, shouldEquip)
+-- ---------- Summoned squishies ----------
+-- The squishies ARE the pets: up to three follow you around and buff the
+-- cannon. Ownership and the slot limit are both checked here — the UI shows
+-- the same rule, but it is not the one enforcing it.
+
+SetActive.OnServerEvent:Connect(function(player, squishyId, shouldActivate)
 	local data = dataByPlayer[player]
-	if not data or overRate(data, "pet", 12) then
+	if not data or overRate(data, "active", 12) then
 		return
 	end
-	if typeof(petId) ~= "string" or typeof(shouldEquip) ~= "boolean" then
+	if typeof(squishyId) ~= "string" or typeof(shouldActivate) ~= "boolean" then
 		return
 	end
-	if not Pets.byId[petId] then
-		return
+	if not Squishies.byId[squishyId] then
+		return -- unknown id
 	end
 
-	-- Count what they own and what is already equipped: equipping a pet you
-	-- own two of should be allowed twice, and a third time should not.
-	local owned, equippedSame = 0, 0
-	for _, id in data.pets do
-		if id == petId then
-			owned += 1
-		end
-	end
-	for _, id in data.equipped do
-		if id == petId then
-			equippedSame += 1
-		end
-	end
-
-	if shouldEquip then
-		if #data.equipped >= Config.MaxEquippedPets or equippedSame >= owned then
+	if shouldActivate then
+		-- You can only summon what you own — copies in hand, or prestiged away
+		-- into stars, which still counts as having earned it.
+		local owns = (data.counts[squishyId] or 0) > 0 or (data.stars[squishyId] or 0) > 0
+		if not owns then
 			return
 		end
-		table.insert(data.equipped, petId)
+		if #data.active >= Config.MaxActiveSquishies or table.find(data.active, squishyId) then
+			return
+		end
+		table.insert(data.active, squishyId)
 	else
-		local at = table.find(data.equipped, petId)
+		local at = table.find(data.active, squishyId)
 		if not at then
 			return
 		end
-		table.remove(data.equipped, at)
+		table.remove(data.active, at)
 	end
 
+	-- Summoning changes launch power, which changes reach, which is what the
+	-- pickup field is laid out against.
+	data.launchField = makeLaunchField(data)
+	LaunchField:FireClient(player, data.launchField)
 	sync(player)
 end)
 
@@ -1223,8 +1315,8 @@ if DebugAction then
 			data.powerLevel = 0
 			data.rebirths = 0
 			data.milestones = {}
-			data.pets = {}
-			data.equipped = {}
+			data.steamersBought = 0
+			data.active = {}
 		else
 			return
 		end
@@ -1242,13 +1334,6 @@ end
 -- ---------- King of the Steamer ----------
 -- One giant steamer the whole server clicks together. Everyone who helped
 -- gets a squishy when it opens; whoever helped most gets a better one.
-
--- Rank by position in the rarity table, so "rarer" is derived from the one
--- existing set of odds rather than a second table that could drift from it.
-local rarityRank: { [string]: number } = {}
-for index, rarity in Squishies.rarities do
-	rarityRank[rarity.name] = index
-end
 
 -- The top contributor's prize: roll the SAME odds twice and keep the rarer
 -- result. No separate bonus odds to maintain — add a rarity to Squishies and

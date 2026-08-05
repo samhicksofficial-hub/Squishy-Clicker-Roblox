@@ -57,16 +57,48 @@ The loop from there:
 - **TNT** buys **Launch Power** levels, and distance is deliberately linear in
   power — double the power, double the distance, so an upgrade reads as
   exactly what it does.
-- **Coins** buy **eggs**, which hatch **pets**. Five follow the squishy at a
-  time, and their bonuses add up: launch power, coin and TNT value, gem value,
-  and magnet reach.
-- **Gems** buy the Cosmic Egg, the only source of the best pets.
-- **Rebirth** spends the whole run — TNT, coins, power level and your distance
-  record — for a permanent multiplier on distance, coins and TNT. Gems, pets
-  and the milestones you have already claimed all survive.
+- **Cash** buys **steamers**, banked straight into your Unbox tray.
+- **Gems** buy a **Lucky Steamer**, which opens on the spot with a guaranteed
+  Rare or better.
+- **Rebirth** spends the whole run — TNT, cash, power level and your distance
+  record — for a permanent multiplier on distance, cash and TNT. Gems, your
+  squishies and the milestones you have already claimed all survive.
 
-Squishies earn their second keep here too: stars add muzzle power and magnet
-reach, so the collection half of the game feeds the cannon half.
+## Squishies are the pets
+
+There is no separate pet system. **Summon up to three squishies** from your
+collection and they walk with you as their real models — a banana summon is
+actually a banana — and each one buffs the cannon.
+
+A summon's bonus scales with its **rarity rank** (Common 1 … Mythical 6) and
+again with **its own stars**, across launch power, cash, TNT and magnet reach.
+Bonuses add across the three slots rather than multiplying, which keeps the
+third summon worth roughly what the first was; multiplicative stacking runs
+away the moment somebody has three good ones. Stars across the whole
+collection separately add muzzle power and magnet reach.
+
+That is the join between the two halves of the game, and it closes a loop:
+launching earns cash, cash buys steamers, steamers give squishies, and
+summoned squishies make the next launch go further.
+
+## The lobby
+
+A deck at the foot of the launcher, with a rail and benches facing down the
+valley. Every launch in the server is broadcast to everyone, so between your
+own shots you watch other players' squishies arc down the same track with
+their name and distance over them, and a **Recent Launches** feed lists the
+last few.
+
+Each ghost shot is drawn at its **own scale** rather than yours, so a shot ten
+times stronger doesn't leave the frame in half a second and a shot a tenth of
+it doesn't crawl — every one covers about the same stretch of track, and the
+real number is on the name tag where it can be read. They also ignore your
+treadmill entirely, so your own shot never drags them along with it.
+
+The broadcast carries the shape of the flight, a name and a distance, and
+deliberately nothing about what the shot earned: balances are the launcher's
+business, and sending them to every client is just handing out a list of who
+is worth targeting.
 
 The track is drawn on a **treadmill**. A pool of stripes recycles through a
 window and the squishy stops moving forward at its station while the world
@@ -154,7 +186,6 @@ a fresh round.
 │   ├── shared/              → ReplicatedStorage/Shared
 │   │   ├── Config.luau        tuning: click costs, launch physics, economy, saving
 │   │   ├── Squishies.luau     THE CATALOG: rarities, odds, colors, costs
-│   │   ├── Pets.luau          pet stats and the egg drop tables
 │   │   └── Format.luau        big-number formatting helper
 │   ├── server/              → ServerScriptService/Server
 │   │   └── init.server.luau   clicks, rolls, inventory, flight simulation, economy
@@ -184,7 +215,7 @@ squishies are rolled server-side, so nobody can fake a Mythical.
 3. Terminal, from the folder: `rojo serve`
 4. Studio: open your place → Plugins tab → Rojo → **Connect**.
 5. Check the Explorer: `ReplicatedStorage/Shared` should contain exactly
-   Config, Format, Pets, Squishies — no `Classes` folder.
+   Config, Format, Squishies — no `Classes` folder.
 6. **Stop** if you were playing, then **Play** fresh.
 
 Output should show:
@@ -232,9 +263,11 @@ If the game is ever a blank screen, open View → Output first: an orange
 - Rebirth pacing: `RebirthBaseRequirement` and `RebirthRequirementGrowth`
   against the three `Rebirth*Bonus` numbers. First rebirth lands around
   level 22.
-- Pets and eggs: `src/shared/Pets.luau`. Drop tables name pets directly, so a
-  new pet can be added to one egg without rebalancing every other egg that
-  shares its rarity.
+- What a summoned squishy is worth: the `ActiveSquishy*` numbers, and
+  `MaxActiveSquishies` for how many may be out at once.
+- Steamer prices: `SteamerCoinCost` / `SteamerCostGrowth` for the cash one,
+  `LuckySteamerGemCost` / `LuckySteamerMinRank` for the gem one.
+- Lobby: `LobbyFeedSize` and `LobbyMaxGhosts`.
 - Reshape the models or the toy-shop backdrop: `Models.luau` and the shop
   section of `Scene.luau`. Camera angle, lighting and reveal timing: the
   constants at the top of `Scene.luau`.

@@ -36,6 +36,7 @@ local SteamerOpened = Remotes:WaitForChild("SteamerOpened") :: RemoteEvent
 local SyncData = Remotes:WaitForChild("SyncData") :: RemoteEvent
 local UnboxSteamer = Remotes:WaitForChild("UnboxSteamer") :: RemoteEvent
 local SetClicker = Remotes:WaitForChild("SetClicker") :: RemoteEvent
+local SetActive = Remotes:WaitForChild("SetActive") :: RemoteEvent
 
 -- ---------- palette ----------
 local COLOR = {
@@ -73,8 +74,9 @@ local state = {
 	rebirths = 0,
 	rebirthAt = Config.RebirthBaseRequirement,
 	rebirthReady = false,
-	pets = {} :: { string },
-	equipped = {} :: { string },
+	active = {} :: { string },
+	steamerCost = Config.SteamerCoinCost,
+	luckySteamerCost = Config.LuckySteamerGemCost,
 	boostReadyIn = 0,
 	boostLeft = 0,
 }
@@ -376,6 +378,10 @@ type Row = {
 	prestige: TextButton,
 	icon: TextButton,
 	equipStroke: UIStroke,
+	summon: TextButton,
+	-- Whether this squishy is currently summoned, so one button can both
+	-- summon and dismiss. Mirrored from the server's list on every sync.
+	active: boolean,
 	viewport: ViewportFrame?,
 }
 local rows: { [string]: Row } = {}
@@ -520,6 +526,22 @@ for index, squishy in Squishies.list do
 	})
 	corner(12, prestige)
 
+	-- Summon: the squishies ARE the pets. Up to Config.MaxActiveSquishies walk
+	-- with you and buff the cannon, and this is where you choose which.
+	local summon = make("TextButton", {
+		Size = UDim2.new(0, 84, 0, 18),
+		Position = UDim2.new(1, -92, 1, -10),
+		AnchorPoint = Vector2.new(0, 1),
+		BackgroundColor3 = COLOR.mint,
+		AutoButtonColor = false,
+		Font = Enum.Font.GothamBold,
+		Text = "Summon",
+		TextColor3 = COLOR.text,
+		TextSize = 11,
+		Parent = row,
+	})
+	corner(8, summon)
+
 	local id = squishy.id
 	prestige.Activated:Connect(function()
 		PrestigeSquishy:FireServer(id)
@@ -530,12 +552,22 @@ for index, squishy in Squishies.list do
 		SetClicker:FireServer(id)
 	end)
 
+	summon.Activated:Connect(function()
+		-- The row remembers whether this one is out, so one button both
+		-- summons and dismisses. The server re-checks ownership and the slot
+		-- limit either way; this is only the friendly reading of the rule.
+		local entry = rows[id]
+		SetActive:FireServer(id, not (entry and entry.active))
+	end)
+
 	rows[id] = {
 		countLabel = countLabel,
 		starLabel = starLabel,
 		prestige = prestige,
 		icon = icon,
 		equipStroke = equipStroke,
+		summon = summon,
+		active = false,
 	}
 end
 
@@ -710,6 +742,15 @@ local function refresh()
 		math.floor(discount * 100 + 0.5)
 	)
 
+	-- Which squishies are out, as a set, so the loop below is a lookup rather
+	-- than a scan per row.
+	local activeList: { string } = state.active
+	local summoned: { [string]: boolean } = {}
+	for _, id in activeList do
+		summoned[id] = true
+	end
+	local summonedCount = #activeList
+
 	for id, row in rows do
 		local held = state.counts[id] or 0
 		local star = state.stars[id] or 0
@@ -717,6 +758,16 @@ local function refresh()
 		row.countLabel.Text = "x" .. held
 		row.starLabel.Text = starString(star)
 		row.equipStroke.Transparency = (id == state.clickerId) and 0 or 1
+
+		-- Summon button: out, available, or full. "Full" stays readable rather
+		-- than hiding, so the three-slot limit is visible before it's hit.
+		local discoveredHere = held > 0 or star > 0
+		local isOut = summoned[id] == true
+		row.active = isOut
+		local slotsLeft = summonedCount < Config.MaxActiveSquishies
+		row.summon.Visible = discoveredHere
+		row.summon.Text = isOut and "Dismiss" or (slotsLeft and "Summon" or "Slots full")
+		row.summon.BackgroundColor3 = isOut and COLOR.gold or (slotsLeft and COLOR.mint or COLOR.locked)
 
 		-- Undiscovered squishies stay dark question marks — the collection
 		-- tease. Discovering one builds its 3D preview, once.

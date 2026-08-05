@@ -117,7 +117,7 @@ local TUMBLE_AIR = 9
 local TUMBLE_ROLL = 3
 
 -- How hard a pet chases the slot in front of it. Soft and underdamped on
--- purpose: pets that keep up perfectly look welded on.
+-- purpose: a summon that keeps up perfectly looks welded on.
 local PET_STIFFNESS = 90
 local PET_DAMPING = 12
 
@@ -622,35 +622,121 @@ local pickupField: { PickupEntry } = {}
 local pickupTaken: { boolean } = {}
 local pickupCollecting: { [number]: number } = {} -- index -> distance it pops at
 
--- ---------- pets ----------
--- Up to five followers trailing the squishy in a loose line.
+-- ---------- summoned squishies ----------
+-- The squishies ARE the pets: up to three trail along behind, drawn as their
+-- REAL models rather than as stand-in spheres, because seeing which one you
+-- brought is the whole point of summoning it.
 --
--- The brief asked for AlignPosition/AlignOrientation. Those are physics
--- constraints and need unanchored parts with a network owner; this entire
--- stage is anchored client-side geometry 500 studs above the map, with no
--- character and no physics ownership anywhere in it. Springs give the same
--- lagging, overshooting follow and are what the rest of this file already
--- uses, so pets move like everything else here rather than being the one
--- thing driven by a different system.
-local PET_TRAIL_SPACING = 1.5 -- stage studs of lag between one pet and the next
-local PET_SIZE = 1.05
+-- Springs rather than AlignPosition/AlignOrientation: those are physics
+-- constraints needing unanchored parts with a network owner, and this entire
+-- stage is anchored client-side geometry with no character and no physics
+-- ownership anywhere in it. Springs give the same lagging, overshooting follow
+-- and are what the rest of this file already uses.
+local FOLLOW_SPACING = 2.4 -- stage studs of lag between one summon and the next
+local FOLLOW_SCALE = 0.6 -- summons are smaller than the squisher itself
 
-type PetFollower = { part: BasePart, position: Vector3, velocity: Vector3 }
-local petFollowers: { PetFollower } = {}
-for _ = 1, Config.MaxEquippedPets do
-	local pet = Instance.new("Part")
-	pet.Shape = Enum.PartType.Ball
-	pet.Size = Vector3.one * PET_SIZE
-	pet.Color = Color3.fromRGB(255, 255, 255)
-	pet.Material = Enum.Material.SmoothPlastic
-	pet.Anchored = true
-	pet.CanCollide = false
-	pet.CanQuery = false
-	pet.CanTouch = false
-	pet.Transparency = 1
-	pet.Parent = stage
-	-- Seeded at the origin; the first frame springs them to the squishy.
-	table.insert(petFollowers, { part = pet, position = ORIGIN, velocity = Vector3.zero })
+type Follower = { model: Models.SquishyModel, position: Vector3, velocity: Vector3 }
+local followers: { Follower } = {}
+
+-- ---------- the lobby ----------
+-- A deck at the foot of the launcher. There is no walkable avatar in this
+-- game — controls are disabled and the camera is scriptable — so the lobby is
+-- somewhere the camera SITS rather than somewhere a character stands: you look
+-- out over the valley from it between your own shots and watch everyone
+-- else's fly past.
+local LOBBY_COLOR = Color3.fromRGB(206, 158, 108)
+local LOBBY_RAIL = Color3.fromRGB(160, 112, 68)
+
+local lobbyDeck = block(Vector3.new(22, 1, 30), CANNON_ORIGIN + Vector3.new(-20, 0.5, 0), LOBBY_COLOR)
+lobbyDeck.Material = Enum.Material.WoodPlanks
+block(Vector3.new(22, 0.4, 30), CANNON_ORIGIN + Vector3.new(-20, 1.1, 0), Color3.fromRGB(226, 182, 132)).Material =
+	Enum.Material.WoodPlanks
+
+-- A rail along the front edge, so the deck reads as a viewing platform rather
+-- than as a raised patch of floor.
+for _, side in { -1, 1 } do
+	block(Vector3.new(22, 0.4, 0.5), CANNON_ORIGIN + Vector3.new(-20, 3.2, side * 15), LOBBY_RAIL)
+	for post = -2, 2 do
+		block(Vector3.new(0.5, 2.4, 0.5), CANNON_ORIGIN + Vector3.new(-20 + post * 5, 2.2, side * 15), LOBBY_RAIL)
+	end
+end
+
+-- Benches facing down the valley.
+for _, offset in { -8, 0, 8 } do
+	block(Vector3.new(3, 0.5, 6), CANNON_ORIGIN + Vector3.new(-24, 2.3, offset), LOBBY_RAIL)
+	block(Vector3.new(0.6, 1.6, 6), CANNON_ORIGIN + Vector3.new(-25.4, 2.9, offset), LOBBY_RAIL)
+end
+
+-- ---------- other players' shots ----------
+-- Every launch in the server is broadcast, and the lobby draws them.
+--
+-- Each ghost gets its OWN scale rather than the local player's, so a shot ten
+-- times stronger than yours doesn't leave the frame in the first half second
+-- and a shot a tenth of it doesn't crawl. Every ghost therefore covers about
+-- the same stretch of track whatever it really flew — the real number is on
+-- the name tag, which is the honest place for it. They also ignore the
+-- treadmill scroll entirely, so your own shot never drags them along with it.
+type Ghost = {
+	part: BasePart,
+	label: TextLabel,
+	arcs: { FlightArc },
+	arcStarts: { number },
+	simSeconds: number,
+	seconds: number,
+	progress: number,
+	runScale: number,
+	heightScale: number,
+	lane: number,
+	active: boolean,
+}
+local ghosts: { Ghost } = {}
+local nextGhost = 1
+
+for index = 1, Config.LobbyMaxGhosts do
+	local part = Instance.new("Part")
+	part.Shape = Enum.PartType.Ball
+	part.Size = Vector3.one * 1.8
+	part.Color = Color3.fromRGB(255, 255, 255)
+	part.Material = Enum.Material.SmoothPlastic
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Transparency = 1
+	part.Parent = stage
+
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.new(0, 160, 0, 34)
+	gui.StudsOffset = Vector3.new(0, 2, 0)
+	gui.AlwaysOnTop = true
+	gui.Parent = part
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.Text = ""
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextStrokeColor3 = Color3.fromRGB(48, 40, 34)
+	label.TextStrokeTransparency = 0.1
+	label.TextScaled = true
+	label.Parent = gui
+
+	table.insert(ghosts, {
+		part = part,
+		label = label,
+		arcs = {},
+		arcStarts = {},
+		simSeconds = 1,
+		seconds = 1,
+		progress = 1,
+		runScale = 1,
+		heightScale = 1,
+		-- Spread across the width of the track so two ghosts in the air at
+		-- once are visibly two shots rather than one flickering one.
+		lane = (index - (Config.LobbyMaxGhosts + 1) / 2) * 3.5,
+		active = false,
+	})
 end
 
 -- ---------- the cannon ----------
@@ -1326,7 +1412,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	barrelMouth.CFrame = barrelPivot * CFrame.new(BARREL_LENGTH - 0.1, 0, 0)
 
 	local toy = clickerModel
-	-- Where the pets follow. Set by whichever branch below actually draws.
+	-- What the summons follow. Set by whichever branch below actually draws.
 	local toyPosition = CLICKER_SPOT + Vector3.new(0, CLICKER_REST_Y, 0)
 
 	if toy then
@@ -1373,20 +1459,59 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		end
 	end
 
-	-- Pets trail the squishy in a line, each one chasing the slot in front of
+	-- Summons trail the squisher in a line, each one chasing the slot in front of
 	-- it. Critically damped springs rather than a fixed offset, so they swing
 	-- wide on a turn and stretch out at speed instead of moving as one rigid
 	-- object — the lag IS the effect.
 	local ahead = toyPosition
-	for index, follower in petFollowers do
-		if follower.part.Transparency < 1 then
-			local target = ahead - Vector3.new(PET_TRAIL_SPACING, 0, 0) + Vector3.new(0, 0.5, 0)
-			local pull = (target - follower.position) * PET_STIFFNESS - follower.velocity * PET_DAMPING
-			follower.velocity += pull * dt
-			follower.position += follower.velocity * dt
-			follower.part.Position = follower.position
-				+ Vector3.new(0, math.sin(elapsed * 3 + index) * 0.18, math.sin(elapsed * 1.7 + index * 2) * 0.5)
-			ahead = follower.position
+	for index, follower in followers do
+		local target = ahead - Vector3.new(FOLLOW_SPACING, 0, 0)
+		local pull = (target - follower.position) * PET_STIFFNESS - follower.velocity * PET_DAMPING
+		follower.velocity += pull * dt
+		follower.position += follower.velocity * dt
+
+		local model = follower.model
+		local scale = FOLLOW_SCALE * model.sizeScale
+		-- Stood on its own underside like the squisher is, so a tall summon
+		-- doesn't sink into the ground it's bobbing over.
+		local lift = -model.lowestY * scale
+		Models.apply(
+			model.rig,
+			CFrame.new(
+				follower.position
+					+ Vector3.new(0, lift + math.sin(elapsed * 3 + index) * 0.18, math.sin(elapsed * 1.7 + index * 2) * 0.6)
+			) * CFrame.fromEulerAnglesXYZ(0, elapsed * 0.7 + index, 0),
+			Vector3.one * scale
+		)
+		ahead = follower.position
+	end
+
+	-- Other players' shots. Each runs on its own clock and its own scale, so
+	-- they neither share the treadmill nor fight each other for the frame.
+	for _, ghost in ghosts do
+		if ghost.active then
+			ghost.progress += dt / ghost.seconds
+			if ghost.progress >= 1 then
+				ghost.progress = 1
+				ghost.active = false
+				ghost.part.Transparency = 1
+				ghost.label.Text = ""
+			else
+				local simTime = ghost.progress * ghost.simSeconds
+				local x, y = 0, 0
+				for index, arc in ghost.arcs do
+					local started = ghost.arcStarts[index] or 0
+					if simTime <= started + arc.seconds or index == #ghost.arcs then
+						local span = arc.toX - arc.fromX
+						local along = arc.seconds > 0 and math.clamp((simTime - started) / arc.seconds, 0, 1) or 1
+						x = arc.fromX + span * along
+						y = arc.rolling and 0 or arc.peak * 4 * along * (1 - along)
+						break
+					end
+				end
+				ghost.part.Position = CANNON_ORIGIN
+					+ Vector3.new(x * ghost.runScale, y * ghost.heightScale + MUZZLE_HEIGHT, ghost.lane)
+			end
 		end
 	end
 
@@ -1584,16 +1709,72 @@ function Scene.flightBounces(): number
 	return flight.bounced
 end
 
--- Show the equipped pets and colour them. Passing fewer than the maximum
--- hides the rest; the server owns how many that may be.
-function Scene.setPets(colors: { Color3 })
-	for index, follower in petFollowers do
-		local color = colors[index]
-		follower.part.Transparency = color and 0 or 1
-		if color then
-			follower.part.Color = color
-		end
+-- Summon this exact set of squishies. Rebuilt rather than recoloured because
+-- each one is its real model — a banana summon has to actually be a banana —
+-- and the set only changes when somebody presses Summon, which is nothing
+-- like per-frame.
+function Scene.setActiveSquishies(list: { { shape: string?, color: Color3, sparkle: boolean, sizeScale: number? } })
+	for _, follower in followers do
+		follower.model.rig.folder:Destroy()
 	end
+	followers = {}
+
+	for index, spec in list do
+		if index > Config.MaxActiveSquishies then
+			break
+		end
+		table.insert(followers, {
+			model = Models.buildSquishy(stage, spec.shape, spec.color, spec.sparkle, spec.sizeScale),
+			-- Seeded behind the squisher so they walk in rather than snapping
+			-- into place from wherever the last set left off.
+			position = CLICKER_SPOT - Vector3.new(FOLLOW_SPACING * index, 0, 0),
+			velocity = Vector3.zero,
+		})
+	end
+end
+
+-- Fly somebody else's shot down the valley for the lobby to watch. The whole
+-- flight arrives in one broadcast, so this needs no further contact with the
+-- server — it just plays what it was handed.
+function Scene.playGhost(shot: {
+	name: string,
+	distance: number,
+	arcs: { FlightArc },
+	seconds: number,
+}, color: Color3)
+	if typeof(shot.arcs) ~= "table" or #shot.arcs == 0 then
+		return
+	end
+
+	-- Round-robin the pool: on a busy server the oldest ghost is simply
+	-- recycled mid-flight rather than queueing shots nobody is waiting for.
+	local ghost = ghosts[nextGhost]
+	nextGhost = nextGhost % #ghosts + 1
+
+	ghost.arcs = shot.arcs
+	ghost.arcStarts = {}
+	local running = 0
+	local peak = 1
+	for index, arc in shot.arcs do
+		ghost.arcStarts[index] = running
+		running += arc.seconds
+		peak = math.max(peak, arc.peak)
+	end
+
+	ghost.simSeconds = math.max(shot.seconds, 1e-3)
+	ghost.seconds = math.clamp(ghost.simSeconds * 0.25, 2.2, 8)
+	ghost.progress = 0
+	ghost.active = true
+
+	-- Its own scale, so every ghost is drawn at a readable size whatever it
+	-- really flew. See the comment on the Ghost type.
+	local distance = math.max(shot.distance, 1)
+	ghost.runScale = TRACK_RUN * 0.7 / distance
+	ghost.heightScale = math.min(STAGE_APEX * 0.7 / peak, ghost.runScale * MAX_HEIGHT_STRETCH)
+
+	ghost.part.Color = color
+	ghost.part.Transparency = 0.25
+	ghost.label.Text = ("%s — %s"):format(shot.name, Format.abbreviate(math.floor(distance)))
 end
 
 -- Move the camera. "main" and "cannon" are the launch valley, which is where

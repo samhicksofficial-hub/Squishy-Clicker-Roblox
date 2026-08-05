@@ -1,7 +1,8 @@
 --!strict
 -- ============================================================
---  CANNON HUD  —  the wallet, the nav rail, and every panel
---  behind it: Upgrades, Rebirth, Worlds, Pets and the Game Shop.
+--  CANNON HUD  —  the wallet, the nav rail, the lobby feed, and
+--  every panel behind them: Upgrades, Rebirth, Worlds, Steamers
+--  and the Game Shop.
 --
 --  The launcher is the main game, so this owns most of what is on
 --  screen. Everything is built through UI.luau, which means the
@@ -9,8 +10,8 @@
 --  re-typed here.
 --
 --  Everything is a BUTTON and a NUMBER. Every button fires a bare
---  request — "the next power level", "hatch this egg", "equip
---  this pet" — and every number comes from the last sync. Prices
+--  request — "the next power level", "a steamer", "summon this
+--  squishy" — and every number comes from the last sync. Prices
 --  are never worked out locally: the server sends the finished
 --  figure, so the price shown and the price charged are the same
 --  number by construction rather than by two copies of a formula
@@ -18,12 +19,11 @@
 -- ============================================================
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local Format = require(Shared:WaitForChild("Format"))
-local Pets = require(Shared:WaitForChild("Pets"))
+local Squishies = require(Shared:WaitForChild("Squishies"))
 local UI = require(script.Parent:WaitForChild("UI"))
 
 local Cannon = {}
@@ -37,10 +37,9 @@ function Cannon.mount(gui: ScreenGui, scene: any)
 	local remotes = ReplicatedStorage:WaitForChild("Remotes")
 	local buyPower = remotes:WaitForChild("BuyPower") :: RemoteEvent
 	local doRebirth = remotes:WaitForChild("DoRebirth") :: RemoteEvent
-	local hatchEgg = remotes:WaitForChild("HatchEgg") :: RemoteEvent
-	local togglePet = remotes:WaitForChild("TogglePet") :: RemoteEvent
+	local buySteamer = remotes:WaitForChild("BuySteamer") :: RemoteEvent
 	local activateBoost = remotes:WaitForChild("ActivateBoost") :: RemoteEvent
-	local eggHatched = remotes:WaitForChild("EggHatched") :: RemoteEvent
+	local launchBroadcast = remotes:WaitForChild("LaunchBroadcast") :: RemoteEvent
 
 	-- ---------- the wallet ----------
 	-- Top right, always visible: in a simulator the balances are the score.
@@ -140,17 +139,17 @@ function Cannon.mount(gui: ScreenGui, scene: any)
 	})
 	panels.worlds = worldsPanel
 
-	local petsPanel = UI.panel({
+	local steamersPanel = UI.panel({
 		parent = gui,
-		name = "PetsPanel",
-		size = UDim2.new(0, 440, 0, 420),
+		name = "SteamersPanel",
+		size = UDim2.new(0, 420, 0, 350),
 		position = UDim2.fromScale(0.5, 0.5),
-		icon = "🥚",
-		title = "Pets",
+		icon = "🥡",
+		title = "Steamers",
 		top = C.purple,
 		bottom = C.purpleDeep,
 	})
-	panels.pets = petsPanel
+	panels.steamers = steamersPanel
 
 	local shopPanel = UI.panel({
 		parent = gui,
@@ -230,8 +229,8 @@ function Cannon.mount(gui: ScreenGui, scene: any)
 	railButton(4, "🧨", "UPGRADE", C.orange, C.orangeDeep, function()
 		showOnly("upgrades")
 	end)
-	railButton(5, "🥚", "PETS", C.purple, C.purpleDeep, function()
-		showOnly("pets")
+	railButton(5, "🥡", "STEAMERS", C.purple, C.purpleDeep, function()
+		showOnly("steamers")
 	end)
 	railButton(6, "🌍", "WORLDS", C.blue, C.blueDeep, function()
 		showOnly("worlds")
@@ -562,230 +561,180 @@ function Cannon.mount(gui: ScreenGui, scene: any)
 		Parent = shopPanel.body,
 	})
 
-	-- ---------- Pets panel ----------
-	local eggButtons: { [string]: UI.Button } = {}
-	for index, egg in Pets.eggs do
-		local entry = UI.button({
-			parent = petsPanel.body,
-			size = UDim2.new(0, 130, 0, 74),
-			position = UDim2.new(0, 12 + (index - 1) * 140, 0, 10),
-			text = "",
-			top = egg.costGems and C.gem or C.cash,
-			bottom = egg.costGems and Color3.fromRGB(64, 190, 190) or Color3.fromRGB(84, 186, 60),
-			zIndex = 23,
-		})
-		UI.label({
-			Size = UDim2.new(1, -8, 0, 40),
-			Position = UDim2.new(0, 4, 0, 4),
-			Text = "🥚 " .. egg.name,
-			TextSize = 15,
-			TextWrapped = true,
-			ZIndex = 24,
-			Parent = entry.button,
-		})
-		UI.label({
-			Size = UDim2.new(1, -8, 0, 24),
-			Position = UDim2.new(0, 4, 0, 46),
-			Text = "",
-			TextSize = 16,
-			Name = "Price",
-			ZIndex = 24,
-			Parent = entry.button,
-		})
-
-		local id = egg.id
-		entry.button.Activated:Connect(function()
-			hatchEgg:FireServer(id)
-		end)
-		eggButtons[egg.id] = entry
-	end
-
-	local petHeader = UI.label({
-		Size = UDim2.new(1, -24, 0, 26),
-		Position = UDim2.new(0, 12, 0, 92),
-		Text = "Equipped 0/5",
-		TextSize = 18,
+	-- ---------- Steamers panel ----------
+	-- What the launcher's cash and gems buy. This is the join between the two
+	-- halves of the game: launching earns the currency, the currency buys
+	-- squishies, and summoned squishies make the next launch go further.
+	local steamerCard = UI.card({
+		parent = steamersPanel.body,
+		size = UDim2.new(1, -24, 0, 96),
+		position = UDim2.new(0, 12, 0, 10),
+		top = C.cash,
+		bottom = Color3.fromRGB(84, 186, 60),
+		zIndex = 23,
+	})
+	UI.label({
+		Size = UDim2.new(1, -20, 0, 30),
+		Position = UDim2.new(0, 12, 0, 6),
+		Text = "🥡 Steamer",
+		TextSize = 24,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 23,
-		Parent = petsPanel.body,
+		ZIndex = 24,
+		Parent = steamerCard,
 	})
-
-	local petList = UI.make("ScrollingFrame", {
-		Size = UDim2.new(1, -24, 1, -132),
-		Position = UDim2.new(0, 12, 0, 120),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		ScrollBarThickness = 6,
-		CanvasSize = UDim2.new(0, 0, 0, 0),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		ZIndex = 23,
-		Parent = petsPanel.body,
+	UI.label({
+		Size = UDim2.new(1, -20, 0, 22),
+		Position = UDim2.new(0, 12, 0, 34),
+		Text = "Banked straight into your Unbox tray.",
+		TextSize = 14,
+		TextColor3 = Color3.fromRGB(240, 252, 220),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		StrokeThickness = 1.5,
+		ZIndex = 24,
+		Parent = steamerCard,
 	})
-	UI.make("UIListLayout", {
-		Padding = UDim.new(0, 6),
-		SortOrder = Enum.SortOrder.LayoutOrder,
-		Parent = petList,
+	local buyCoinButton = UI.button({
+		parent = steamerCard,
+		size = UDim2.new(1, -24, 0, 34),
+		position = UDim2.new(0, 12, 1, -42),
+		text = "BUY",
+		textSize = 18,
+		top = C.green,
+		bottom = C.greenDeep,
+		zIndex = 24,
+		radius = 10,
 	})
-
-	-- Rows are rebuilt on change rather than pooled: the inventory only moves
-	-- when a pet is hatched or toggled, which is nothing like per-frame.
-	local function drawPets(owned: { string }, equipped: { string })
-		for _, child in petList:GetChildren() do
-			if child:IsA("TextButton") then
-				child:Destroy()
-			end
-		end
-
-		-- Collapse duplicates into "×3" rows, and count how many of each are
-		-- currently out, so a row can show two of three equipped.
-		local counts: { [string]: number } = {}
-		local order: { string } = {}
-		for _, id in owned do
-			if counts[id] == nil then
-				counts[id] = 0
-				table.insert(order, id)
-			end
-			counts[id] += 1
-		end
-		local out: { [string]: number } = {}
-		for _, id in equipped do
-			out[id] = (out[id] or 0) + 1
-		end
-
-		-- Best first, so the pets worth equipping are the ones on screen.
-		table.sort(order, function(a, b)
-			local left, right = Pets.byId[a], Pets.byId[b]
-			if not left or not right then
-				return false
-			end
-			local rankA = Pets.rarityRank[left.rarity] or 0
-			local rankB = Pets.rarityRank[right.rarity] or 0
-			if rankA ~= rankB then
-				return rankA > rankB
-			end
-			return left.name < right.name
-		end)
-
-		for index, id in order do
-			local pet = Pets.byId[id]
-			if pet then
-				local equippedHere = out[id] or 0
-				local rarity = Pets.rarityByName[pet.rarity]
-				local rarityColor = rarity and rarity.color or pet.color
-
-				local entry = UI.button({
-					parent = petList,
-					size = UDim2.new(1, -10, 0, 52),
-					text = "",
-					top = equippedHere > 0 and C.green or C.row,
-					bottom = equippedHere > 0 and C.greenDeep or Color3.fromRGB(92, 56, 26),
-					zIndex = 24,
-					radius = 10,
-				})
-				entry.button.LayoutOrder = index
-
-				local swatch = UI.make("Frame", {
-					Size = UDim2.new(0, 12, 1, -14),
-					Position = UDim2.new(0, 8, 0, 7),
-					BackgroundColor3 = rarityColor,
-					ZIndex = 25,
-					Parent = entry.button,
-				})
-				UI.corner(6, swatch)
-				UI.stroke(swatch, 2)
-
-				-- Only the stats a pet actually has, so a one-trick pet reads
-				-- as a one-trick pet rather than as four zeroes.
-				local stats: { string } = {}
-				if pet.power then
-					table.insert(stats, ("+%d%% pow"):format(pet.power * 100))
-				end
-				if pet.coins then
-					table.insert(stats, ("+%d%% cash"):format(pet.coins * 100))
-				end
-				if pet.gems then
-					table.insert(stats, ("+%d%% gem"):format(pet.gems * 100))
-				end
-				if pet.tnt then
-					table.insert(stats, ("+%d%% tnt"):format(pet.tnt * 100))
-				end
-				if pet.magnet then
-					table.insert(stats, ("+%g mag"):format(pet.magnet))
-				end
-
-				UI.label({
-					Size = UDim2.new(1, -34, 0, 24),
-					Position = UDim2.new(0, 28, 0, 4),
-					Text = ("%s  ×%d  (%d out)"):format(pet.name, counts[id], equippedHere),
-					TextSize = 16,
-					TextXAlignment = Enum.TextXAlignment.Left,
-					ZIndex = 25,
-					Parent = entry.button,
-				})
-				UI.label({
-					Size = UDim2.new(1, -34, 0, 20),
-					Position = UDim2.new(0, 28, 0, 27),
-					Text = table.concat(stats, "  "),
-					TextSize = 13,
-					TextColor3 = Color3.fromRGB(252, 226, 180),
-					TextXAlignment = Enum.TextXAlignment.Left,
-					StrokeThickness = 1.5,
-					ZIndex = 25,
-					Parent = entry.button,
-				})
-
-				-- One tap equips another copy; once they are all out, it puts
-				-- one away. The server re-checks both, so this is only the
-				-- friendly reading of the same rule.
-				local petId = id
-				local allOut = equippedHere >= counts[id]
-				entry.button.Activated:Connect(function()
-					togglePet:FireServer(petId, not allOut)
-				end)
-			end
-		end
-	end
-
-	-- ---------- hatch reveal ----------
-	eggHatched.OnClientEvent:Connect(function(petId)
-		local pet = typeof(petId) == "string" and Pets.byId[petId]
-		if not pet then
-			return
-		end
-		local rarity = Pets.rarityByName[pet.rarity]
-
-		local banner = UI.make("Frame", {
-			Size = UDim2.new(0, 360, 0, 76),
-			Position = UDim2.new(0.5, 0, 0, 150),
-			AnchorPoint = Vector2.new(0.5, 0),
-			BackgroundColor3 = rarity and rarity.color or pet.color,
-			ZIndex = 40,
-			Parent = gui,
-		})
-		UI.corner(16, banner)
-		UI.gradient(banner, rarity and rarity.color or pet.color, pet.color)
-		UI.stroke(banner, 4)
-
-		UI.label({
-			Size = UDim2.fromScale(1, 1),
-			Text = ("🥚 %s!\n%s"):format(pet.name, pet.rarity),
-			TextSize = 24,
-			ZIndex = 41,
-			Parent = banner,
-		})
-
-		banner.BackgroundTransparency = 1
-		TweenService:Create(banner, TweenInfo.new(0.25), { BackgroundTransparency = 0 }):Play()
-		task.delay(2.6, function()
-			TweenService:Create(banner, TweenInfo.new(0.35), { BackgroundTransparency = 1 }):Play()
-			task.delay(0.45, function()
-				banner:Destroy()
-			end)
-		end)
+	buyCoinButton.button.Activated:Connect(function()
+		buySteamer:FireServer("coin")
 	end)
 
+	local luckyCard = UI.card({
+		parent = steamersPanel.body,
+		size = UDim2.new(1, -24, 0, 96),
+		position = UDim2.new(0, 12, 0, 116),
+		top = C.gem,
+		bottom = Color3.fromRGB(64, 190, 190),
+		zIndex = 23,
+	})
+	UI.label({
+		Size = UDim2.new(1, -20, 0, 30),
+		Position = UDim2.new(0, 12, 0, 6),
+		Text = "💎 Lucky Steamer",
+		TextSize = 24,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 24,
+		Parent = luckyCard,
+	})
+	UI.label({
+		Size = UDim2.new(1, -20, 0, 22),
+		Position = UDim2.new(0, 12, 0, 34),
+		Text = ("Opens on the spot. %s or better, guaranteed."):format(
+			Squishies.rarities[Config.LuckySteamerMinRank].name
+		),
+		TextSize = 14,
+		TextColor3 = Color3.fromRGB(226, 252, 250),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		StrokeThickness = 1.5,
+		ZIndex = 24,
+		Parent = luckyCard,
+	})
+	local buyGemButton = UI.button({
+		parent = luckyCard,
+		size = UDim2.new(1, -24, 0, 34),
+		position = UDim2.new(0, 12, 1, -42),
+		text = "BUY",
+		textSize = 18,
+		top = C.green,
+		bottom = C.greenDeep,
+		zIndex = 24,
+		radius = 10,
+	})
+	buyGemButton.button.Activated:Connect(function()
+		buySteamer:FireServer("gem")
+	end)
+
+	UI.label({
+		Size = UDim2.new(1, -24, 0, 44),
+		Position = UDim2.new(0, 12, 0, 220),
+		Text = "Summon squishies from My Squishies — up to "
+			.. Config.MaxActiveSquishies
+			.. " at once. Rarer and more starred means a bigger buff.",
+		TextSize = 14,
+		TextColor3 = Color3.fromRGB(252, 226, 180),
+		TextWrapped = true,
+		StrokeThickness = 1.5,
+		ZIndex = 23,
+		Parent = steamersPanel.body,
+	})
+
+	-- ---------- the lobby feed ----------
+	-- Bottom left, above the progress bar: a running list of everyone's
+	-- launches. This is the whole social half of the lobby — you sit at the
+	-- deck between your own shots and watch the server's shots go past.
+	local feed = UI.make("Frame", {
+		Name = "LaunchFeed",
+		Size = UDim2.new(0, 250, 0, 26 + Config.LobbyFeedSize * 22),
+		Position = UDim2.new(0, 124, 1, -170),
+		AnchorPoint = Vector2.new(0, 1),
+		BackgroundColor3 = C.body,
+		BackgroundTransparency = 0.25,
+		ZIndex = 4,
+		Parent = gui,
+	})
+	UI.corner(12, feed)
+	UI.stroke(feed)
+
+	UI.label({
+		Size = UDim2.new(1, -12, 0, 22),
+		Position = UDim2.new(0, 6, 0, 4),
+		Text = "🚀 Recent Launches",
+		TextSize = 15,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 5,
+		Parent = feed,
+	})
+
+	local feedRows: { TextLabel } = {}
+	for index = 1, Config.LobbyFeedSize do
+		feedRows[index] = UI.label({
+			Size = UDim2.new(1, -12, 0, 20),
+			Position = UDim2.new(0, 6, 0, 26 + (index - 1) * 22),
+			Text = "",
+			TextSize = 14,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			StrokeThickness = 1.5,
+			ZIndex = 5,
+			Parent = feed,
+		})
+	end
+
+	-- Newest first, oldest dropped. Kept as plain strings rather than as a
+	-- scrolling list: six rows never needs a scrollbar, and rewriting six
+	-- labels is cheaper than building and destroying rows.
+	local feedLines: { string } = {}
+
+	launchBroadcast.OnClientEvent:Connect(function(shot)
+		if typeof(shot) ~= "table" or typeof(shot.name) ~= "string" then
+			return
+		end
+
+		-- Draw it as the squishy they actually launched, when we know it.
+		local squishy = typeof(shot.clickerId) == "string" and Squishies.byId[shot.clickerId]
+		scene.playGhost(shot, squishy and squishy.color or Color3.fromRGB(250, 240, 220))
+
+		table.insert(feedLines, 1, ("%s — %s"):format(shot.name, Format.abbreviate(math.floor(shot.distance or 0))))
+		while #feedLines > Config.LobbyFeedSize do
+			table.remove(feedLines)
+		end
+		for index, row in feedRows do
+			row.Text = feedLines[index] or ""
+			-- The newest line is bright; older ones fade back, so the eye goes
+			-- to what just happened rather than to a wall of equal text.
+			row.TextTransparency = index == 1 and 0 or math.min(0.15 * index, 0.55)
+		end
+	end)
 	-- ---------- redraw from the server's numbers ----------
-	local lastPetSignature = ""
+	local lastActiveSignature = ""
 	local boostReadyIn = 0
 	local boostLeft = 0
 
@@ -837,49 +786,36 @@ function Cannon.mount(gui: ScreenGui, scene: any)
 			end
 		end
 
-		-- ----- eggs -----
-		for _, egg in Pets.eggs do
-			local entry = eggButtons[egg.id]
-			if entry then
-				local canPay = (egg.costGems ~= nil and (state.gems or 0) >= egg.costGems)
-					or (egg.costCoins ~= nil and (state.coins or 0) >= egg.costCoins)
-				local price = entry.button:FindFirstChild("Price") :: TextLabel?
-				if price then
-					price.Text = ("%s %s"):format(
-						Format.abbreviate(egg.costGems or egg.costCoins or 0),
-						egg.costGems and "💎" or "💵"
-					)
-				end
-				UI.setButtonEnabled(
-					entry,
-					canPay,
-					egg.costGems and C.gem or C.cash,
-					egg.costGems and Color3.fromRGB(64, 190, 190) or Color3.fromRGB(84, 186, 60)
-				)
-			end
-		end
+		-- ----- steamer shop -----
+		local steamerPrice = math.floor(state.steamerCost or 0)
+		local luckyPrice = math.floor(state.luckySteamerCost or 0)
+		buyCoinButton.button.Text = ("BUY  ·  %s 💵"):format(Format.abbreviate(steamerPrice))
+		buyGemButton.button.Text = ("BUY  ·  %s 💎"):format(Format.abbreviate(luckyPrice))
+		UI.setButtonEnabled(buyCoinButton, (state.coins or 0) >= steamerPrice, C.green, C.greenDeep)
+		UI.setButtonEnabled(buyGemButton, (state.gems or 0) >= luckyPrice, C.green, C.greenDeep)
 
-		-- ----- pets -----
-		local owned = state.pets or {}
-		local equipped = state.equipped or {}
-		petHeader.Text = ("Equipped %d/%d  ·  %d owned"):format(#equipped, Config.MaxEquippedPets, #owned)
+		-- ----- summoned squishies -----
+		-- Rebuilding the followers destroys and re-creates real models, so it
+		-- only happens when the summoned set actually changed — not on every
+		-- click of the steamer, which also fires a sync.
+		local active = state.active or {}
+		local signature = table.concat(active, ",")
+		if signature ~= lastActiveSignature then
+			lastActiveSignature = signature
 
-		-- Rebuilding the list costs a few dozen instances, so it only happens
-		-- when the inventory actually changed — not on every click of the
-		-- steamer, which also fires a sync.
-		local signature = table.concat(owned, ",") .. "|" .. table.concat(equipped, ",")
-		if signature ~= lastPetSignature then
-			lastPetSignature = signature
-			drawPets(owned, equipped)
-
-			local colors: { Color3 } = {}
-			for _, id in equipped do
-				local pet = Pets.byId[id]
-				if pet then
-					table.insert(colors, pet.color)
+			local specs = {}
+			for _, id in active do
+				local squishy = Squishies.byId[id]
+				if squishy then
+					table.insert(specs, {
+						shape = squishy.shape,
+						color = squishy.color,
+						sparkle = squishy.sparkle == true,
+						sizeScale = squishy.scale,
+					})
 				end
 			end
-			scene.setPets(colors)
+			scene.setActiveSquishies(specs)
 		end
 
 		boostReadyIn = state.boostReadyIn or 0

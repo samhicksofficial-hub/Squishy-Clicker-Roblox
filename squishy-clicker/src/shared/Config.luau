@@ -179,7 +179,7 @@ local Config = {
 
 	-- ===== Rebirth =====
 	-- Spends everything the cannon has earned for a permanent multiplier.
-	-- Coins, TNT and the power level all reset; gems, pets and the distance
+	-- Coins, TNT and the power level all reset; gems, squishies and the distance
 	-- record do not.
 
 	-- Distance needed for the first rebirth, multiplied by this growth for
@@ -237,11 +237,46 @@ local Config = {
 		},
 	},
 
-	-- ===== Eggs and pets =====
-	-- Up to this many pets follow the squishy, and their bonuses add up.
-	MaxEquippedPets = 5,
-	-- Hard cap on how many a player can hold, so a save can't grow forever.
-	MaxOwnedPets = 60,
+	-- ===== Active squishies =====
+	-- The squishies ARE the pets. Summon up to this many and they follow you
+	-- around and buff the cannon, which is what joins the two halves of the
+	-- game together: you launch to earn squishies, and squishies make you
+	-- launch further.
+	MaxActiveSquishies = 3,
+
+	-- Each active squishy's bonus scales with its RARITY RANK (Common 1 ...
+	-- Mythical 6) and again with its stars, so both the collecting loop and
+	-- the prestige loop pay into the launcher. A Mythical is six times the
+	-- squishy a Common is, and a maxed one is nearly twice that again.
+	ActiveSquishyPowerPerRank = 0.06,
+	ActiveSquishyCoinPerRank = 0.08,
+	ActiveSquishyTntPerRank = 0.07,
+	-- Magnet is FLAT screen studs, not a fraction — see LaunchPickupMagnet.
+	ActiveSquishyMagnetPerRank = 0.12,
+	ActiveSquishyStarBonus = 0.15,
+
+	-- ===== The steamer shop =====
+	-- What cash and gems are for. Both buy steamers, which is the whole point:
+	-- the launcher's currencies feed the collection, and the collection feeds
+	-- the launcher back through active squishies.
+
+	-- Cash price of a plain steamer, times growth for every one already
+	-- bought. Geometric, because cash income grows geometrically too.
+	SteamerCoinCost = 900,
+	SteamerCostGrowth = 1.09,
+
+	-- Gems buy a Lucky Steamer instead: same odds SHAPE, but nothing below
+	-- this rarity rank can come out of it (3 = Rare or better).
+	LuckySteamerGemCost = 18,
+	LuckySteamerMinRank = 3,
+
+	-- ===== The lobby =====
+	-- Every launch is broadcast to the whole server so everyone at the cannon
+	-- base can watch it fly. This is how many recent ones the feed lists.
+	LobbyFeedSize = 6,
+	-- How many other players' shots may be in the air at once. Beyond this the
+	-- oldest is recycled, so a busy server can't fill the valley with ghosts.
+	LobbyMaxGhosts = 6,
 
 	-- ===== King of the Steamer (the shared minigame) =====
 	-- Goal for a server of one, plus this much for every player beyond the
