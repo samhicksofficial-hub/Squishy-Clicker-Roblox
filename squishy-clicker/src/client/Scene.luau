@@ -1779,6 +1779,19 @@ function Scene.playGhost(shot: {
 	ghost.label.Text = ("%s — %s"):format(shot.name, Format.abbreviate(math.floor(distance)))
 end
 
+-- Told whenever the camera moves between the valley and the toy shop, so each
+-- half of the game can put its own HUD up and take the other's down. Without
+-- this both halves' panels are on screen at once and fight for the same
+-- corners, which is most of what "cluttered" means.
+local viewListeners: { (atValley: boolean) -> () } = {}
+
+function Scene.onViewChanged(listener: (atValley: boolean) -> ())
+	table.insert(viewListeners, listener)
+	-- Called straight away with the current view, so a listener registering
+	-- late doesn't sit in the wrong state until the player moves.
+	listener(viewRange.target > 0.5)
+end
+
 -- Move the camera. "main" and "cannon" are the launch valley, which is where
 -- the game lives; "unbox" and "clicker" travel back to the toy shop, the
 -- steamer nook and the squisher respectively.
@@ -1791,6 +1804,11 @@ function Scene.setView(view: string)
 		viewYaw.target = 0
 	else
 		viewRange.target = 1
+	end
+
+	local atValley = viewRange.target > 0.5
+	for _, listener in viewListeners do
+		listener(atValley)
 	end
 end
 

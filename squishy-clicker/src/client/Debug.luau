@@ -41,7 +41,7 @@ local function corner(radius: number, parent: Instance)
 end
 
 -- scene is Scene.luau; kept untyped to avoid a circular require just for types.
-function Debug.mount(gui: ScreenGui, scene: any)
+function Debug.mount(gui: GuiObject, scene: any)
 	local remotes = ReplicatedStorage:WaitForChild("Remotes")
 	-- Timed wait: returns nil in a published game instead of hanging forever.
 	local action = remotes:WaitForChild("DebugAction", 8) :: RemoteEvent?

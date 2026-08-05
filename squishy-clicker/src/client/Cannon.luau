@@ -34,7 +34,7 @@ function Cannon.update(_state: any) end
 
 local C = UI.color
 
-function Cannon.mount(gui: ScreenGui, scene: any)
+function Cannon.mount(gui: GuiObject, scene: any)
 	local remotes = ReplicatedStorage:WaitForChild("Remotes")
 	local buyPower = remotes:WaitForChild("BuyPower") :: RemoteEvent
 	local doRebirth = remotes:WaitForChild("DoRebirth") :: RemoteEvent
@@ -828,6 +828,24 @@ function Cannon.mount(gui: ScreenGui, scene: any)
 		boostReadyIn = state.boostReadyIn or 0
 		boostLeft = state.boostLeft or 0
 	end
+
+	-- ---------- one HUD per view ----------
+	-- The launcher's own controls belong to the valley. At the toy shop they
+	-- come down and the steamer half's HUD goes up in the same corners, so the
+	-- two never compete for the screen. The wallet and the rail stay up
+	-- throughout: they are how you read the game and how you move around it.
+	local valleyHud = { rebirthOpen.button, shopOpen.button, boost.button, feed }
+
+	scene.onViewChanged(function(atValley)
+		for _, element in valleyHud do
+			element.Visible = atValley
+		end
+		-- A panel left open while the camera walks away is just clutter on
+		-- the next screen.
+		if not atValley then
+			showOnly(nil)
+		end
+	end)
 
 	-- The two boost timers tick locally between syncs, so the button counts
 	-- down smoothly instead of jumping whenever a click happens to sync.

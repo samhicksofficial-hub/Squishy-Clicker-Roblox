@@ -158,6 +158,19 @@ Two rules worth knowing before adding to it: strokes are `Border` mode so they
 never eat into a fill, and nothing in the kit parents itself anywhere — callers
 pass a parent and the kit only builds.
 
+**Everything is laid out in fixed pixels for a 1280×720 screen**, and one
+`UIScale` on the root frame fits that to the real viewport. Panels never guess
+at the screen themselves; they shrink as one piece. The root has to be a Frame
+rather than the ScreenGui, because a UIScale applies to a GuiObject and its
+descendants and a ScreenGui is not one.
+
+**Each view owns its own HUD.** The launcher and the clicker are two games
+sharing a screen and both want the same corners, so the valley shows the
+launch controls, the rebirth/shop/boost buttons and the lobby feed, while the
+toy shop shows the steamer bar, the Unbox tray, the collection and King of the
+Steamer. The wallet and the nav rail belong to neither and stay up throughout.
+`Scene.onViewChanged` is what drives it.
+
 ## Game Shop
 
 The Starter Pack / VIP Bundle / Auto Clicker cards are a **shell**. Each one

@@ -964,7 +964,12 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 			if pickup.kind == "coin" then
 				earnedCoins += pickup.value * bonuses.coins * rebirthMultiplier(data, Config.RebirthCoinBonus)
 			elseif pickup.kind == "gem" then
-				earnedGems += pickup.value * bonuses.gems
+				-- Gems are deliberately UNBUFFED. Summons boost power, cash,
+				-- TNT and magnet; letting them boost gems too would devalue
+				-- the milestone bounties, which are meant to be the reason
+				-- gems feel like a prize. (This line used to multiply by a
+				-- pet bonus that no longer exists — hence the nil.)
+				earnedGems += pickup.value
 			else
 				earnedTnt += pickup.value * bonuses.tnt * rebirthMultiplier(data, Config.RebirthTntBonus)
 			end

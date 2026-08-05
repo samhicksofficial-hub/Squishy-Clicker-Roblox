@@ -44,7 +44,7 @@ type Stage = "idle" | "power" | "angle" | "flying" | "summary"
 -- Comfortably longer than any round trip, and shorter than a player's patience.
 local LAUNCH_TIMEOUT = 6
 
-function Launch.mount(gui: ScreenGui, scene: any)
+function Launch.mount(gui: GuiObject, scene: any)
 	local remotes = ReplicatedStorage:WaitForChild("Remotes")
 	local shotRemote = remotes:WaitForChild("LaunchShot") :: RemoteEvent
 	local resultRemote = remotes:WaitForChild("LaunchResult") :: RemoteEvent

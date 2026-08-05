@@ -43,7 +43,7 @@ local function corner(radius: number, parent: Instance)
 	make("UICorner", { CornerRadius = UDim.new(0, radius), Parent = parent })
 end
 
-function King.mount(gui: ScreenGui)
+function King.mount(gui: GuiObject, scene: any)
 	local remotes = ReplicatedStorage:WaitForChild("Remotes")
 	local clickRemote = remotes:WaitForChild("ClickShared") :: RemoteEvent
 	local updateRemote = remotes:WaitForChild("KingUpdate") :: RemoteEvent
@@ -52,9 +52,12 @@ function King.mount(gui: ScreenGui)
 	-- ---------- panel ----------
 	local panel = make("Frame", {
 		Name = "KingPanel",
-		Size = UDim2.new(0, 260, 0, 300),
-		Position = UDim2.new(1, -360, 0, 20),
-		AnchorPoint = Vector2.new(1, 0),
+		Size = UDim2.new(0, 240, 0, 290),
+		-- Left of centre, under the header. It shares the toy shop's screen
+		-- with the collection panel on the right and the steamer bar below,
+		-- and has to stay clear of both.
+		Position = UDim2.new(0, 124, 0, 96),
+		AnchorPoint = Vector2.new(0, 0),
 		BackgroundColor3 = COLOR.panel,
 		BackgroundTransparency = 0.08,
 		Active = true, -- its own taps, not the squisher's
@@ -189,6 +192,13 @@ function King.mount(gui: ScreenGui)
 
 	helpButton.Activated:Connect(function()
 		clickRemote:FireServer()
+	end)
+
+	-- The shared steamer belongs to the toy shop, not the valley: it is the
+	-- clicker half's minigame, and leaving it up over the launcher was half of
+	-- why that screen looked crowded.
+	scene.onViewChanged(function(atValley)
+		panel.Visible = not atValley
 	end)
 
 	-- ---------- the server's picture of the round ----------

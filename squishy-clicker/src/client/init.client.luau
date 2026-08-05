@@ -116,13 +116,68 @@ end
 
 -- ---------- root gui ----------
 -- No background frame: the 3D stage IS the background now.
-local gui = make("ScreenGui", {
+local screen = make("ScreenGui", {
 	Name = "SquishyClickerUI",
 	ResetOnSpawn = false,
 	IgnoreGuiInset = true,
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	Parent = playerGui,
 })
+
+-- Everything is built at fixed pixel sizes, which is the only sane way to lay
+-- out chunky panels — but it means the whole HUD has to be SCALED to fit,
+-- rather than each panel guessing at the screen. So the real root is a
+-- full-screen frame with one UIScale on it, and every panel in the game is a
+-- child of that. On a small window the HUD shrinks as one piece instead of
+-- overlapping itself.
+--
+-- It has to be a Frame rather than the ScreenGui: UIScale applies to a
+-- GuiObject and its descendants, and a ScreenGui is not one.
+local gui = make("Frame", {
+	Name = "Root",
+	Size = UDim2.fromScale(1, 1),
+	BackgroundTransparency = 1,
+	Parent = screen,
+})
+
+local uiScale = make("UIScale", { Parent = gui })
+
+-- The size the HUD is laid out for. Anything smaller scales down; anything
+-- bigger scales up a little, but not without limit, or a 4K screen gets a HUD
+-- with letters four inches tall.
+local DESIGN_WIDTH, DESIGN_HEIGHT = 1280, 720
+
+local function fitHud()
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return
+	end
+	local viewport = camera.ViewportSize
+	if viewport.X <= 0 or viewport.Y <= 0 then
+		return
+	end
+	-- The SMALLER of the two ratios, so nothing is ever cut off: on a wide
+	-- short window it is the height that decides, and on a tall narrow one
+	-- (a phone held upright) it is the width.
+	uiScale.Scale = math.clamp(math.min(viewport.X / DESIGN_WIDTH, viewport.Y / DESIGN_HEIGHT), 0.45, 1.15)
+end
+
+fitHud()
+do
+	local camera = workspace.CurrentCamera
+	if camera then
+		camera:GetPropertyChangedSignal("ViewportSize"):Connect(fitHud)
+	end
+	-- The camera is swapped out on respawn, and the new one needs the same
+	-- connection or the HUD stops resizing halfway through a session.
+	workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+		local current = workspace.CurrentCamera
+		if current then
+			current:GetPropertyChangedSignal("ViewportSize"):Connect(fitHud)
+			fitHud()
+		end
+	end)
+end
 
 -- ---------- the click target ----------
 -- A full-screen invisible button. Catching taps in the UI layer rather than with
@@ -258,7 +313,7 @@ local progressLabel = make("TextLabel", {
 	Parent = progressShell,
 })
 
-make("TextLabel", {
+local squishHint = make("TextLabel", {
 	Size = UDim2.new(0, 300, 0, 20),
 	Position = UDim2.new(0, 124, 1, -116),
 	BackgroundTransparency = 1,
@@ -323,10 +378,12 @@ local costLabel = make("TextLabel", {
 })
 
 -- ---------- inventory / collection (right side) ----------
+-- Sized off the bottom of the wallet rather than centred, so the two never
+-- share a pixel: the wallet is always up, and this is only up at the squisher.
 local panel = make("Frame", {
-	Size = UDim2.new(0, 320, 0, 480),
-	Position = UDim2.new(1, -20, 0.5, 0),
-	AnchorPoint = Vector2.new(1, 0.5),
+	Size = UDim2.new(0, 320, 1, -210),
+	Position = UDim2.new(1, -20, 0, 170),
+	AnchorPoint = Vector2.new(1, 0),
 	BackgroundColor3 = COLOR.panel,
 	BackgroundTransparency = 0.08,
 	Active = true, -- consume taps so browsing the collection doesn't click the steamer
@@ -851,7 +908,7 @@ mount("Launcher", function()
 	Launch.mount(gui, Scene)
 end)
 mount("King of the Steamer", function()
-	King.mount(gui)
+	King.mount(gui, Scene)
 end)
 mount("Cannon HUD", function()
 	Cannon.mount(gui, Scene)
@@ -861,6 +918,20 @@ mount("Cannon HUD", function()
 end)
 
 refresh()
+
+-- ---------- one HUD per view ----------
+-- The launcher and the clicker are two different games sharing a screen, and
+-- both want the same corners. So each view shows only its own half: the
+-- valley gets the launch controls and the lobby feed, the toy shop gets the
+-- steamer bar, the Unbox tray and the collection. The wallet and the nav rail
+-- belong to neither and stay up throughout.
+local steamerHud = { header, progressShell, costLabel, unboxButton, panel, squishHint }
+
+Scene.onViewChanged(function(atValley)
+	for _, element in steamerHud do
+		element.Visible = not atValley
+	end
+end)
 
 -- Tell the server we are listening. Its join sync and — more importantly — its
 -- join LaunchField both fire the moment the player is added, which routinely
