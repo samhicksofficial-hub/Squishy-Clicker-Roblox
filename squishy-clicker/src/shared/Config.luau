@@ -34,86 +34,178 @@ local Config = {
 	PrestigeGrowth = 2,
 
 	-- ===== Squishy Launch (the cannon) =====
-	-- A DISTANCE game: one shot, one flight, and how far you get IS the score.
-	-- Two numbers decide the whole minigame's earning rate between them — how
-	-- far a good shot travels (the arc numbers) and what a stud is worth
-	-- (LaunchClicksPerStud). Tune those two before touching anything else.
+	-- A launch simulator. One shot, one long flight, and how far you get IS
+	-- the score. The whole progression is "throw further next time", so every
+	-- number here feeds one of two things: how fast the squishy leaves the
+	-- barrel, or how much of that speed survives hitting the ground.
 
 	-- The only thing stopping the cannon from out-earning the steamer, so it
 	-- is the number to raise if launching ever feels like the better loop.
-	LaunchCooldownSeconds = 15,
+	LaunchCooldownSeconds = 8,
 
-	-- What one stud of distance pays in steamer clicks. A well-aimed shot at
-	-- full power travels about 95 studs with the arc numbers below, so this is
-	-- roughly 11 clicks before pickups and the zone multiplier are added.
-	LaunchClicksPerStud = 0.12,
+	-- What one stud of distance pays in steamer clicks. Deliberately tiny:
+	-- distances run to six figures late on, and the steamer bar is not meant
+	-- to be won by launching.
+	LaunchClicksPerStud = 0.004,
 
-	-- Muzzle speed at full power, and the gravity the shot arcs under. These
-	-- two set the height and the length of the ballistic half of the flight;
-	-- everything else scales off them.
-	LaunchSpeed = 90,
+	-- Gravity the shot arcs under. Raising it shortens every flight at once,
+	-- so it is the single blunt lever over the whole distance economy.
 	LaunchGravity = 90,
 
-	-- A limp shot still leaves the barrel: power maps onto this fraction of
-	-- muzzle speed upwards, rather than starting from nothing.
-	LaunchMinPowerFraction = 0.35,
+	-- Distance is deliberately LINEAR in launch power: range for a ballistic
+	-- arc is v²/g, so muzzle speed is sqrt(power · gravity · this) and a shot
+	-- at 45° covers `power × this` studs before it ever bounces. That means an
+	-- upgrade that doubles power reads as double the distance, which is the
+	-- only relationship a launch simulator really needs players to feel.
+	LaunchStudsPerPower = 1,
 
-	-- The angle dial sweeps between these, in degrees.
+	-- A limp shot still leaves the barrel: the charge meter maps onto this
+	-- fraction of muzzle speed upwards, rather than starting from nothing.
+	LaunchMinPowerFraction = 0.4,
+
+	-- The angle dial sweeps between these, in degrees. 45 is the best angle
+	-- for a pure arc, but bounces reward flatter shots, so the sweet spot
+	-- sits a little under it.
 	LaunchMinAngle = 15,
 	LaunchMaxAngle = 75,
 
-	-- ----- The glide -----
-	-- At the top of the arc the squishy stops falling and GLIDES: it drifts
-	-- forward while sinking, and the ground covered doing that is most of a
-	-- long shot. Glide time grows with how high the apex was, and that is what
-	-- stops the angle dial having one obvious right answer — a flat shot
-	-- travels further before the apex, a steep one glides longer after it, and
-	-- the best angle sits between the two (around 48° with these numbers).
-	LaunchGlideSeconds = 0.6,
-	LaunchGlideSecondsPerStud = 0.04,
+	-- ----- Bouncing -----
+	-- Hitting the ground is not the end of a shot: the squishy skips along
+	-- like a stone, and the skips are most of a good run's distance.
 
-	-- Fraction of forward speed kept while gliding. Below 1, or the ballistic
-	-- half of the flight stops mattering and every shot is a flat one.
-	LaunchGlideSpeedFactor = 0.55,
+	-- Share of vertical speed kept on each bounce. Under 0.5 and the skips
+	-- die out immediately; over about 0.75 and shots never stop.
+	LaunchRestitution = 0.62,
+
+	-- Share of FORWARD speed kept on each bounce. This is the real distance
+	-- lever of the two — it compounds once per skip.
+	LaunchBounceFriction = 0.88,
+
+	-- Below this much upward speed a bounce is not worth drawing, so the
+	-- squishy stops skipping and starts rolling.
+	LaunchMinBounceSpeed = 8,
+
+	-- Hard cap on skips, purely so the simulation loop always terminates.
+	LaunchMaxBounces = 14,
+
+	-- How hard the roll at the end slows down, in studs per second². The roll
+	-- covers v²/(2 · this), so lowering it adds a long tail to every shot.
+	LaunchRollDeceleration = 34,
+
+	-- ----- Launch power -----
+	-- Power is bought in levels with TNT and grows geometrically, which is
+	-- what lets distances climb from a few hundred studs to six figures
+	-- without the level number becoming absurd.
+	LaunchBasePower = 120,
+	LaunchPowerGrowth = 1.14,
+	LaunchMaxPowerLevel = 200,
+
+	-- TNT cost of the next power level: base × growth^level.
+	PowerUpgradeBaseCost = 25,
+	PowerUpgradeCostGrowth = 1.16,
 
 	-- ----- What stars buy -----
-	-- Stars' SECOND job. Each adds a fraction to muzzle speed and to the
-	-- magnet, so a prestiged collection flies further AND sweeps up more on
-	-- the way. Both capped, or a late player cannot help but max every shot.
+	-- The squishy collection's second job. Each star adds a fraction to
+	-- muzzle power and to the magnet, so the two halves of the game feed each
+	-- other. Both capped, or a maxed collection trivialises the cannon.
 	LaunchPowerPerStar = 0.01,
 	LaunchMaxStarPower = 0.3,
-	LaunchMagnetPerStar = 0.03,
-	LaunchMaxStarMagnet = 1,
+	LaunchMagnetPerStar = 0.02,
+	LaunchMaxStarMagnet = 1.5,
 
-	-- ----- Mid-air pickups -----
-	-- Sweets floating down the range, laid out fresh after every shot. The
-	-- server places them, decides which ones the arc actually touched, and
-	-- pays for them; the client only ever draws them.
-	LaunchPickupCount = 12,
-	LaunchPickupValue = 3, -- clicks each
-	LaunchPickupGoldenValue = 12, -- the rare one worth bending a shot for
-	LaunchPickupGoldenChance = 0.12,
+	-- ----- Pickups -----
+	-- TNT, coins and gems strung along the flight path, laid out fresh after
+	-- every shot. The server places them, decides which ones the path actually
+	-- passed close enough to, and pays for them; the client only draws them.
+	LaunchPickupCount = 26,
 
-	-- How near the arc has to pass to sweep one up, in studs, before stars.
-	LaunchPickupMagnet = 3,
+	-- Odds a given pickup is each kind. TNT is the common one because it is
+	-- what buys the next power level; gems are the rare treat.
+	PickupGemChance = 0.07,
+	PickupCoinChance = 0.33, -- the rest are TNT
 
-	-- Pickups are spread between these fractions of the player's own best
-	-- possible shot, so the field always sits where they can actually reach —
-	-- it stretches further down the range as their stars grow.
-	LaunchPickupNearFraction = 0.12,
-	LaunchPickupFarFraction = 1.05,
+	-- Base value of one pickup of each kind, before rebirth and pet bonuses.
+	PickupTntValue = 3,
+	PickupCoinValue = 12,
+	PickupGemValue = 1,
 
-	-- ----- Zones -----
-	-- Distance milestones down the range. Landing in one multiplies the WHOLE
-	-- payout, pickups included, so a longer shot is worth more than just its
-	-- extra studs. `from` is in game studs and must ascend.
-	LaunchZones = {
-		{ from = 0, name = "Shop Floor", multiplier = 1 },
-		{ from = 40, name = "Toy Aisle", multiplier = 1.15 },
-		{ from = 70, name = "The Big Window", multiplier = 1.3 },
-		{ from = 110, name = "Out the Door", multiplier = 1.5 },
-		{ from = 160, name = "Over the Rooftops", multiplier = 1.8 },
+	-- Pickups further down the track are worth more, by this fraction of
+	-- their base value per 1000 studs out. Without it, a 50,000-stud run pays
+	-- the same per pickup as a 500-stud one and the track stops mattering.
+	PickupValuePer1kStuds = 0.35,
+
+	-- How near the path has to pass to sweep a pickup up — quoted in the units
+	-- the player actually SEES, not in game studs.
+	--
+	-- This matters more than it looks. A level-1 flight peaks around 45 studs
+	-- up; a level-50 flight peaks around 33,000. A magnet fixed in game studs
+	-- would be a generous sweep at the start and a rounding error later, and
+	-- the minigame would quietly stop paying out as players got stronger. So
+	-- the magnet is measured against MagnetReferenceHeight — the height the
+	-- track is DRAWN at, whatever the real numbers — which keeps the hit rate
+	-- steady near 37% at every power level and makes the reach on screen the
+	-- reach that actually scores.
+	LaunchPickupMagnet = 2,
+
+	-- Must match STAGE_APEX in Scene.luau: that is what draws a flight's
+	-- envelope at a constant height on screen, and this is what converts the
+	-- magnet back out of those units. Change one and change the other.
+	MagnetReferenceHeight = 26,
+
+	-- Pickups spread between these fractions of the player's own expected
+	-- shot, so the field always sits where they can actually reach and
+	-- stretches down the track as their power grows.
+	LaunchPickupNearFraction = 0.05,
+	LaunchPickupFarFraction = 1.1,
+
+	-- ----- VIP zones -----
+	-- Bands of the track where pickups cluster and pay extra. Placed as
+	-- fractions of the expected shot, so they move out with the player.
+	VipZoneCount = 2,
+	VipZoneWidthFraction = 0.08,
+	VipZoneValueMultiplier = 4,
+	VipZoneDensityMultiplier = 3,
+
+	-- ----- Milestones -----
+	-- Signs down the track. Passing one for the FIRST time pays its gem
+	-- bounty once, which is the main early source of gems.
+	DistanceMilestones = {
+		{ at = 100, name = "100", gems = 1 },
+		{ at = 1000, name = "1K", gems = 3 },
+		{ at = 10000, name = "10K", gems = 10 },
+		{ at = 100000, name = "100K", gems = 40 },
+		{ at = 1000000, name = "1M", gems = 150 },
 	},
+
+	-- ===== Rebirth =====
+	-- Spends everything the cannon has earned for a permanent multiplier.
+	-- Coins, TNT and the power level all reset; gems, pets and the distance
+	-- record do not.
+
+	-- Distance needed for the first rebirth, multiplied by this growth for
+	-- every rebirth already taken.
+	RebirthBaseRequirement = 5000,
+	RebirthRequirementGrowth = 6,
+
+	-- What each rebirth permanently adds, as a fraction. Distance is the
+	-- headline; the other two stop the reset feeling like a step backwards.
+	RebirthDistanceBonus = 0.4,
+	RebirthCoinBonus = 0.6,
+	RebirthTntBonus = 0.5,
+
+	-- ===== Rain TNT (the active boost) =====
+	-- A button that floods the next shot's track with extra TNT. Short, loud
+	-- and on a long cooldown, so it is a decision rather than a rotation.
+	BoostSeconds = 20,
+	BoostCooldownSeconds = 120,
+	BoostPickupMultiplier = 3,
+	BoostDensityMultiplier = 2,
+
+	-- ===== Eggs and pets =====
+	-- Up to this many pets follow the squishy, and their bonuses add up.
+	MaxEquippedPets = 5,
+	-- Hard cap on how many a player can hold, so a save can't grow forever.
+	MaxOwnedPets = 60,
 
 	-- ===== King of the Steamer (the shared minigame) =====
 	-- Goal for a server of one, plus this much for every player beyond the
