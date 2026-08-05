@@ -27,6 +27,7 @@ local Scene = require(script:WaitForChild("Scene"))
 local Models = require(script:WaitForChild("Models"))
 local Launch = require(script:WaitForChild("Launch"))
 local King = require(script:WaitForChild("King"))
+local Cannon = require(script:WaitForChild("Cannon"))
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local ClickSteamer = Remotes:WaitForChild("ClickSteamer") :: RemoteEvent
@@ -60,6 +61,22 @@ local state = {
 	clickerId = nil :: string?,
 	launchReadyIn = 0,
 	bestDistance = 0,
+	-- The cannon's own economy. Defaults matter here: refresh() runs once
+	-- before the first sync arrives.
+	tnt = 0,
+	coins = 0,
+	gems = 0,
+	powerLevel = 0,
+	powerCost = Config.PowerUpgradeBaseCost,
+	launchPower = Config.LaunchBasePower,
+	magnet = Config.LaunchPickupMagnet,
+	rebirths = 0,
+	rebirthAt = Config.RebirthBaseRequirement,
+	rebirthReady = false,
+	pets = {} :: { string },
+	equipped = {} :: { string },
+	boostReadyIn = 0,
+	boostLeft = 0,
 }
 
 -- Rarity rank (Common = 1 ... Mythical = 6). The reveal scales off this.
@@ -651,10 +668,11 @@ local appliedClickerId: string? = nil
 local function refresh()
 	headerLabel.Text = ("🥟 Opens: %d    ⭐ Stars: %d"):format(state.totalOpens, state.totalStars)
 
-	-- The cannon's cooldown and the distance record are the server's to know,
-	-- not ours to guess.
+	-- The cannon's cooldown, distance record, balances and prices are all the
+	-- server's to know, not ours to guess.
 	Launch.setReadyIn(state.launchReadyIn or 0)
 	Launch.setBest(state.bestDistance or 0)
+	Cannon.update(state)
 
 	unboxButton.Text = ("🥡 Unbox (%d)"):format(state.unopened)
 	unboxButton.BackgroundColor3 = state.unopened > 0 and COLOR.mint or COLOR.locked
@@ -755,6 +773,12 @@ task.spawn(function()
 end)
 task.spawn(function()
 	King.mount(gui)
+end)
+task.spawn(function()
+	Cannon.mount(gui, Scene)
+	-- Mounting replaced Cannon.update, so the numbers already in state need
+	-- pushing through it once — the next sync could be a click away.
+	Cannon.update(state)
 end)
 
 refresh()

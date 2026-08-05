@@ -44,13 +44,45 @@ local STEAMER_ORIGIN = ORIGIN + Vector3.new(-16, 0, 17)
 -- The cannon sits the same 90° out on the other side, so the three views are
 -- one camera turning left, centre and right rather than three cameras.
 local CANNON_ORIGIN = ORIGIN + Vector3.new(17, 0, 18)
--- Studs of floor drawn per stud of scored distance. The distances in Config
--- are a game currency, not a room measurement: a fully starred shot travels
--- ~175 of them, which at 1:1 would sail clean out of the world. Height uses
--- the same scale so the arc keeps its real shape rather than being squashed.
+-- ---------- fitting an unbounded track onto a finite stage ----------
+-- Distances run from a few hundred studs to seven figures, so nothing here is
+-- drawn at 1:1 and nothing is drawn to the end. Instead:
+--
+--  * the TRACK is a treadmill. A fixed pool of stripes recycles through a
+--    window, and the squishy stops moving forward once it reaches its station
+--    while the world scrolls underneath. That makes distance unbounded for
+--    free, and keeps every piece of scenery inside the frustum checks the
+--    other two camera views depend on.
+--
+--  * the SCALES are per-field, not fixed. `runScale` is chosen so a full shot
+--    always sweeps about TRACK_RUN studs of stage, and `heightScale` so its
+--    arc always peaks about STAGE_APEX studs up — whatever the real numbers
+--    are. A level-1 shot and a level-80 shot therefore look and pace the
+--    same, which is the only way a launch simulator stays readable across
+--    four orders of magnitude.
+--
+-- Both are recomputed when a pickup field arrives (the server sizes that to
+-- the player's reach) and then held for the shot, so nothing jumps at launch.
+local TRACK_RUN = 300 -- stage studs a full shot scrolls through
+-- Stage studs a full shot's arc peaks at. MUST match Config.MagnetReferenceHeight:
+-- the magnet is quoted in these same screen units and converted back out
+-- against this number, so the reach a player SEES is the reach that scores.
+local STAGE_APEX = Config.MagnetReferenceHeight
+local STAGE_LEAD_IN = 15 -- how far the squishy travels before the world starts scrolling
+local MAX_HEIGHT_STRETCH = 2.5 -- arcs may be this much taller than wide, no more
+
+-- Fallback used before the first field arrives.
 local RANGE_SCALE = 0.28
--- The furthest zone marks the end of the drawn range, plus a little run-off.
-local RANGE_LENGTH = (Config.LaunchZones[#Config.LaunchZones].from + 30) * RANGE_SCALE
+local runScale = RANGE_SCALE
+local heightScale = RANGE_SCALE
+local scroll = 0 -- stage studs the world has slid backwards
+
+-- The recycling stripe pool. Its span is the whole visible track, and the
+-- rainbow runs exactly once around it so a stripe wrapping from the far end
+-- back to the near one lands on the colour its new neighbour expects.
+local TRACK_STRIPES = 64
+local STRIPE_DEPTH = 2.2
+local TRACK_SPAN = TRACK_STRIPES * STRIPE_DEPTH
 -- The barrel's pivot, which is also where a shot starts from. Sits on top of
 -- the cannon's plinth, so raising the plinth means raising this.
 local MUZZLE_HEIGHT = 3.6
@@ -64,10 +96,15 @@ local CHASE_UP = 3.6
 local CHASE_SIDE = 12
 local CHASE_LEAD = 5
 
--- Half-turns of tumble per unit of flight, climbing versus gliding. Fired out
--- of a cannon it spins hard; under the glide it settles down to a lazy roll.
-local TUMBLE_RISE = 5
-local TUMBLE_GLIDE = 1.2
+-- Half-turns of tumble over a whole flight, airborne versus rolling. Fired out
+-- of a cannon it spins hard; once it is rolling it settles to a lazy turn.
+local TUMBLE_AIR = 9
+local TUMBLE_ROLL = 3
+
+-- How hard a pet chases the slot in front of it. Soft and underdamped on
+-- purpose: pets that keep up perfectly look welded on.
+local PET_STIFFNESS = 90
+local PET_DAMPING = 12
 
 local BACKDROP_COLOR = Color3.fromRGB(240, 222, 206) -- invisible helper parts only
 
@@ -242,9 +279,17 @@ end
 -- The third view: a cannon and a long course running down +X, marked out in
 -- zones. Geometry only — the server decides how far any shot actually goes.
 
--- Where a game-stud distance sits on the stage, at a given height.
+-- Where a game-stud distance sits on the stage right now. Everything on the
+-- track goes through this one function, so the treadmill is a single subtraction
+-- rather than something each piece of scenery has to remember to do.
 local function rangeSpot(distance: number, height: number): Vector3
-	return CANNON_ORIGIN + Vector3.new(distance * RANGE_SCALE, height * RANGE_SCALE, 0)
+	return CANNON_ORIGIN + Vector3.new(distance * runScale - scroll, height * heightScale, 0)
+end
+
+-- True when a stage X is close enough to the camera's window to be worth
+-- drawing. Anything else is parked invisible rather than destroyed.
+local function onScreen(stageX: number): boolean
+	return stageX > CANNON_ORIGIN.X - 12 and stageX < CANNON_ORIGIN.X + TRACK_SPAN
 end
 
 -- The range is deliberately NOT the toy shop: the cannon fires out of the shop
@@ -257,8 +302,7 @@ end
 -- anything nearer than this shows up as a wedge of lawn inside the toy shop.
 -- Twelve studs across still fills most of the cannon view at this distance.
 local RANGE_HALF_WIDTH = 6
--- Drawn past the furthest zone, or the last one would sit on the very edge.
-local RANGE_DRAWN = RANGE_LENGTH + 24
+local RANGE_DRAWN = TRACK_SPAN
 
 local GRASS_COLOR = Color3.fromRGB(124, 200, 84)
 local SAND_COLOR = Color3.fromRGB(243, 222, 168)
@@ -302,22 +346,23 @@ disc(9.5, 0.5, CANNON_ORIGIN + Vector3.new(0, 0.2, 0), SAND_COLOR)
 
 -- ---------- the rainbow runway ----------
 -- Bands laid ACROSS the course, marching away from the cannon. Perpendicular
--- stripes are what give a flat plane its sense of speed and distance when the
--- chase camera runs down it.
-local STRIPE_DEPTH = 1.1
-for step = 0, math.floor(RANGE_DRAWN / STRIPE_DEPTH) do
+-- stripes are what give a flat plane its sense of speed, and they are the
+-- reason the treadmill reads as motion at all.
+local trackStripes: { BasePart } = {}
+for step = 1, TRACK_STRIPES do
 	local stripe = block(
 		Vector3.new(STRIPE_DEPTH, 0.3, RANGE_HALF_WIDTH * 2),
-		CANNON_ORIGIN + Vector3.new(step * STRIPE_DEPTH + STRIPE_DEPTH * 0.5, 0.25, 0),
-		Color3.fromHSV((step * 0.055) % 1, 0.82, 1)
+		CANNON_ORIGIN + Vector3.new(step * STRIPE_DEPTH, 0.25, 0),
+		-- One full rainbow around the pool, so the wrap is seamless.
+		Color3.fromHSV((step - 1) / TRACK_STRIPES, 0.82, 1)
 	)
 	stripe.Material = Enum.Material.SmoothPlastic
+	table.insert(trackStripes, stripe)
 end
 
--- Distance painted down the near edge, the way the reference lines its runway
--- with numbers. Every marker is a target to beat, which is the whole appeal.
-local MARKER_EVERY = 20 -- game studs
-local function floatingLabel(at: Vector3, text: string, color: Color3, width: number, height: number)
+-- Returns the invisible anchor rather than the label: a sign on the treadmill
+-- is moved by its anchor, and the text never changes once it is set.
+local function floatingLabel(at: Vector3, text: string, color: Color3, width: number, height: number): Part
 	local anchor = Instance.new("Part")
 	anchor.Size = Vector3.new(0.2, 0.2, 0.2)
 	anchor.Position = at
@@ -343,47 +388,35 @@ local function floatingLabel(at: Vector3, text: string, color: Color3, width: nu
 	label.TextStrokeTransparency = 0.15
 	label.TextScaled = true
 	label.Parent = gui
+	return anchor
 end
 
-local furthestMarked = Config.LaunchZones[#Config.LaunchZones].from + 20
-for marked = MARKER_EVERY, furthestMarked, MARKER_EVERY do
-	floatingLabel(
-		rangeSpot(marked, 0) + Vector3.new(0, 1.4, -(RANGE_HALF_WIDTH + 1.5)),
-		("%d"):format(marked),
-		Color3.fromRGB(255, 255, 255),
-		70,
-		26
-	)
-end
-
--- Zone markers: a white gate line across the runway where each zone starts,
--- with a sign on the far side naming it and its multiplier. Read straight off
--- Config.LaunchZones, so adding a zone there puts a marker on the range too.
-local ZONE_COLORS = {
+-- ---------- milestone signs ----------
+-- One gate per entry in Config.DistanceMilestones, repositioned every frame
+-- from the treadmill rather than built where it belongs: 1,000,000 studs has
+-- no fixed place on the stage, only a place relative to where the shot is now.
+local MILESTONE_COLORS = {
 	Color3.fromRGB(238, 232, 224),
 	Color3.fromRGB(120, 205, 235),
 	Color3.fromRGB(250, 200, 80),
 	Color3.fromRGB(245, 150, 95),
 	Color3.fromRGB(226, 96, 96),
 }
-for index, zone in Config.LaunchZones do
-	if zone.from > 0 then -- the first zone starts at the cannon's own feet
-		local color = ZONE_COLORS[index] or Color3.fromRGB(238, 232, 224)
 
-		local gate = block(
-			Vector3.new(0.6, 0.14, RANGE_HALF_WIDTH * 2),
-			rangeSpot(zone.from, 0) + Vector3.new(0, 0.42, 0),
-			Color3.fromRGB(255, 255, 255)
-		)
-		gate.Material = Enum.Material.SmoothPlastic
+type MilestoneSign = { at: number, gate: BasePart, post: BasePart, sign: BasePart }
+local milestoneSigns: { MilestoneSign } = {}
+for index, milestone in Config.DistanceMilestones do
+	local color = MILESTONE_COLORS[index] or Color3.fromRGB(238, 232, 224)
 
-		local post = block(
-			Vector3.new(0.35, 6, 0.35),
-			rangeSpot(zone.from, 0) + Vector3.new(0, 3.2, RANGE_HALF_WIDTH + 2),
-			Color3.fromRGB(250, 248, 244)
-		)
-		floatingLabel(post.Position + Vector3.new(0, 4.2, 0), ("%s\n×%.2g"):format(zone.name, zone.multiplier), color, 140, 38)
-	end
+	local gate = block(Vector3.new(0.8, 0.16, RANGE_HALF_WIDTH * 2), CANNON_ORIGIN, Color3.fromRGB(255, 255, 255))
+	gate.Material = Enum.Material.SmoothPlastic
+
+	table.insert(milestoneSigns, {
+		at = milestone.at,
+		gate = gate,
+		post = block(Vector3.new(0.35, 7, 0.35), CANNON_ORIGIN, Color3.fromRGB(250, 248, 244)),
+		sign = floatingLabel(CANNON_ORIGIN, ("%s studs"):format(milestone.name), color, 150, 40),
+	})
 end
 
 -- Boulders down the far side of the course, purely so it isn't a bare green
@@ -402,33 +435,73 @@ for _ = 1, 12 do
 	rock.Material = Enum.Material.Slate
 end
 
--- ---------- the sweets floating down the range ----------
+-- ---------- the pickups strung along the track ----------
 -- A fixed pool, positioned from whatever field the server last sent. Pooled
--- rather than rebuilt because the field is replaced after every single shot.
-local PICKUP_GOLDEN_COLOR = Color3.fromRGB(255, 205, 90)
-local PICKUP_COLOR = Color3.fromRGB(255, 150, 195)
+-- rather than rebuilt because the field is replaced after every single shot,
+-- and generously sized because Rain TNT and the VIP zones both ADD to the
+-- ordinary count rather than replacing it.
+local PICKUP_LOOK = {
+	tnt = { color = Color3.fromRGB(232, 118, 58), size = 1.7, material = Enum.Material.WoodPlanks },
+	coin = { color = Color3.fromRGB(252, 208, 96), size = 1.5, material = Enum.Material.Neon },
+	gem = { color = Color3.fromRGB(126, 232, 224), size = 1.7, material = Enum.Material.Neon },
+}
+local PICKUP_POOL = Config.LaunchPickupCount * Config.BoostDensityMultiplier
+	+ Config.VipZoneCount * Config.VipZoneDensityMultiplier
+
+type PickupEntry = { distance: number, height: number, kind: string, value: number, vip: boolean }
 
 local pickupParts: { BasePart } = {}
-for _ = 1, Config.LaunchPickupCount do
-	local sweet = Instance.new("Part")
-	sweet.Shape = Enum.PartType.Ball
-	sweet.Size = Vector3.new(1.5, 1.5, 1.5)
-	sweet.Color = PICKUP_COLOR
-	sweet.Material = Enum.Material.Neon
-	sweet.Anchored = true
-	sweet.CanCollide = false
-	sweet.CanQuery = false
-	sweet.CanTouch = false
-	sweet.Transparency = 1 -- nothing to show until a field arrives
-	sweet.Parent = stage
-	table.insert(pickupParts, sweet)
+for _ = 1, PICKUP_POOL do
+	local prize = Instance.new("Part")
+	prize.Size = Vector3.one * 1.5
+	prize.Color = PICKUP_LOOK.tnt.color
+	prize.Material = Enum.Material.Neon
+	prize.Anchored = true
+	prize.CanCollide = false
+	prize.CanQuery = false
+	prize.CanTouch = false
+	prize.Transparency = 1 -- nothing to show until a field arrives
+	prize.Parent = stage
+	table.insert(pickupParts, prize)
 end
 
--- Where each pickup sits on the stage, and whether it has been eaten this
--- flight. Positions are cached so the render loop isn't re-scaling every frame.
-local pickupSpots: { Vector3 } = {}
+-- The live field, and what has already been eaten this flight. Distances stay
+-- in GAME studs: the treadmill means their stage position changes every frame,
+-- so caching a Vector3 would be caching something already stale.
+local pickupField: { PickupEntry } = {}
 local pickupTaken: { boolean } = {}
 local pickupCollecting: { [number]: number } = {} -- index -> distance it pops at
+
+-- ---------- pets ----------
+-- Up to five followers trailing the squishy in a loose line.
+--
+-- The brief asked for AlignPosition/AlignOrientation. Those are physics
+-- constraints and need unanchored parts with a network owner; this entire
+-- stage is anchored client-side geometry 500 studs above the map, with no
+-- character and no physics ownership anywhere in it. Springs give the same
+-- lagging, overshooting follow and are what the rest of this file already
+-- uses, so pets move like everything else here rather than being the one
+-- thing driven by a different system.
+local PET_TRAIL_SPACING = 1.5 -- stage studs of lag between one pet and the next
+local PET_SIZE = 1.05
+
+type PetFollower = { part: BasePart, position: Vector3, velocity: Vector3 }
+local petFollowers: { PetFollower } = {}
+for _ = 1, Config.MaxEquippedPets do
+	local pet = Instance.new("Part")
+	pet.Shape = Enum.PartType.Ball
+	pet.Size = Vector3.one * PET_SIZE
+	pet.Color = Color3.fromRGB(255, 255, 255)
+	pet.Material = Enum.Material.SmoothPlastic
+	pet.Anchored = true
+	pet.CanCollide = false
+	pet.CanQuery = false
+	pet.CanTouch = false
+	pet.Transparency = 1
+	pet.Parent = stage
+	-- Seeded at the origin; the first frame springs them to the squishy.
+	table.insert(petFollowers, { part = pet, position = ORIGIN, velocity = Vector3.zero })
+end
 
 -- ---------- the cannon ----------
 -- Chunky and cartoon rather than military: a cream crate of a plinth, a fat
@@ -629,36 +702,65 @@ local aimTilt = spring(60, 11)
 -- cushion, flies, and comes back — so there is nothing extra to build.
 -- Every number in here arrives from the server; none of it is worked out
 -- locally, because all of it decides what the shot was worth.
+type FlightArc = { fromX: number, toX: number, peak: number, seconds: number, rolling: boolean }
+
 local flight = {
 	active = false,
 	progress = 1, -- 1 means landed, which is where we start
-	seconds = 1,
+	seconds = 1, -- how long the ANIMATION runs, not the simulated flight
+	simSeconds = 1, -- how long the simulated flight took
 	distance = 0, -- game studs the shot covers in total
-	apexAt = 0,
-	apexHeight = 0,
-	glideRange = 0,
-	riseFraction = 0.5, -- share of the animation spent climbing to the apex
+	arcs = {} :: { FlightArc },
+	-- Cumulative simulated time at the START of each arc, so a playback time
+	-- can be turned into a position without walking the whole list twice.
+	arcStarts = {} :: { number },
 	flown = 0, -- game studs covered so far, for the ticking readout
+	height = 0, -- game studs off the ground right now
+	speed = 0, -- game studs per second, forward
+	bounced = 0, -- skips completed, so the UI can call them out
+	peakFraction = 1, -- peak of the CURRENT hop, for judging ground contact
 	holdUntil = 0, -- keeps the chase camera on a beat past the landing
 }
 -- 0 = the fixed stage camera, 1 = riding along behind the shot.
 local flightCam = 0
 
--- The same two-phase curve the server scored the shot against: a parabola up
--- to the apex, then a straight glide down to the floor. Redrawn here purely to
--- animate — the server's copy is the one that decided what was collected.
-local function flightHeight(x: number): number
-	if x <= 0 or flight.apexAt <= 0 then
-		return 0
+-- Where the shot is at a given moment of SIMULATED time. The arcs come from
+-- the server, and this reproduces the same curve it scored against — a
+-- parabola per skip, meeting the ground at both ends, then a decelerating
+-- roll. Redrawn here purely to animate; the server's copy is the one that
+-- decided what was collected, so the two drifting apart is a cosmetic bug.
+local function flightAt(simTime: number): (number, number, number)
+	local arcs = flight.arcs
+	for index, arc in arcs do
+		local started = flight.arcStarts[index] or 0
+		if simTime <= started + arc.seconds or index == #arcs then
+			local span = arc.toX - arc.fromX
+			if arc.seconds <= 0 or span <= 0 then
+				return arc.toX, 0, 0
+			end
+			local along = math.clamp((simTime - started) / arc.seconds, 0, 1)
+			if arc.rolling then
+				-- Decelerating, so it covers ground fastest at the start.
+				local eased = along * (2 - along)
+				return arc.fromX + span * eased, 0, (span / arc.seconds) * (1 - along) * 2
+			end
+			return arc.fromX + span * along, arc.peak * 4 * along * (1 - along), span / arc.seconds
+		end
 	end
-	if x <= flight.apexAt then
-		local offset = (x - flight.apexAt) / flight.apexAt
-		return flight.apexHeight * (1 - offset * offset)
+	return flight.distance, 0, 0
+end
+
+-- How high THIS hop goes. Shots peak in the thousands of studs early and in
+-- single digits by the last skip, so anything that wants to know "how near the
+-- ground are we" has to measure against the current hop rather than against
+-- the flight as a whole.
+local function flightArcPeak(x: number): number
+	for _, arc in flight.arcs do
+		if x <= arc.toX then
+			return arc.peak
+		end
 	end
-	if flight.glideRange <= 0 then
-		return 0
-	end
-	return math.max(flight.apexHeight * (1 - (x - flight.apexAt) / flight.glideRange), 0)
+	return 0
 end
 
 -- ---------- lights and particles ----------
@@ -955,46 +1057,91 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		end
 	end
 
-	-- Ground covered so far. The climb and the glide get their own slices of
-	-- the animation in the same proportion the server timed them, so a steep
-	-- shot visibly hangs at the top before drifting down.
+	-- Ground covered so far. Playback runs on SIMULATED time so every hop
+	-- keeps its true share of the flight — the first arc is most of it, and
+	-- the skips at the end come thick and fast.
 	if flight.progress < 1 then
-		local t = flight.progress
-		if t <= flight.riseFraction and flight.riseFraction > 0 then
-			flight.flown = flight.apexAt * (t / flight.riseFraction)
-		else
-			local after = (t - flight.riseFraction) / math.max(1 - flight.riseFraction, 1e-3)
-			flight.flown = flight.apexAt + flight.glideRange * after
+		local simTime = flight.progress * flight.simSeconds
+		flight.flown, flight.height, flight.speed = flightAt(simTime)
+		flight.peakFraction = flightArcPeak(flight.flown)
+
+		-- Count skips as they happen, so the HUD can shout about them.
+		local skips = 0
+		for index, arc in flight.arcs do
+			if not arc.rolling and flight.flown >= arc.toX and index < #flight.arcs then
+				skips += 1
+			end
 		end
+		flight.bounced = skips
 	else
 		-- Landed: sit exactly on the server's number rather than wherever the
 		-- last frame before the finish happened to fall.
 		flight.flown = flight.distance
+		flight.height = 0
+		flight.speed = 0
 	end
+
+	-- THE TREADMILL. The squishy runs forward until it reaches its station,
+	-- and after that the world slides backwards instead. Everything on the
+	-- track goes through rangeSpot, so this one line is the whole illusion.
+	scroll = math.max(flight.flown * runScale - STAGE_LEAD_IN, 0)
 
 	-- Where the shot is on the stage this frame. The toy is drawn here and the
 	-- chase camera watches it, so both read the position from one place.
-	local shotPosition = rangeSpot(flight.flown, flightHeight(flight.flown)) + Vector3.new(0, MUZZLE_HEIGHT, 0)
+	local shotPosition = rangeSpot(flight.flown, flight.height) + Vector3.new(0, MUZZLE_HEIGHT, 0)
 
-	-- Sweets pop as the squishy reaches them. The server already decided which
-	-- ones; this is only the moment they disappear.
-	for index, at in pickupCollecting do
-		if flight.flown >= at then
-			local sweet = pickupParts[index]
-			if sweet then
-				sweet.Transparency = 1
-			end
-			pickupTaken[index] = true
-			pickupCollecting[index] = nil
-			kick(clickerSquash, 0.5)
+	-- Recycle the runway stripes through the scroll window. Modulo on the pool
+	-- span means a stripe leaving the near end reappears at the far one, and
+	-- the rainbow runs exactly once around the pool so the seam is invisible.
+	for index, stripe in trackStripes do
+		local along = (index * STRIPE_DEPTH - scroll) % TRACK_SPAN
+		stripe.Position = CANNON_ORIGIN + Vector3.new(along, 0.25, 0)
+	end
+
+	-- Milestone signs have no fixed home: 1,000,000 studs is wherever the
+	-- treadmill currently puts it, and most of them are off-stage most of the
+	-- time. Parked out of sight rather than destroyed and rebuilt.
+	for _, sign in milestoneSigns do
+		local spot = rangeSpot(sign.at, 0)
+		local visible = onScreen(spot.X)
+		sign.gate.Transparency = visible and 0 or 1
+		sign.post.Transparency = visible and 0 or 1
+		if visible then
+			sign.gate.Position = spot + Vector3.new(0, 0.45, 0)
+			sign.post.Position = spot + Vector3.new(0, 3.7, RANGE_HALF_WIDTH + 2)
+			sign.sign.Position = spot + Vector3.new(0, 8.2, RANGE_HALF_WIDTH + 2)
 		end
 	end
 
-	-- Bob the uneaten sweets so the range doesn't read as a still photograph.
-	for index, sweet in pickupParts do
-		local spot = pickupSpots[index]
-		if spot and not pickupTaken[index] then
-			sweet.Position = spot + Vector3.new(0, math.sin(elapsed * 2.4 + index) * 0.22, 0)
+	-- Pickups pop as the squishy reaches them. The server already decided
+	-- which ones; this is only the moment they disappear.
+	for index, at in pickupCollecting do
+		if flight.flown >= at then
+			local prize = pickupParts[index]
+			if prize then
+				prize.Transparency = 1
+			end
+			pickupTaken[index] = true
+			pickupCollecting[index] = nil
+			kick(clickerSquash, 0.45)
+		end
+	end
+
+	-- Stream the rest along the treadmill, bobbing so the track doesn't read
+	-- as a still photograph.
+	for index, prize in pickupParts do
+		local entry = pickupField[index]
+		if entry and not pickupTaken[index] then
+			local spot = rangeSpot(entry.distance, entry.height) + Vector3.new(0, MUZZLE_HEIGHT, 0)
+			if onScreen(spot.X) then
+				prize.Transparency = entry.vip and 0 or 0.12
+				prize.Position = spot + Vector3.new(0, math.sin(elapsed * 2.4 + index) * 0.22, 0)
+				prize.CFrame = CFrame.new(prize.Position) * CFrame.fromEulerAnglesXYZ(0, elapsed * 1.6 + index, 0.4)
+			else
+				prize.Transparency = 1
+			end
+		elseif entry == nil then
+			prize.Transparency = 1
 		end
 	end
 
@@ -1019,28 +1166,36 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	barrelMouth.CFrame = barrelPivot * CFrame.new(BARREL_LENGTH - 0.1, 0, 0)
 
 	local toy = clickerModel
+	-- Where the pets follow. Set by whichever branch below actually draws.
+	local toyPosition = CLICKER_SPOT + Vector3.new(0, CLICKER_REST_Y, 0)
+
 	if toy then
 		local cs = clickerSquash.value
 		local toyScale = Vector3.new(1 + cs * 0.28, 1 - cs * 0.34, 1 + cs * 0.28) * CLICKER_SCALE * toy.sizeScale
 
 		if flight.progress < 1 then
 			-- Mid-shot the squisher IS the cannonball: it leaves the cushion,
-			-- arcs down the range and comes back, so there is no second model
+			-- skips down the track and comes back, so there is no second model
 			-- to build and the cushion is visibly empty while it's away.
-			-- It tumbles hard out of the barrel and settles once the glide
-			-- takes over, which is most of what sells the glide as a glide.
-			-- The two rates are ACCUMULATED rather than swapped, or the model
-			-- would visibly snap round at the moment the glide starts.
-			local climbing = math.min(flight.progress, flight.riseFraction)
-			local glide = math.max(flight.progress - flight.riseFraction, 0)
-			local tumble = (climbing * TUMBLE_RISE + glide * TUMBLE_GLIDE) * math.pi
-			-- Nose-down lean, eased in over the first part of the glide so it
-			-- reads as soaring rather than drifting sideways.
-			local lean = -0.25 * math.min(glide * 6, 1)
+			--
+			-- Tumbling accumulates from progress alone rather than switching
+			-- rate per phase, so it never snaps round mid-flight. It rolls
+			-- fastest while airborne and settles as the roll takes over.
+			local airborne = flight.height > 0.001
+			local tumble = flight.progress * math.pi * (airborne and TUMBLE_AIR or TUMBLE_ROLL)
+
+			-- Squashed flat at the moment of each ground contact. Height is in
+			-- game studs and shots peak in the thousands, so "near the ground"
+			-- has to be measured as a FRACTION of this shot's own peak.
+			local nearGround = 1 - math.clamp(flight.height / math.max(flight.peakFraction, 1e-3), 0, 1)
+			local impact = nearGround * nearGround * nearGround
+			local squashed = Vector3.new(1 + impact * 0.4, 1 - impact * 0.35, 1 + impact * 0.4)
+
+			toyPosition = shotPosition
 			Models.apply(
 				toy.rig,
-				CFrame.new(shotPosition) * CFrame.fromEulerAnglesXYZ(0, 0, -tumble + lean),
-				toyScale
+				CFrame.new(shotPosition) * CFrame.fromEulerAnglesXYZ(0, 0, -tumble),
+				toyScale * squashed
 			)
 		else
 			-- Stood on the cushion by its own underside rather than centred on
@@ -1048,12 +1203,30 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			-- the live Y scale also means a squash presses down onto the
 			-- cushion rather than shrinking away from it.
 			local restY = CLICKER_REST_Y - toy.lowestY * toyScale.Y
+			toyPosition = CLICKER_SPOT + Vector3.new(0, restY, 0)
 			Models.apply(
 				toy.rig,
 				CFrame.new(CLICKER_SPOT + Vector3.new(0, restY + math.sin(elapsed * 2.1) * 0.05, 0))
 					* CFrame.fromEulerAnglesXYZ(0, spinAngle + math.sin(elapsed * 1.3) * 0.08 * swayAmount, 0),
 				toyScale
 			)
+		end
+	end
+
+	-- Pets trail the squishy in a line, each one chasing the slot in front of
+	-- it. Critically damped springs rather than a fixed offset, so they swing
+	-- wide on a turn and stretch out at speed instead of moving as one rigid
+	-- object — the lag IS the effect.
+	local ahead = toyPosition
+	for index, follower in petFollowers do
+		if follower.part.Transparency < 1 then
+			local target = ahead - Vector3.new(PET_TRAIL_SPACING, 0, 0) + Vector3.new(0, 0.5, 0)
+			local pull = (target - follower.position) * PET_STIFFNESS - follower.velocity * PET_DAMPING
+			follower.velocity += pull * dt
+			follower.position += follower.velocity * dt
+			follower.part.Position = follower.position
+				+ Vector3.new(0, math.sin(elapsed * 3 + index) * 0.18, math.sin(elapsed * 1.7 + index * 2) * 0.5)
+			ahead = follower.position
 		end
 	end
 
@@ -1127,83 +1300,126 @@ function Scene.setCannonAim(angle: number)
 	aimTilt.target = math.rad(degrees)
 end
 
--- Lay the sweets out from the field the server sent. Each entry is
--- { distance, height, value } in game studs.
-function Scene.setLaunchField(field: { { distance: number, height: number, value: number } })
-	pickupSpots = {}
+-- Lay the pickups out from the field the server sent, and RESCALE the track
+-- to it. The server sizes a field to the player's own reach, so it is the best
+-- available description of the shot about to be taken — using it for both
+-- means nothing jumps when the shot actually starts.
+function Scene.setLaunchField(field: { PickupEntry })
+	pickupField = field
 	pickupTaken = {}
 	pickupCollecting = {}
 
-	for index, sweet in pickupParts do
+	local furthest, highest = 1, 1
+	for _, entry in field do
+		furthest = math.max(furthest, entry.distance)
+		highest = math.max(highest, entry.height)
+	end
+
+	-- A full shot should always sweep about TRACK_RUN studs of stage and peak
+	-- about STAGE_APEX studs up, whether it travels 300 studs or 300,000. The
+	-- stretch cap stops a high, short shot from becoming a needle.
+	runScale = TRACK_RUN / furthest
+	heightScale = math.min(STAGE_APEX / highest, runScale * MAX_HEIGHT_STRETCH)
+
+	for index, prize in pickupParts do
 		local entry = field[index]
 		if entry then
-			local spot = rangeSpot(entry.distance, entry.height) + Vector3.new(0, MUZZLE_HEIGHT, 0)
-			pickupSpots[index] = spot
-			sweet.Position = spot
-			-- The rare high-value one is bigger and gold, so it's worth
+			local look = PICKUP_LOOK[entry.kind] or PICKUP_LOOK.tnt
+			prize.Color = look.color
+			prize.Material = look.material
+			-- VIP pickups are bigger and brighter, so a cluster is worth
 			-- spotting from the aiming screen and bending a shot towards.
-			local golden = entry.value > Config.LaunchPickupValue
-			sweet.Color = golden and PICKUP_GOLDEN_COLOR or PICKUP_COLOR
-			sweet.Size = Vector3.one * (golden and 2.1 or 1.5)
-			sweet.Transparency = 0.15
+			prize.Size = Vector3.one * look.size * (entry.vip and 1.5 or 1)
+			prize.Transparency = 0.12
 		else
 			-- A shorter field than the pool: park the spares out of sight.
-			sweet.Transparency = 1
+			prize.Transparency = 1
 			pickupTaken[index] = true
 		end
 	end
 end
 
--- Fly the shot the SERVER worked out. Every number here — how far, how high,
--- which sweets went — arrived in the result payload; this only draws it.
+-- Fly the shot the SERVER worked out. Every number here — every hop, how high,
+-- which pickups went — arrived in the result payload; this only draws it.
 function Scene.playLaunch(plan: {
 	distance: number,
-	apexAt: number,
-	apexHeight: number,
-	glideRange: number,
-	riseSeconds: number,
-	glideSeconds: number,
+	arcs: { FlightArc },
+	seconds: number,
 	collected: { number },
 }): number
 	flight.distance = math.max(plan.distance, 0)
-	flight.apexAt = math.max(plan.apexAt, 0)
-	flight.apexHeight = math.max(plan.apexHeight, 0)
-	flight.glideRange = math.max(plan.glideRange, 0)
+	flight.arcs = plan.arcs
+	flight.simSeconds = math.max(plan.seconds, 1e-3)
 
-	-- Give the climb and the glide the same share of the animation the server
-	-- gave them in seconds, so a steep shot visibly hangs before it drifts.
-	local total = math.max(plan.riseSeconds + plan.glideSeconds, 1e-3)
-	flight.riseFraction = math.clamp(plan.riseSeconds / total, 0.1, 0.9)
-	-- Close to the real hang time, trimmed a little at the top and given a
-	-- floor: a feeble shot that was over in half a second gives the chase
-	-- camera nothing to do, and the flight is the point of the mode.
-	flight.seconds = math.clamp(total * 0.9, 1.2, 3.4)
+	-- Cumulative start time per arc, worked out once here rather than
+	-- re-summed on every frame of playback.
+	flight.arcStarts = {}
+	local running = 0
+	for index, arc in plan.arcs do
+		flight.arcStarts[index] = running
+		running += arc.seconds
+	end
+
+	-- Playback is a compressed version of real time: a maxed shot hangs in the
+	-- air for the better part of a minute, which is longer than it is fun, and
+	-- a first shot is over in a couple of seconds, which is too quick to read.
+	flight.seconds = math.clamp(flight.simSeconds * 0.25, 2.2, 8)
 	flight.flown = 0
+	flight.height = 0
+	flight.speed = 0
+	flight.bounced = 0
 	flight.progress = 0
 	flight.active = true
-	flight.holdUntil = elapsed + flight.seconds + 0.9
+	flight.holdUntil = elapsed + flight.seconds + 1.1
 
-	-- Queue the sweets to pop as the shot reaches each one.
+	-- Queue the pickups to pop as the shot reaches each one.
 	pickupCollecting = {}
 	for _, index in plan.collected do
-		local spot = pickupSpots[index]
-		if spot and not pickupTaken[index] then
-			pickupCollecting[index] = (spot - CANNON_ORIGIN).X / RANGE_SCALE
+		local entry = pickupField[index]
+		if entry and not pickupTaken[index] then
+			pickupCollecting[index] = entry.distance
 		end
 	end
 
-	muzzleSmoke:Emit(14)
+	muzzleSmoke:Emit(22)
 	openSound.PlaybackSpeed = 0.75
 	openSound:Play()
+	kick(clickerSquash, 1)
+	shake = 0.55
 
 	-- Handed back so the UI can hold its summary until the shot has actually
 	-- landed, rather than guessing at how long that takes.
 	return flight.seconds
 end
 
--- How far the shot has flown so far, in game studs, for the ticking readout.
+-- Live readouts for the flight HUD, in game units. Read rather than pushed, so
+-- the HUD can sample them at whatever rate it draws at.
 function Scene.flightDistance(): number
 	return flight.flown
+end
+
+function Scene.flightHeight(): number
+	return flight.height
+end
+
+function Scene.flightSpeed(): number
+	return flight.speed
+end
+
+function Scene.flightBounces(): number
+	return flight.bounced
+end
+
+-- Show the equipped pets and colour them. Passing fewer than the maximum
+-- hides the rest; the server owns how many that may be.
+function Scene.setPets(colors: { Color3 })
+	for index, follower in petFollowers do
+		local color = colors[index]
+		follower.part.Transparency = color and 0 or 1
+		if color then
+			follower.part.Color = color
+		end
+	end
 end
 
 -- Turn the camera: "unbox" swings 90° left onto the steamer nook, "cannon"

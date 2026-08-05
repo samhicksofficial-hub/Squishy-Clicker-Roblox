@@ -22,34 +22,60 @@ for the reveal, then turns back.
 
 ## Minigames
 
-**Squishy Launch** — a cannon on the third camera view, right of the squisher,
-and a **distance** game. Tap once to stop the power bar, once more for the
-angle, and your squisher is fired down a long range with the camera riding
-along behind it. How far it gets is the score.
+**Squishy Launch** — a full launch simulator on the third camera view, right
+of the squisher. Tap once to stop the **charge** meter, once more for the
+angle, and your squisher is fired down an endless rainbow track with the
+camera riding along behind it. How far it gets is the score.
 
-A shot is two halves. It arcs up ballistically, and at the top of the arc it
-**glides** — drifting forward while it sinks, which is where most of a long
-shot's distance comes from. Glide time grows with how high the apex was, so a
-flat shot covers more ground before the top and a steep one glides longer
-after it; the best angle is in between (around 48°) rather than at either end.
+Hitting the ground is not the end of a shot: it **skips** like a stone, each
+bounce keeping a share of its speed, and the skips are most of a long run's
+distance. That is why the best angle is under 45° rather than at it — a
+flatter shot carries more forward speed into the first bounce. When the skips
+die out it rolls to a stop, and wherever it stops is the number.
 
-On the way it sweeps up **sweets** floating down the range, and the **zone** it
-lands in multiplies the whole payout — sweets included. The lot converts into
-progress toward your next steamer. Stars earn their second keep here twice
-over: muzzle speed, so a prestiged collection flies roughly twice as far, and
-magnet range, so it hoovers up more going past. One shot every
-`LaunchCooldownSeconds`.
+On the way it sweeps up **TNT**, **coins** and **gems** strung along the
+flight path, clustered in **VIP zones** where they pay several times over.
+Passing a distance **milestone** — 100, 1K, 10K, 100K, 1M — pays a gem bounty
+the first time only. **Rain TNT** is a button that floods the next shot's
+track with extra TNT on a two-minute cooldown.
 
-The range is the one view that isn't the toy shop: a cartoon cannon on a
-little sand island, and a rainbow-striped runway running out under open sky,
-numbered down the near edge and gated by the zone signs. Nothing caps the far
-end — in a game about distance, a wall to stop at would be the wrong idea.
+The loop from there:
+
+- **TNT** buys **Launch Power** levels, and distance is deliberately linear in
+  power — double the power, double the distance, so an upgrade reads as
+  exactly what it does.
+- **Coins** buy **eggs**, which hatch **pets**. Five follow the squishy at a
+  time, and their bonuses add up: launch power, coin and TNT value, gem value,
+  and magnet reach.
+- **Gems** buy the Cosmic Egg, the only source of the best pets.
+- **Rebirth** spends the whole run — TNT, coins, power level and your distance
+  record — for a permanent multiplier on distance, coins and TNT. Gems, pets
+  and the milestones you have already claimed all survive.
+
+Squishies earn their second keep here too: stars add muzzle power and magnet
+reach, so the collection half of the game feeds the cannon half.
+
+The track is drawn on a **treadmill**. A pool of stripes recycles through a
+window and the squishy stops moving forward at its station while the world
+scrolls underneath, which makes distance unbounded for free. The scales are
+per-shot rather than fixed: a level-1 flight and a level-50 flight are drawn
+to the same on-screen size and pace, which is the only way a game spanning
+four orders of magnitude stays readable. The magnet is quoted in those same
+screen units and converted back — so the reach you *see* is the reach that
+actually scores, at every power level.
 
 The client sends nothing but `{power, angle}` as two 0-1 numbers. The server
-lays the sweets out, works out the whole arc, decides which sweets it touched,
-picks the zone and awards the bonus — then sends back the *shape* of the
-flight for the client to draw. Distances, pickups and payouts are never
-computed client-side, so there is nothing to fake.
+lays the pickups out, simulates the entire flight — every hop, its peak, its
+duration — decides which pickups the path touched, applies every multiplier
+and awards the lot, then sends back the *shape* of the flight for the client
+to draw. Distances, pickups, prices and payouts are never computed
+client-side, so there is nothing to fake.
+
+The simulation is closed-form arithmetic rather than Roblox physics on
+purpose. Physics runs on whoever owns the part and is not reproducible, which
+would mean trusting a client's word for how far it went; deterministic
+arithmetic on the server cannot be argued with, and a forty-second flight
+costs no simulation time at all.
 
 **King of the Steamer** — one giant steamer the whole server clicks together,
 in the panel on the right. The goal scales with how many people are in the
@@ -67,16 +93,18 @@ a fresh round.
 ├── selene.toml              ← linter config
 ├── src/
 │   ├── shared/              → ReplicatedStorage/Shared
-│   │   ├── Config.luau        tuning: click costs, star discount, prestige, saving
+│   │   ├── Config.luau        tuning: click costs, launch physics, economy, saving
 │   │   ├── Squishies.luau     THE CATALOG: rarities, odds, colors, costs
+│   │   ├── Pets.luau          pet stats and the egg drop tables
 │   │   └── Format.luau        big-number formatting helper
 │   ├── server/              → ServerScriptService/Server
-│   │   └── init.server.luau   click counting, rolls, inventory, prestige, saving
+│   │   └── init.server.luau   clicks, rolls, inventory, flight simulation, economy
 │   └── client/              → StarterPlayerScripts/Client
 │       ├── init.client.luau   the HUD, and wiring it to the stage
-│       ├── Scene.luau         the 3D stage: toy shop, camera, lights, reveals
+│       ├── Scene.luau         the 3D stage: toy shop, track, camera, reveals
 │       ├── Models.luau        builds the steamer and every squishy shape
-│       ├── Launch.luau        the cannon minigame's aiming UI
+│       ├── Launch.luau        the cannon: charge meter, flight HUD, summary
+│       ├── Cannon.luau        wallet, power shop, rebirth, eggs, pets, Rain TNT
 │       ├── King.luau          the shared-steamer minigame's panel
 │       └── Debug.luau         the Studio-only test menu
 ```
@@ -96,7 +124,7 @@ squishies are rolled server-side, so nobody can fake a Mythical.
 3. Terminal, from the folder: `rojo serve`
 4. Studio: open your place → Plugins tab → Rojo → **Connect**.
 5. Check the Explorer: `ReplicatedStorage/Shared` should contain exactly
-   Config, Format, Squishies — no `Classes` folder.
+   Config, Format, Pets, Squishies — no `Classes` folder.
 6. **Stop** if you were playing, then **Play** fresh.
 
 Output should show:
@@ -125,15 +153,28 @@ If the game is ever a blank screen, open View → Output first: an orange
   catalog entry is what makes a Mini small or a Giant big. It applies on the
   cushion, in the reveal and in the collection icon alike.
 - Add a shape: one builder function in `shapeBuilders` in `Models.luau`.
-- Cannon earning rate: `LaunchClicksPerStud` against `LaunchCooldownSeconds`.
-  How far a shot goes: `LaunchSpeed` / `LaunchGravity` for the arc, and the
-  `LaunchGlide*` numbers for the drift after it. Raising glide flattens the
-  best angle; lowering it steepens.
-- Cannon zones: the `LaunchZones` table. `from` is in game studs and must
-  ascend; the stage reads the same table, so a new zone paints its own stripe
-  and sign on the range. With the shipped numbers a starless player tops out
-  around 98 studs and a fully starred one around 174, which is what the four
-  thresholds are spaced against.
+- How far a shot goes: `LaunchStudsPerPower` and `LaunchGravity` for the arc,
+  then `LaunchRestitution` and `LaunchBounceFriction` for the skips. Friction
+  is the strong one — it compounds once per bounce.
+- How fast power grows: `LaunchBasePower` and `LaunchPowerGrowth` against
+  `PowerUpgradeBaseCost` and `PowerUpgradeCostGrowth`. Cost growth is set a
+  little above power growth on purpose, so levels get slower rather than
+  cheaper. Shipped numbers: level 0 reaches ~270 studs, level 20 ~3.7K,
+  level 30 ~14K, level 40 ~50K, level 50 ~190K, level 63 crosses 1M.
+- How much a shot pays: `PickupTntValue` / `PickupCoinValue` /
+  `PickupGemValue` and `PickupValuePer1kStuds`, which is what makes a distant
+  pickup worth more than a near one.
+- How many pickups you actually catch: `LaunchPickupMagnet`. Shipped at 2,
+  which lands around 37% and holds that at every power level — read the
+  comment on it before changing it, the units are not what they look like.
+- Milestones and their gem bounties: the `DistanceMilestones` table. The stage
+  reads the same table, so a new entry puts its own sign on the track.
+- Rebirth pacing: `RebirthBaseRequirement` and `RebirthRequirementGrowth`
+  against the three `Rebirth*Bonus` numbers. First rebirth lands around
+  level 22.
+- Pets and eggs: `src/shared/Pets.luau`. Drop tables name pets directly, so a
+  new pet can be added to one egg without rebalancing every other egg that
+  shares its rarity.
 - Reshape the models or the toy-shop backdrop: `Models.luau` and the shop
   section of `Scene.luau`. Camera angle, lighting and reveal timing: the
   constants at the top of `Scene.luau`.
@@ -169,7 +210,8 @@ keeps that texture.
 
 Press **F2** in Studio (or click 🐛 Debug, top of the screen) for a test menu:
 bank steamers, fill the bar, grant copies, max every star, reset your save,
-flip the camera and blur, jump to the cannon range with View: Range, aim an
+flip the camera and blur, jump to the cannon range with View: Range, skip the
+cannon's grind with Rich Cannon / +10 Power / Ready Rebirth, aim an
 imported mesh with Rotate Clicker, and
 force-reveal any squishy in the catalog by name — which is how you look at a
 Mythical without rolling 0.5% odds.

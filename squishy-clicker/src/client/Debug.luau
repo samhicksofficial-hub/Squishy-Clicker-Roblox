@@ -68,7 +68,7 @@ function Debug.mount(gui: ScreenGui, scene: any)
 
 	local panel = make("Frame", {
 		Name = "DebugPanel",
-		Size = UDim2.new(0, 320, 0, 540),
+		Size = UDim2.new(0, 320, 0, 580),
 		Position = UDim2.new(0, 376, 0, 66),
 		BackgroundColor3 = COLOR.panel,
 		BackgroundTransparency = 0.06,
@@ -93,8 +93,10 @@ function Debug.mount(gui: ScreenGui, scene: any)
 	})
 
 	-- ---------- quick actions ----------
+	-- Two columns of 32px rows with 8px gaps; the height has to be an exact
+	-- number of those or the last row is clipped. Nine rows = 18 buttons.
 	local grid = make("Frame", {
-		Size = UDim2.new(1, -16, 0, 312),
+		Size = UDim2.new(1, -16, 0, 352),
 		Position = UDim2.new(0, 8, 0, 32),
 		BackgroundTransparency = 1,
 		ZIndex = 41,
@@ -143,6 +145,17 @@ function Debug.mount(gui: ScreenGui, scene: any)
 	end)
 	quickButton(14, "Ready Cannon", function()
 		fire:FireServer("readyCannon")
+	end)
+	-- The cannon's progression takes hours to walk through honestly, so these
+	-- three drop you at each of its interesting screens directly.
+	quickButton(16, "Rich Cannon", function()
+		fire:FireServer("richCannon")
+	end)
+	quickButton(17, "+10 Power", function()
+		fire:FireServer("powerUp", 10)
+	end)
+	quickButton(18, "Ready Rebirth", function()
+		fire:FireServer("readyRebirth")
 	end)
 
 	local backdropFaded = true
@@ -236,7 +249,7 @@ function Debug.mount(gui: ScreenGui, scene: any)
 	-- ---------- force a reveal ----------
 	make("TextLabel", {
 		Size = UDim2.new(1, -16, 0, 18),
-		Position = UDim2.new(0, 8, 0, 350),
+		Position = UDim2.new(0, 8, 0, 390),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		Text = "Force reveal (also grants a copy)",
@@ -248,8 +261,8 @@ function Debug.mount(gui: ScreenGui, scene: any)
 	})
 
 	local list = make("ScrollingFrame", {
-		Size = UDim2.new(1, -16, 1, -380),
-		Position = UDim2.new(0, 8, 0, 372),
+		Size = UDim2.new(1, -16, 1, -420),
+		Position = UDim2.new(0, 8, 0, 412),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 4,
