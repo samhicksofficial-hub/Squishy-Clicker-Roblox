@@ -51,7 +51,9 @@ local CANNON_ORIGIN = ORIGIN + Vector3.new(17, 0, 18)
 local RANGE_SCALE = 0.28
 -- The furthest zone marks the end of the drawn range, plus a little run-off.
 local RANGE_LENGTH = (Config.LaunchZones[#Config.LaunchZones].from + 30) * RANGE_SCALE
-local MUZZLE_HEIGHT = 2.2
+-- The barrel's pivot, which is also where a shot starts from. Sits on top of
+-- the cannon's plinth, so raising the plinth means raising this.
+local MUZZLE_HEIGHT = 3.6
 
 -- Where the chase camera sits relative to the shot while it's in the air:
 -- behind it down the range, above it, and off to the near side so the arc is
@@ -245,24 +247,117 @@ local function rangeSpot(distance: number, height: number): Vector3
 	return CANNON_ORIGIN + Vector3.new(distance * RANGE_SCALE, height * RANGE_SCALE, 0)
 end
 
--- Backstop, set just past the last zone so the course never ends in open sky.
-local RANGE_END_X = CANNON_ORIGIN.X + RANGE_LENGTH + 6
-local rangeWall = block(
-	Vector3.new(0.8, 13, 60),
-	Vector3.new(RANGE_END_X, ORIGIN.Y + 6.5, ORIGIN.Z + 14),
-	Color3.fromRGB(62, 178, 186)
-)
-rangeWall.Material = Enum.Material.SmoothPlastic
-block(Vector3.new(0.8, 3.2, 60), Vector3.new(RANGE_END_X, ORIGIN.Y + 14.6, ORIGIN.Z + 14), Color3.fromRGB(248, 246, 242))
-local rangeSkylight = block(
-	Vector3.new(0.6, 6, 60),
-	Vector3.new(RANGE_END_X - 0.2, ORIGIN.Y + 19.2, ORIGIN.Z + 14),
-	Color3.fromRGB(198, 224, 242)
-)
-rangeSkylight.Material = Enum.Material.Glass
+-- The range is deliberately NOT the toy shop: the cannon fires out of the shop
+-- and onto a bright rainbow runway under open sky. It's the one view where
+-- distance is the whole point, and a wall at the end of it would fight that —
+-- so the course simply runs to the horizon.
+-- All three views share one camera position, so the range has to keep out of
+-- the main view's frustum entirely. That is what fixes these bounds: the
+-- runway is narrow and the grass starts well out along +X and +Z, because
+-- anything nearer than this shows up as a wedge of lawn inside the toy shop.
+-- Twelve studs across still fills most of the cannon view at this distance.
+local RANGE_HALF_WIDTH = 6
+-- Drawn past the furthest zone, or the last one would sit on the very edge.
+local RANGE_DRAWN = RANGE_LENGTH + 24
 
--- Zone markers: a painted stripe across the course where each zone starts,
--- with a floating sign naming it and its multiplier. Read straight off
+local GRASS_COLOR = Color3.fromRGB(124, 200, 84)
+local SAND_COLOR = Color3.fromRGB(243, 222, 168)
+local WATER_COLOR = Color3.fromRGB(118, 200, 232)
+
+-- Grass apron either side of the runway, laid over the shop's floorboards.
+-- Every one of these four bounds is set by the main view rather than by taste:
+-- the near corner (GRASS_START_X, GRASS_NEAR_Z) is the one that decides it,
+-- and it sits outside the main camera's frustum with room to spare even on an
+-- ultrawide screen. Pull either in and lawn appears inside the toy shop.
+local GRASS_START_X = CANNON_ORIGIN.X - 5
+local GRASS_END_X = CANNON_ORIGIN.X + RANGE_DRAWN + 15
+local GRASS_NEAR_Z = CANNON_ORIGIN.Z - 8
+local GRASS_FAR_Z = CANNON_ORIGIN.Z + 22
+local grass = block(
+	Vector3.new(GRASS_END_X - GRASS_START_X, 0.5, GRASS_FAR_Z - GRASS_NEAR_Z),
+	Vector3.new((GRASS_START_X + GRASS_END_X) * 0.5, ORIGIN.Y - 0.19, (GRASS_NEAR_Z + GRASS_FAR_Z) * 0.5),
+	GRASS_COLOR
+)
+grass.Material = Enum.Material.Grass
+
+-- The cannon's little island: a ring of water round a sand bank, straight out
+-- of the reference. Cylinders rather than blocks so it reads as an island.
+local function disc(diameter: number, height: number, centre: Vector3, color: Color3): Part
+	local part = Instance.new("Part")
+	part.Shape = Enum.PartType.Cylinder
+	part.Size = Vector3.new(height, diameter, diameter)
+	part.CFrame = CFrame.new(centre) * CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
+	part.Color = color
+	part.Material = Enum.Material.SmoothPlastic
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Parent = stage
+	return part
+end
+
+disc(12, 0.35, CANNON_ORIGIN + Vector3.new(0, 0.1, 0), WATER_COLOR)
+disc(9.5, 0.5, CANNON_ORIGIN + Vector3.new(0, 0.2, 0), SAND_COLOR)
+
+-- ---------- the rainbow runway ----------
+-- Bands laid ACROSS the course, marching away from the cannon. Perpendicular
+-- stripes are what give a flat plane its sense of speed and distance when the
+-- chase camera runs down it.
+local STRIPE_DEPTH = 1.1
+for step = 0, math.floor(RANGE_DRAWN / STRIPE_DEPTH) do
+	local stripe = block(
+		Vector3.new(STRIPE_DEPTH, 0.3, RANGE_HALF_WIDTH * 2),
+		CANNON_ORIGIN + Vector3.new(step * STRIPE_DEPTH + STRIPE_DEPTH * 0.5, 0.25, 0),
+		Color3.fromHSV((step * 0.055) % 1, 0.82, 1)
+	)
+	stripe.Material = Enum.Material.SmoothPlastic
+end
+
+-- Distance painted down the near edge, the way the reference lines its runway
+-- with numbers. Every marker is a target to beat, which is the whole appeal.
+local MARKER_EVERY = 20 -- game studs
+local function floatingLabel(at: Vector3, text: string, color: Color3, width: number, height: number)
+	local anchor = Instance.new("Part")
+	anchor.Size = Vector3.new(0.2, 0.2, 0.2)
+	anchor.Position = at
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Parent = stage
+
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.new(0, width, 0, height)
+	gui.AlwaysOnTop = false
+	gui.Parent = anchor
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.Text = text
+	label.TextColor3 = color
+	label.TextStrokeColor3 = Color3.fromRGB(52, 38, 30)
+	label.TextStrokeTransparency = 0.15
+	label.TextScaled = true
+	label.Parent = gui
+end
+
+local furthestMarked = Config.LaunchZones[#Config.LaunchZones].from + 20
+for marked = MARKER_EVERY, furthestMarked, MARKER_EVERY do
+	floatingLabel(
+		rangeSpot(marked, 0) + Vector3.new(0, 1.4, -(RANGE_HALF_WIDTH + 1.5)),
+		("%d"):format(marked),
+		Color3.fromRGB(255, 255, 255),
+		70,
+		26
+	)
+end
+
+-- Zone markers: a white gate line across the runway where each zone starts,
+-- with a sign on the far side naming it and its multiplier. Read straight off
 -- Config.LaunchZones, so adding a zone there puts a marker on the range too.
 local ZONE_COLORS = {
 	Color3.fromRGB(238, 232, 224),
@@ -273,31 +368,38 @@ local ZONE_COLORS = {
 }
 for index, zone in Config.LaunchZones do
 	if zone.from > 0 then -- the first zone starts at the cannon's own feet
-		local stripe = block(
-			Vector3.new(0.5, 0.12, 22),
-			rangeSpot(zone.from, 0) + Vector3.new(0, 0.32, 0),
-			ZONE_COLORS[index] or Color3.fromRGB(238, 232, 224)
+		local color = ZONE_COLORS[index] or Color3.fromRGB(238, 232, 224)
+
+		local gate = block(
+			Vector3.new(0.6, 0.14, RANGE_HALF_WIDTH * 2),
+			rangeSpot(zone.from, 0) + Vector3.new(0, 0.42, 0),
+			Color3.fromRGB(255, 255, 255)
 		)
-		stripe.Material = Enum.Material.SmoothPlastic
+		gate.Material = Enum.Material.SmoothPlastic
 
-		local post = block(Vector3.new(0.3, 5, 0.3), rangeSpot(zone.from, 0) + Vector3.new(0, 2.7, -7), Color3.fromRGB(250, 248, 244))
-		local sign = Instance.new("BillboardGui")
-		sign.Size = UDim2.new(0, 130, 0, 34)
-		sign.StudsOffset = Vector3.new(0, 3.4, 0)
-		sign.AlwaysOnTop = false
-		sign.Parent = post
-
-		local signLabel = Instance.new("TextLabel")
-		signLabel.Size = UDim2.fromScale(1, 1)
-		signLabel.BackgroundTransparency = 1
-		signLabel.Font = Enum.Font.FredokaOne
-		signLabel.Text = ("%s\n×%.2g"):format(zone.name, zone.multiplier)
-		signLabel.TextColor3 = ZONE_COLORS[index] or Color3.fromRGB(250, 248, 244)
-		signLabel.TextStrokeColor3 = Color3.fromRGB(52, 38, 30)
-		signLabel.TextStrokeTransparency = 0.2
-		signLabel.TextScaled = true
-		signLabel.Parent = sign
+		local post = block(
+			Vector3.new(0.35, 6, 0.35),
+			rangeSpot(zone.from, 0) + Vector3.new(0, 3.2, RANGE_HALF_WIDTH + 2),
+			Color3.fromRGB(250, 248, 244)
+		)
+		floatingLabel(post.Position + Vector3.new(0, 4.2, 0), ("%s\n×%.2g"):format(zone.name, zone.multiplier), color, 140, 38)
 	end
+end
+
+-- Boulders down the far side of the course, purely so it isn't a bare green
+-- field. Far side only: the near side is where the shop is, and there is not
+-- enough lawn between the runway and the corner to put anything on.
+local rangeRandom = Random.new(19)
+for _ = 1, 12 do
+	local along = rangeRandom:NextNumber(4, RANGE_DRAWN)
+	local out = rangeRandom:NextNumber(RANGE_HALF_WIDTH + 4, RANGE_HALF_WIDTH + 14)
+	local size = rangeRandom:NextNumber(1.4, 3.2)
+	local rock = block(
+		Vector3.new(size, size * 0.75, size * 1.2),
+		CANNON_ORIGIN + Vector3.new(along, size * 0.3, out),
+		Color3.fromRGB(152, 152, 158)
+	)
+	rock.Material = Enum.Material.Slate
 end
 
 -- ---------- the sweets floating down the range ----------
@@ -328,44 +430,94 @@ local pickupSpots: { Vector3 } = {}
 local pickupTaken: { boolean } = {}
 local pickupCollecting: { [number]: number } = {} -- index -> distance it pops at
 
--- The cannon itself: a wheeled base and a barrel that tilts to the aim.
-local cannonBase = Instance.new("Part")
-cannonBase.Shape = Enum.PartType.Cylinder
-cannonBase.Size = Vector3.new(1.4, 3.2, 3.2)
-cannonBase.CFrame = CFrame.new(CANNON_ORIGIN + Vector3.new(0, 0.7, 0)) * CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
-cannonBase.Color = Color3.fromRGB(120, 96, 78)
-cannonBase.Material = Enum.Material.Wood
-cannonBase.Anchored = true
-cannonBase.CanCollide = false
-cannonBase.CanQuery = false
-cannonBase.CanTouch = false
-cannonBase.Parent = stage
+-- ---------- the cannon ----------
+-- Chunky and cartoon rather than military: a cream crate of a plinth, a fat
+-- pastel barrel, a ladder up the side and crates of TNT stacked around it.
+local PLINTH_COLOR = Color3.fromRGB(240, 224, 186)
+local BARREL_COLOR = Color3.fromRGB(140, 152, 205)
+local BARREL_DARK = Color3.fromRGB(52, 56, 84)
+local LADDER_COLOR = Color3.fromRGB(178, 128, 74)
 
-for _, side in { -1, 1 } do
-	local wheel = Instance.new("Part")
-	wheel.Shape = Enum.PartType.Cylinder
-	wheel.Size = Vector3.new(0.35, 2.2, 2.2)
-	wheel.CFrame = CFrame.new(CANNON_ORIGIN + Vector3.new(0, 1.1, side * 1.7))
-	wheel.Color = Color3.fromRGB(86, 68, 54)
-	wheel.Material = Enum.Material.Wood
-	wheel.Anchored = true
-	wheel.CanCollide = false
-	wheel.CanQuery = false
-	wheel.CanTouch = false
-	wheel.Parent = stage
+-- Launch pad: the red apron the cannon stands on.
+local pad = disc(8, 0.3, CANNON_ORIGIN + Vector3.new(0, 0.42, 0), Color3.fromRGB(232, 92, 80))
+pad.Material = Enum.Material.SmoothPlastic
+-- On the near lip of the pad: the cannon view looks down +X, so -X is the
+-- edge closest to the camera and the only one that isn't hidden by the plinth.
+floatingLabel(CANNON_ORIGIN + Vector3.new(-3.6, 0.9, 0), "LAUNCH", Color3.fromRGB(255, 255, 255), 130, 34)
+
+local plinth = block(Vector3.new(5.4, 2.2, 5.4), CANNON_ORIGIN + Vector3.new(0, 1.3, 0), PLINTH_COLOR)
+plinth.Material = Enum.Material.SmoothPlastic
+local plinthTop = block(Vector3.new(4.6, 0.5, 4.6), CANNON_ORIGIN + Vector3.new(0, 2.6, 0), Color3.fromRGB(226, 206, 162))
+plinthTop.Material = Enum.Material.SmoothPlastic
+
+-- Ladder up the face nearest the camera, like the reference. Rungs run along
+-- Z because that face looks back down -X toward the viewer.
+for rung = 0, 4 do
+	block(Vector3.new(0.16, 0.16, 0.9), CANNON_ORIGIN + Vector3.new(-2.78, 0.55 + rung * 0.48, 0), LADDER_COLOR)
+end
+for _, rail in { -0.42, 0.42 } do
+	block(Vector3.new(0.16, 2.5, 0.16), CANNON_ORIGIN + Vector3.new(-2.78, 1.35, rail), LADDER_COLOR)
 end
 
-local BARREL_LENGTH = 5
+-- Leafy tuft at the foot of it, so the island isn't bare sand.
+for leaf = 1, 5 do
+	local angle = (leaf / 5) * math.pi * 2
+	local frond = block(
+		Vector3.new(1.7, 0.3, 0.5),
+		CANNON_ORIGIN + Vector3.new(math.cos(angle) * 0.9 + 3.4, 0.65, math.sin(angle) * 0.9 - 2.2),
+		Color3.fromRGB(96, 186, 104)
+	)
+	frond.Material = Enum.Material.Grass
+end
+
+-- Crates of TNT scattered round the base.
+local TNT_SPOTS = {
+	Vector3.new(-3.4, 0, -2.6),
+	Vector3.new(-3.9, 0, -1.2),
+	Vector3.new(-2.9, 0, -3.6),
+	Vector3.new(-3.2, 1.3, -2.1),
+}
+for _, spot in TNT_SPOTS do
+	local crate = block(Vector3.new(1.3, 1.3, 1.3), CANNON_ORIGIN + spot + Vector3.new(0, 1.1, 0), Color3.fromRGB(228, 118, 58))
+	crate.Material = Enum.Material.WoodPlanks
+end
+
+-- The barrel is the one moving piece: the render loop tilts it to the aim.
+local BARREL_LENGTH = 5.6
 local cannonBarrel = Instance.new("Part")
 cannonBarrel.Shape = Enum.PartType.Cylinder
-cannonBarrel.Size = Vector3.new(BARREL_LENGTH, 1.6, 1.6)
-cannonBarrel.Color = Color3.fromRGB(72, 78, 92)
-cannonBarrel.Material = Enum.Material.Metal
+cannonBarrel.Size = Vector3.new(BARREL_LENGTH, 3.1, 3.1)
+cannonBarrel.Color = BARREL_COLOR
+cannonBarrel.Material = Enum.Material.SmoothPlastic
 cannonBarrel.Anchored = true
 cannonBarrel.CanCollide = false
 cannonBarrel.CanQuery = false
 cannonBarrel.CanTouch = false
 cannonBarrel.Parent = stage
+
+-- The dark mouth, and a band round it. Both ride the barrel, so they are
+-- positioned in the render loop alongside it rather than once here.
+local barrelLip = Instance.new("Part")
+barrelLip.Shape = Enum.PartType.Cylinder
+barrelLip.Size = Vector3.new(0.7, 3.4, 3.4)
+barrelLip.Color = Color3.fromRGB(120, 132, 190)
+barrelLip.Material = Enum.Material.SmoothPlastic
+barrelLip.Anchored = true
+barrelLip.CanCollide = false
+barrelLip.CanQuery = false
+barrelLip.CanTouch = false
+barrelLip.Parent = stage
+
+local barrelMouth = Instance.new("Part")
+barrelMouth.Shape = Enum.PartType.Cylinder
+barrelMouth.Size = Vector3.new(0.25, 2.5, 2.5)
+barrelMouth.Color = BARREL_DARK
+barrelMouth.Material = Enum.Material.SmoothPlastic
+barrelMouth.Anchored = true
+barrelMouth.CanCollide = false
+barrelMouth.CanQuery = false
+barrelMouth.CanTouch = false
+barrelMouth.Parent = stage
 
 local muzzleSmoke = Instance.new("ParticleEmitter")
 muzzleSmoke.Texture = "rbxasset://textures/particles/smoke_main.dds"
@@ -393,9 +545,11 @@ depthOfField.FarIntensity = 0.6
 depthOfField.NearIntensity = 0
 depthOfField.Parent = Lighting
 
+local backdropFaded = true
+
 -- For a future free-roam mode: pass false to snap the shop into focus.
 function Scene.setBackdropFaded(faded: boolean)
-	depthOfField.FarIntensity = faded and 0.6 or 0
+	backdropFaded = faded
 end
 
 -- Contact shadow: without it the steamer looks like it is floating.
@@ -849,10 +1003,20 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	local chaseWanted = (flight.progress < 1 or elapsed < flight.holdUntil) and 1 or 0
 	flightCam += (chaseWanted - flightCam) * math.min(dt * 3.5, 1)
 
-	local barrelTilt = aimTilt.value
-	cannonBarrel.CFrame = CFrame.new(CANNON_ORIGIN + Vector3.new(0, MUZZLE_HEIGHT, 0))
-		* CFrame.fromEulerAnglesXYZ(0, 0, barrelTilt)
-		* CFrame.new(BARREL_LENGTH * 0.5, 0, 0)
+	-- The blur exists to push the toy shop back behind the squisher, but on
+	-- the range the distance IS the subject — blurring it would fog out the
+	-- far end of the runway, which is the bit worth looking at. So it fades
+	-- off as the camera turns right, and off entirely during a flight.
+	local towardCannon = math.clamp(-viewYaw.value, 0, 1)
+	depthOfField.FarIntensity = backdropFaded and 0.6 * (1 - math.max(towardCannon, flightCam)) or 0
+
+	-- The barrel and its two trim pieces all hang off one pivot, so the mouth
+	-- can never drift away from the end of the barrel it belongs to.
+	local barrelPivot = CFrame.new(CANNON_ORIGIN + Vector3.new(0, MUZZLE_HEIGHT, 0))
+		* CFrame.fromEulerAnglesXYZ(0, 0, aimTilt.value)
+	cannonBarrel.CFrame = barrelPivot * CFrame.new(BARREL_LENGTH * 0.5, 0, 0)
+	barrelLip.CFrame = barrelPivot * CFrame.new(BARREL_LENGTH - 0.35, 0, 0)
+	barrelMouth.CFrame = barrelPivot * CFrame.new(BARREL_LENGTH - 0.1, 0, 0)
 
 	local toy = clickerModel
 	if toy then

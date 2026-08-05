@@ -40,6 +40,11 @@ over: muzzle speed, so a prestiged collection flies roughly twice as far, and
 magnet range, so it hoovers up more going past. One shot every
 `LaunchCooldownSeconds`.
 
+The range is the one view that isn't the toy shop: a cartoon cannon on a
+little sand island, and a rainbow-striped runway running out under open sky,
+numbered down the near edge and gated by the zone signs. Nothing caps the far
+end — in a game about distance, a wall to stop at would be the wrong idea.
+
 The client sends nothing but `{power, angle}` as two 0-1 numbers. The server
 lays the sweets out, works out the whole arc, decides which sweets it touched,
 picks the zone and awards the bonus — then sends back the *shape* of the
@@ -164,7 +169,8 @@ keeps that texture.
 
 Press **F2** in Studio (or click 🐛 Debug, top of the screen) for a test menu:
 bank steamers, fill the bar, grant copies, max every star, reset your save,
-flip the camera and blur, aim an imported mesh with Rotate Clicker, and
+flip the camera and blur, jump to the cannon range with View: Range, aim an
+imported mesh with Rotate Clicker, and
 force-reveal any squishy in the catalog by name — which is how you look at a
 Mythical without rolling 0.5% odds.
 
