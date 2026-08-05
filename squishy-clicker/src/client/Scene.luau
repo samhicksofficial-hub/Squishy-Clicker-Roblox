@@ -44,11 +44,28 @@ local STEAMER_ORIGIN = ORIGIN + Vector3.new(-16, 0, 17)
 -- The cannon sits the same 90° out on the other side, so the three views are
 -- one camera turning left, centre and right rather than three cameras.
 local CANNON_ORIGIN = ORIGIN + Vector3.new(17, 0, 18)
--- Studs of floor drawn per stud of scored range. The scoring distances in
--- Config are a game currency, not a room measurement: at 1:1 a 90-stud shot
--- would sail off the end of the shop.
-local RANGE_SCALE = 0.4
+-- Studs of floor drawn per stud of scored distance. The distances in Config
+-- are a game currency, not a room measurement: a fully starred shot travels
+-- ~175 of them, which at 1:1 would sail clean out of the world. Height uses
+-- the same scale so the arc keeps its real shape rather than being squashed.
+local RANGE_SCALE = 0.28
+-- The furthest zone marks the end of the drawn range, plus a little run-off.
+local RANGE_LENGTH = (Config.LaunchZones[#Config.LaunchZones].from + 30) * RANGE_SCALE
 local MUZZLE_HEIGHT = 2.2
+
+-- Where the chase camera sits relative to the shot while it's in the air:
+-- behind it down the range, above it, and off to the near side so the arc is
+-- seen from three-quarters rather than dead-on. It looks slightly AHEAD of the
+-- squishy, which keeps the ground still to come in frame.
+local CHASE_BACK = 7
+local CHASE_UP = 3.6
+local CHASE_SIDE = 12
+local CHASE_LEAD = 5
+
+-- Half-turns of tumble per unit of flight, climbing versus gliding. Fired out
+-- of a cannon it spins hard; under the glide it settles down to a lazy roll.
+local TUMBLE_RISE = 5
+local TUMBLE_GLIDE = 1.2
 
 local BACKDROP_COLOR = Color3.fromRGB(240, 222, 206) -- invisible helper parts only
 
@@ -220,40 +237,96 @@ for _, z in { -2, 12, 26 } do
 end
 
 -- ---------- the cannon range ----------
--- The third view: a cannon, a firing line down +X and target rings painted on
--- the floor. Geometry only — the server decides where any shot lands.
+-- The third view: a cannon and a long course running down +X, marked out in
+-- zones. Geometry only — the server decides how far any shot actually goes.
 
--- Backstop, so the range doesn't end in open sky.
-local rangeWall = block(Vector3.new(0.8, 13, 60), ORIGIN + Vector3.new(66, 6.5, 14), Color3.fromRGB(62, 178, 186))
+-- Where a game-stud distance sits on the stage, at a given height.
+local function rangeSpot(distance: number, height: number): Vector3
+	return CANNON_ORIGIN + Vector3.new(distance * RANGE_SCALE, height * RANGE_SCALE, 0)
+end
+
+-- Backstop, set just past the last zone so the course never ends in open sky.
+local RANGE_END_X = CANNON_ORIGIN.X + RANGE_LENGTH + 6
+local rangeWall = block(
+	Vector3.new(0.8, 13, 60),
+	Vector3.new(RANGE_END_X, ORIGIN.Y + 6.5, ORIGIN.Z + 14),
+	Color3.fromRGB(62, 178, 186)
+)
 rangeWall.Material = Enum.Material.SmoothPlastic
-block(Vector3.new(0.8, 3.2, 60), ORIGIN + Vector3.new(66, 14.6, 14), Color3.fromRGB(248, 246, 242))
-local rangeSkylight = block(Vector3.new(0.6, 6, 60), ORIGIN + Vector3.new(65.8, 19.2, 14), Color3.fromRGB(198, 224, 242))
+block(Vector3.new(0.8, 3.2, 60), Vector3.new(RANGE_END_X, ORIGIN.Y + 14.6, ORIGIN.Z + 14), Color3.fromRGB(248, 246, 242))
+local rangeSkylight = block(
+	Vector3.new(0.6, 6, 60),
+	Vector3.new(RANGE_END_X - 0.2, ORIGIN.Y + 19.2, ORIGIN.Z + 14),
+	Color3.fromRGB(198, 224, 242)
+)
 rangeSkylight.Material = Enum.Material.Glass
 
--- Target rings: concentric discs centred on the bullseye. Drawn outermost
--- first and stacked in 0.02-stud steps so they don't z-fight.
-local RING_COLORS = {
-	Color3.fromRGB(240, 90, 90), -- bullseye
-	Color3.fromRGB(250, 200, 80),
-	Color3.fromRGB(120, 205, 235),
+-- Zone markers: a painted stripe across the course where each zone starts,
+-- with a floating sign naming it and its multiplier. Read straight off
+-- Config.LaunchZones, so adding a zone there puts a marker on the range too.
+local ZONE_COLORS = {
 	Color3.fromRGB(238, 232, 224),
+	Color3.fromRGB(120, 205, 235),
+	Color3.fromRGB(250, 200, 80),
+	Color3.fromRGB(245, 150, 95),
+	Color3.fromRGB(226, 96, 96),
 }
-local bullseyeSpot = CANNON_ORIGIN + Vector3.new(Config.LaunchTargetDistance * RANGE_SCALE, 0, 0)
-for ring = #Config.LaunchRingPays, 1, -1 do
-	local radius = ring * Config.LaunchRingWidth * RANGE_SCALE
-	local disc = Instance.new("Part")
-	disc.Shape = Enum.PartType.Cylinder
-	disc.Size = Vector3.new(0.08, radius * 2, radius * 2)
-	disc.CFrame = CFrame.new(bullseyeSpot + Vector3.new(0, 0.06 + (#Config.LaunchRingPays - ring) * 0.02, 0))
-		* CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
-	disc.Color = RING_COLORS[ring] or Color3.fromRGB(238, 232, 224)
-	disc.Material = Enum.Material.SmoothPlastic
-	disc.Anchored = true
-	disc.CanCollide = false
-	disc.CanQuery = false
-	disc.CanTouch = false
-	disc.Parent = stage
+for index, zone in Config.LaunchZones do
+	if zone.from > 0 then -- the first zone starts at the cannon's own feet
+		local stripe = block(
+			Vector3.new(0.5, 0.12, 22),
+			rangeSpot(zone.from, 0) + Vector3.new(0, 0.32, 0),
+			ZONE_COLORS[index] or Color3.fromRGB(238, 232, 224)
+		)
+		stripe.Material = Enum.Material.SmoothPlastic
+
+		local post = block(Vector3.new(0.3, 5, 0.3), rangeSpot(zone.from, 0) + Vector3.new(0, 2.7, -7), Color3.fromRGB(250, 248, 244))
+		local sign = Instance.new("BillboardGui")
+		sign.Size = UDim2.new(0, 130, 0, 34)
+		sign.StudsOffset = Vector3.new(0, 3.4, 0)
+		sign.AlwaysOnTop = false
+		sign.Parent = post
+
+		local signLabel = Instance.new("TextLabel")
+		signLabel.Size = UDim2.fromScale(1, 1)
+		signLabel.BackgroundTransparency = 1
+		signLabel.Font = Enum.Font.FredokaOne
+		signLabel.Text = ("%s\n×%.2g"):format(zone.name, zone.multiplier)
+		signLabel.TextColor3 = ZONE_COLORS[index] or Color3.fromRGB(250, 248, 244)
+		signLabel.TextStrokeColor3 = Color3.fromRGB(52, 38, 30)
+		signLabel.TextStrokeTransparency = 0.2
+		signLabel.TextScaled = true
+		signLabel.Parent = sign
+	end
 end
+
+-- ---------- the sweets floating down the range ----------
+-- A fixed pool, positioned from whatever field the server last sent. Pooled
+-- rather than rebuilt because the field is replaced after every single shot.
+local PICKUP_GOLDEN_COLOR = Color3.fromRGB(255, 205, 90)
+local PICKUP_COLOR = Color3.fromRGB(255, 150, 195)
+
+local pickupParts: { BasePart } = {}
+for _ = 1, Config.LaunchPickupCount do
+	local sweet = Instance.new("Part")
+	sweet.Shape = Enum.PartType.Ball
+	sweet.Size = Vector3.new(1.5, 1.5, 1.5)
+	sweet.Color = PICKUP_COLOR
+	sweet.Material = Enum.Material.Neon
+	sweet.Anchored = true
+	sweet.CanCollide = false
+	sweet.CanQuery = false
+	sweet.CanTouch = false
+	sweet.Transparency = 1 -- nothing to show until a field arrives
+	sweet.Parent = stage
+	table.insert(pickupParts, sweet)
+end
+
+-- Where each pickup sits on the stage, and whether it has been eaten this
+-- flight. Positions are cached so the render loop isn't re-scaling every frame.
+local pickupSpots: { Vector3 } = {}
+local pickupTaken: { boolean } = {}
+local pickupCollecting: { [number]: number } = {} -- index -> distance it pops at
 
 -- The cannon itself: a wheeled base and a barrel that tilts to the aim.
 local cannonBase = Instance.new("Part")
@@ -400,13 +473,39 @@ local swayAmount = 1
 local aimTilt = spring(60, 11)
 -- A shot in the air. The squisher itself is the projectile — it leaves the
 -- cushion, flies, and comes back — so there is nothing extra to build.
+-- Every number in here arrives from the server; none of it is worked out
+-- locally, because all of it decides what the shot was worth.
 local flight = {
 	active = false,
 	progress = 1, -- 1 means landed, which is where we start
 	seconds = 1,
-	reach = 0, -- studs of stage the shot covers, already range-scaled
-	apex = 0,
+	distance = 0, -- game studs the shot covers in total
+	apexAt = 0,
+	apexHeight = 0,
+	glideRange = 0,
+	riseFraction = 0.5, -- share of the animation spent climbing to the apex
+	flown = 0, -- game studs covered so far, for the ticking readout
+	holdUntil = 0, -- keeps the chase camera on a beat past the landing
 }
+-- 0 = the fixed stage camera, 1 = riding along behind the shot.
+local flightCam = 0
+
+-- The same two-phase curve the server scored the shot against: a parabola up
+-- to the apex, then a straight glide down to the floor. Redrawn here purely to
+-- animate — the server's copy is the one that decided what was collected.
+local function flightHeight(x: number): number
+	if x <= 0 or flight.apexAt <= 0 then
+		return 0
+	end
+	if x <= flight.apexAt then
+		local offset = (x - flight.apexAt) / flight.apexAt
+		return flight.apexHeight * (1 - offset * offset)
+	end
+	if flight.glideRange <= 0 then
+		return 0
+	end
+	return math.max(flight.apexHeight * (1 - (x - flight.apexAt) / flight.glideRange), 0)
+end
 
 -- ---------- lights and particles ----------
 
@@ -702,6 +801,54 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		end
 	end
 
+	-- Ground covered so far. The climb and the glide get their own slices of
+	-- the animation in the same proportion the server timed them, so a steep
+	-- shot visibly hangs at the top before drifting down.
+	if flight.progress < 1 then
+		local t = flight.progress
+		if t <= flight.riseFraction and flight.riseFraction > 0 then
+			flight.flown = flight.apexAt * (t / flight.riseFraction)
+		else
+			local after = (t - flight.riseFraction) / math.max(1 - flight.riseFraction, 1e-3)
+			flight.flown = flight.apexAt + flight.glideRange * after
+		end
+	else
+		-- Landed: sit exactly on the server's number rather than wherever the
+		-- last frame before the finish happened to fall.
+		flight.flown = flight.distance
+	end
+
+	-- Where the shot is on the stage this frame. The toy is drawn here and the
+	-- chase camera watches it, so both read the position from one place.
+	local shotPosition = rangeSpot(flight.flown, flightHeight(flight.flown)) + Vector3.new(0, MUZZLE_HEIGHT, 0)
+
+	-- Sweets pop as the squishy reaches them. The server already decided which
+	-- ones; this is only the moment they disappear.
+	for index, at in pickupCollecting do
+		if flight.flown >= at then
+			local sweet = pickupParts[index]
+			if sweet then
+				sweet.Transparency = 1
+			end
+			pickupTaken[index] = true
+			pickupCollecting[index] = nil
+			kick(clickerSquash, 0.5)
+		end
+	end
+
+	-- Bob the uneaten sweets so the range doesn't read as a still photograph.
+	for index, sweet in pickupParts do
+		local spot = pickupSpots[index]
+		if spot and not pickupTaken[index] then
+			sweet.Position = spot + Vector3.new(0, math.sin(elapsed * 2.4 + index) * 0.22, 0)
+		end
+	end
+
+	-- The chase camera leads in and out rather than cutting, and holds a beat
+	-- past the landing so the last thing seen is where it came down.
+	local chaseWanted = (flight.progress < 1 or elapsed < flight.holdUntil) and 1 or 0
+	flightCam += (chaseWanted - flightCam) * math.min(dt * 3.5, 1)
+
 	local barrelTilt = aimTilt.value
 	cannonBarrel.CFrame = CFrame.new(CANNON_ORIGIN + Vector3.new(0, MUZZLE_HEIGHT, 0))
 		* CFrame.fromEulerAnglesXYZ(0, 0, barrelTilt)
@@ -716,12 +863,19 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			-- Mid-shot the squisher IS the cannonball: it leaves the cushion,
 			-- arcs down the range and comes back, so there is no second model
 			-- to build and the cushion is visibly empty while it's away.
-			local t = flight.progress
-			local height = MUZZLE_HEIGHT + flight.apex * 4 * t * (1 - t)
+			-- It tumbles hard out of the barrel and settles once the glide
+			-- takes over, which is most of what sells the glide as a glide.
+			-- The two rates are ACCUMULATED rather than swapped, or the model
+			-- would visibly snap round at the moment the glide starts.
+			local climbing = math.min(flight.progress, flight.riseFraction)
+			local glide = math.max(flight.progress - flight.riseFraction, 0)
+			local tumble = (climbing * TUMBLE_RISE + glide * TUMBLE_GLIDE) * math.pi
+			-- Nose-down lean, eased in over the first part of the glide so it
+			-- reads as soaring rather than drifting sideways.
+			local lean = -0.25 * math.min(glide * 6, 1)
 			Models.apply(
 				toy.rig,
-				CFrame.new(CANNON_ORIGIN + Vector3.new(flight.reach * t, height, 0))
-					* CFrame.fromEulerAnglesXYZ(0, 0, -t * math.pi * 5),
+				CFrame.new(shotPosition) * CFrame.fromEulerAnglesXYZ(0, 0, -tumble + lean),
 				toyScale
 			)
 		else
@@ -767,7 +921,19 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		-- Shake in view space, so it reads as shake from either angle.
 		local right = dir:Cross(Vector3.new(0, 1, 0)).Unit
 		local jolt = right * ((math.random() - 0.5) * shake) + Vector3.new(0, (math.random() - 0.5) * shake, 0)
-		camera.CFrame = CFrame.lookAt(CAMERA_POS + jolt, CAMERA_POS + jolt + dir)
+		local resting = CFrame.lookAt(CAMERA_POS + jolt, CAMERA_POS + jolt + dir)
+
+		if flightCam > 0.001 then
+			-- The whole point of a distance game is watching the distance, so
+			-- the camera leaves its stand and travels with the shot: trailing
+			-- it, a little above and off to the side, looking slightly ahead so
+			-- the ground still to come stays in frame.
+			local chasePos = shotPosition + Vector3.new(-CHASE_BACK, CHASE_UP, CHASE_SIDE)
+			local chaseLook = shotPosition + Vector3.new(CHASE_LEAD, 0, 0)
+			camera.CFrame = resting:Lerp(CFrame.lookAt(chasePos + jolt, chaseLook), flightCam)
+		else
+			camera.CFrame = resting
+		end
 		-- A hair of punch-in on every click, too small to notice and too big to
 		-- do without.
 		camera.FieldOfView = FIELD_OF_VIEW - math.max(sq, clickerSquash.value) * 1.2
@@ -797,24 +963,83 @@ function Scene.setCannonAim(angle: number)
 	aimTilt.target = math.rad(degrees)
 end
 
--- Fly the squisher to where the SERVER said the shot landed. Distance comes
--- back from the server; this only draws an arc that ends there.
-function Scene.playLaunch(angle: number, distance: number)
-	local degrees = Config.LaunchMinAngle + (Config.LaunchMaxAngle - Config.LaunchMinAngle) * math.clamp(angle, 0, 1)
-	local reach = math.max(distance, 0) * RANGE_SCALE
+-- Lay the sweets out from the field the server sent. Each entry is
+-- { distance, height, value } in game studs.
+function Scene.setLaunchField(field: { { distance: number, height: number, value: number } })
+	pickupSpots = {}
+	pickupTaken = {}
+	pickupCollecting = {}
 
-	flight.reach = reach
-	-- Apex of a parabola that covers `reach` leaving at this angle. Derived
-	-- rather than guessed so a steep shot visibly lobs and a flat one skims.
-	flight.apex = reach * math.tan(math.rad(degrees)) * 0.25
-	-- Longer shots hang longer, but not linearly, or a max-range lob crawls.
-	flight.seconds = math.clamp(0.5 + reach * 0.022, 0.6, 1.7)
+	for index, sweet in pickupParts do
+		local entry = field[index]
+		if entry then
+			local spot = rangeSpot(entry.distance, entry.height) + Vector3.new(0, MUZZLE_HEIGHT, 0)
+			pickupSpots[index] = spot
+			sweet.Position = spot
+			-- The rare high-value one is bigger and gold, so it's worth
+			-- spotting from the aiming screen and bending a shot towards.
+			local golden = entry.value > Config.LaunchPickupValue
+			sweet.Color = golden and PICKUP_GOLDEN_COLOR or PICKUP_COLOR
+			sweet.Size = Vector3.one * (golden and 2.1 or 1.5)
+			sweet.Transparency = 0.15
+		else
+			-- A shorter field than the pool: park the spares out of sight.
+			sweet.Transparency = 1
+			pickupTaken[index] = true
+		end
+	end
+end
+
+-- Fly the shot the SERVER worked out. Every number here — how far, how high,
+-- which sweets went — arrived in the result payload; this only draws it.
+function Scene.playLaunch(plan: {
+	distance: number,
+	apexAt: number,
+	apexHeight: number,
+	glideRange: number,
+	riseSeconds: number,
+	glideSeconds: number,
+	collected: { number },
+}): number
+	flight.distance = math.max(plan.distance, 0)
+	flight.apexAt = math.max(plan.apexAt, 0)
+	flight.apexHeight = math.max(plan.apexHeight, 0)
+	flight.glideRange = math.max(plan.glideRange, 0)
+
+	-- Give the climb and the glide the same share of the animation the server
+	-- gave them in seconds, so a steep shot visibly hangs before it drifts.
+	local total = math.max(plan.riseSeconds + plan.glideSeconds, 1e-3)
+	flight.riseFraction = math.clamp(plan.riseSeconds / total, 0.1, 0.9)
+	-- Close to the real hang time, trimmed a little at the top and given a
+	-- floor: a feeble shot that was over in half a second gives the chase
+	-- camera nothing to do, and the flight is the point of the mode.
+	flight.seconds = math.clamp(total * 0.9, 1.2, 3.4)
+	flight.flown = 0
 	flight.progress = 0
 	flight.active = true
+	flight.holdUntil = elapsed + flight.seconds + 0.9
+
+	-- Queue the sweets to pop as the shot reaches each one.
+	pickupCollecting = {}
+	for _, index in plan.collected do
+		local spot = pickupSpots[index]
+		if spot and not pickupTaken[index] then
+			pickupCollecting[index] = (spot - CANNON_ORIGIN).X / RANGE_SCALE
+		end
+	end
 
 	muzzleSmoke:Emit(14)
 	openSound.PlaybackSpeed = 0.75
 	openSound:Play()
+
+	-- Handed back so the UI can hold its summary until the shot has actually
+	-- landed, rather than guessing at how long that takes.
+	return flight.seconds
+end
+
+-- How far the shot has flown so far, in game studs, for the ticking readout.
+function Scene.flightDistance(): number
+	return flight.flown
 end
 
 -- Turn the camera: "unbox" swings 90° left onto the steamer nook, "cannon"

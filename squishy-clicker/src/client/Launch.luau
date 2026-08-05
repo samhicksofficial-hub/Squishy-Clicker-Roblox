@@ -2,11 +2,16 @@
 -- ============================================================
 --  SQUISHY LAUNCH  —  the cannon minigame's UI.
 --
---  Two taps: the first stops a sweeping POWER bar, the second
---  stops a sweeping ANGLE bar. Then the shot is sent as nothing
---  but {power, angle}, each a plain 0-1 number. The client never
---  says how far it went or what it won — the server decides
---  both, and this only animates whatever comes back.
+--  A DISTANCE game. Two taps: the first stops a sweeping POWER
+--  bar, the second stops a sweeping ANGLE bar. Then the shot is
+--  sent as nothing but {power, angle}, each a plain 0-1 number.
+--  The squishy flies, the camera goes with it, and how far it
+--  gets is the score — sweets picked up on the way and the zone
+--  it lands in both add to the payout.
+--
+--  The client never says how far it went, what it collected or
+--  what it won. The server decides all of it and sends back the
+--  shape of the flight; this only draws that.
 --
 --  The spec asked for a ProximityPrompt on a cannon in the
 --  world. That cannot work here: this game runs a scriptable
@@ -24,9 +29,10 @@ local Config = require(Shared:WaitForChild("Config"))
 
 local Launch = {}
 
--- Replaced when the panel mounts. A no-op until then, so a sync arriving
+-- Replaced when the panel mounts. No-ops until then, so a sync arriving
 -- before the UI is up can't fail on a missing function.
 function Launch.setReadyIn(_seconds: number) end
+function Launch.setBest(_distance: number) end
 
 local COLOR = {
 	panel = Color3.fromRGB(255, 255, 255),
@@ -59,11 +65,30 @@ function Launch.mount(gui: ScreenGui, scene: any)
 	local remotes = ReplicatedStorage:WaitForChild("Remotes")
 	local shotRemote = remotes:WaitForChild("LaunchShot") :: RemoteEvent
 	local resultRemote = remotes:WaitForChild("LaunchResult") :: RemoteEvent
+	local fieldRemote = remotes:WaitForChild("LaunchField") :: RemoteEvent
 
 	local stage: Stage = "idle"
 	local sweep = 0 -- the live 0-1 position of whichever bar is moving
 	local chosenPower = 0
 	local readyIn = 0 -- seconds left on the cooldown, straight from the server
+	local best = 0 -- furthest ever flown, straight from the server
+
+	-- The server lays out the NEXT shot's sweets the instant it scores this
+	-- one, which lands here while the squishy is still in the air. Applying it
+	-- there and then would teleport the sweets out from under a flight that is
+	-- still collecting them, so it waits its turn.
+	local pendingField: { any }? = nil
+
+	fieldRemote.OnClientEvent:Connect(function(field)
+		if typeof(field) ~= "table" then
+			return
+		end
+		if stage == "flying" then
+			pendingField = field
+		else
+			scene.setLaunchField(field)
+		end
+	end)
 
 	-- ---------- the open button, beside the Unbox tray ----------
 	local openButton = make("TextButton", {
@@ -84,8 +109,8 @@ function Launch.mount(gui: ScreenGui, scene: any)
 	-- ---------- the aiming panel ----------
 	local panel = make("Frame", {
 		Name = "CannonPanel",
-		Size = UDim2.new(0, 340, 0, 190),
-		Position = UDim2.new(0, 24, 1, -300),
+		Size = UDim2.new(0, 340, 0, 214),
+		Position = UDim2.new(0, 24, 1, -324),
 		BackgroundColor3 = COLOR.panel,
 		BackgroundTransparency = 0.06,
 		Active = true, -- swallow taps, or aiming also squishes the squishy
@@ -117,6 +142,20 @@ function Launch.mount(gui: ScreenGui, scene: any)
 		TextColor3 = COLOR.dim,
 		TextSize = 13,
 		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 7,
+		Parent = panel,
+	})
+
+	-- The number to beat. A distance game needs one on screen at all times.
+	local bestLabel = make("TextLabel", {
+		Size = UDim2.new(0, 150, 0, 18),
+		Position = UDim2.new(1, -196, 0, 34),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		Text = "best 0 studs",
+		TextColor3 = COLOR.gold,
+		TextSize = 13,
+		TextXAlignment = Enum.TextXAlignment.Right,
 		ZIndex = 7,
 		Parent = panel,
 	})
@@ -164,15 +203,34 @@ function Launch.mount(gui: ScreenGui, scene: any)
 	trackLabel(powerTrack, "POWER")
 	trackLabel(angleTrack, "ANGLE")
 
+	-- Takes over the two bars once the shot is away: while it's in the air the
+	-- only number that matters is how far it has got, counting up live.
+	local flightLabel = make("TextLabel", {
+		Size = UDim2.new(1, -20, 0, 58),
+		Position = UDim2.new(0, 10, 0, 56),
+		BackgroundColor3 = COLOR.panel,
+		BackgroundTransparency = 0.05,
+		Font = Enum.Font.FredokaOne,
+		Text = "0 studs",
+		TextColor3 = COLOR.power,
+		TextSize = 40,
+		Visible = false,
+		ZIndex = 10,
+		Parent = panel,
+	})
+	corner(12, flightLabel)
+
 	local status = make("TextLabel", {
-		Size = UDim2.new(1, -20, 0, 20),
-		Position = UDim2.new(0, 10, 0, 122),
+		Size = UDim2.new(1, -20, 0, 40),
+		Position = UDim2.new(0, 10, 0, 120),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		Text = "",
 		TextColor3 = COLOR.text,
 		TextSize = 14,
+		TextWrapped = true,
 		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
 		ZIndex = 7,
 		Parent = panel,
 	})
@@ -209,9 +267,11 @@ function Launch.mount(gui: ScreenGui, scene: any)
 	local function setStage(next: Stage)
 		stage = next
 		panel.Visible = next ~= "idle"
+		flightLabel.Visible = next == "flying"
 
 		if next == "power" then
 			title.Text = "Set your power!"
+			title.TextColor3 = COLOR.text -- clear a NEW BEST! left over from last shot
 			lockButton.Text = "LOCK POWER"
 			lockButton.BackgroundColor3 = COLOR.go
 			status.Text = ""
@@ -241,6 +301,13 @@ function Launch.mount(gui: ScreenGui, scene: any)
 	local function closeAiming()
 		setStage("idle")
 		scene.setView("main")
+
+		-- Now that nothing is in the air, the next shot's sweets can go down.
+		local waiting = pendingField
+		if waiting then
+			pendingField = nil
+			scene.setLaunchField(waiting)
+		end
 	end
 
 	openButton.Activated:Connect(openAiming)
@@ -249,6 +316,13 @@ function Launch.mount(gui: ScreenGui, scene: any)
 	-- The sweep runs on the render step so the bar moves smoothly; it is only
 	-- ever a display, and the value is read at the instant the player taps.
 	RunService.RenderStepped:Connect(function(dt)
+		if stage == "flying" then
+			-- Counting up beside the shot is the whole feedback loop of a
+			-- distance game, so it reads the stage's live position rather
+			-- than waiting for the landing to show a number.
+			flightLabel.Text = ("%d studs"):format(math.floor(scene.flightDistance()))
+			return
+		end
 		if stage ~= "power" and stage ~= "angle" then
 			return
 		end
@@ -293,30 +367,50 @@ function Launch.mount(gui: ScreenGui, scene: any)
 		if typeof(result) ~= "table" then
 			return
 		end
-		scene.playLaunch(result.angle or 0.5, result.distance or 0)
+		-- The stage says how long its animation runs, so the summary below can
+		-- wait for the landing exactly rather than on a guessed timer.
+		local flightSeconds = scene.playLaunch(result)
+		local collected = result.collected or {}
 
-		local ring = result.ring or 0
-		local bonus = result.bonus or 0
-		if ring == 1 then
-			title.Text = "BULLSEYE!"
-		elseif ring > 0 then
-			title.Text = ("Ring %d!"):format(ring)
-		else
-			title.Text = "Missed the field…"
-		end
-		status.Text = bonus > 0 and ("+%d clicks toward your steamer"):format(bonus) or "no bonus this time"
+		-- The summary only goes up once the shot has actually landed —
+		-- announcing the distance while it is still climbing gives the ending
+		-- away and makes the flight pointless to watch.
+		task.delay(flightSeconds, function()
+			if stage ~= "flying" then
+				return
+			end
+			best = math.max(result.best or 0, best)
+			bestLabel.Text = ("best %d studs"):format(math.floor(best))
 
-		-- Let the shot land and be read, then hand the view back.
-		task.delay(2.6, function()
+			title.Text = result.record and "NEW BEST!" or (result.zone or "Landed")
+			title.TextColor3 = result.record and COLOR.gold or COLOR.text
+
+			local sweets = #collected > 0 and (" · %d sweets"):format(#collected) or ""
+			status.Text = ("%d studs — %s ×%.2g%s\n+%d clicks toward your steamer"):format(
+				math.floor(result.distance or 0),
+				result.zone or "Shop Floor",
+				result.multiplier or 1,
+				sweets,
+				result.bonus or 0
+			)
+		end)
+
+		-- Then let it be read, and hand the view back.
+		task.delay(flightSeconds + 2.4, function()
 			if stage == "flying" then
 				closeAiming()
 			end
 		end)
 	end)
 
-	-- ---------- cooldown, straight from the server ----------
+	-- ---------- cooldown and record, straight from the server ----------
 	function Launch.setReadyIn(seconds: number)
 		readyIn = math.max(seconds, 0)
+	end
+
+	function Launch.setBest(distance: number)
+		best = math.max(distance, 0)
+		bestLabel.Text = ("best %d studs"):format(math.floor(best))
 	end
 
 	task.spawn(function()

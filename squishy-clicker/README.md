@@ -22,16 +22,29 @@ for the reveal, then turns back.
 
 ## Minigames
 
-**Squishy Launch** — a cannon on the third camera view, right of the squisher.
-Tap once to stop the power bar, once more for the angle, and your squisher
-flies down the range at the target rings; how close it lands converts into
-bonus progress toward your next steamer. Stars earn their second keep here,
-adding muzzle speed so a prestiged collection reaches further. One shot every
+**Squishy Launch** — a cannon on the third camera view, right of the squisher,
+and a **distance** game. Tap once to stop the power bar, once more for the
+angle, and your squisher is fired down a long range with the camera riding
+along behind it. How far it gets is the score.
+
+A shot is two halves. It arcs up ballistically, and at the top of the arc it
+**glides** — drifting forward while it sinks, which is where most of a long
+shot's distance comes from. Glide time grows with how high the apex was, so a
+flat shot covers more ground before the top and a steep one glides longer
+after it; the best angle is in between (around 48°) rather than at either end.
+
+On the way it sweeps up **sweets** floating down the range, and the **zone** it
+lands in multiplies the whole payout — sweets included. The lot converts into
+progress toward your next steamer. Stars earn their second keep here twice
+over: muzzle speed, so a prestiged collection flies roughly twice as far, and
+magnet range, so it hoovers up more going past. One shot every
 `LaunchCooldownSeconds`.
 
 The client sends nothing but `{power, angle}` as two 0-1 numbers. The server
-validates them, works out where the shot lands, scores the ring and awards the
-bonus; the animation is drawn to the server's answer, not the other way round.
+lays the sweets out, works out the whole arc, decides which sweets it touched,
+picks the zone and awards the bonus — then sends back the *shape* of the
+flight for the client to draw. Distances, pickups and payouts are never
+computed client-side, so there is nothing to fake.
 
 **King of the Steamer** — one giant steamer the whole server clicks together,
 in the panel on the right. The goal scales with how many people are in the
@@ -107,6 +120,15 @@ If the game is ever a blank screen, open View → Output first: an orange
   catalog entry is what makes a Mini small or a Giant big. It applies on the
   cushion, in the reveal and in the collection icon alike.
 - Add a shape: one builder function in `shapeBuilders` in `Models.luau`.
+- Cannon earning rate: `LaunchClicksPerStud` against `LaunchCooldownSeconds`.
+  How far a shot goes: `LaunchSpeed` / `LaunchGravity` for the arc, and the
+  `LaunchGlide*` numbers for the drift after it. Raising glide flattens the
+  best angle; lowering it steepens.
+- Cannon zones: the `LaunchZones` table. `from` is in game studs and must
+  ascend; the stage reads the same table, so a new zone paints its own stripe
+  and sign on the range. With the shipped numbers a starless player tops out
+  around 98 studs and a fully starred one around 174, which is what the four
+  thresholds are spaced against.
 - Reshape the models or the toy-shop backdrop: `Models.luau` and the shop
   section of `Scene.luau`. Camera angle, lighting and reveal timing: the
   constants at the top of `Scene.luau`.

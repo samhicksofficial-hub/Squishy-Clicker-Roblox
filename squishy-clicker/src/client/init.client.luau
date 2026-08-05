@@ -59,6 +59,7 @@ local state = {
 	unopened = 0,
 	clickerId = nil :: string?,
 	launchReadyIn = 0,
+	bestDistance = 0,
 }
 
 -- Rarity rank (Common = 1 ... Mythical = 6). The reveal scales off this.
@@ -650,8 +651,10 @@ local appliedClickerId: string? = nil
 local function refresh()
 	headerLabel.Text = ("🥟 Opens: %d    ⭐ Stars: %d"):format(state.totalOpens, state.totalStars)
 
-	-- The cannon's cooldown is the server's to know, not ours to guess.
+	-- The cannon's cooldown and the distance record are the server's to know,
+	-- not ours to guess.
 	Launch.setReadyIn(state.launchReadyIn or 0)
+	Launch.setBest(state.bestDistance or 0)
 
 	unboxButton.Text = ("🥡 Unbox (%d)"):format(state.unopened)
 	unboxButton.BackgroundColor3 = state.unopened > 0 and COLOR.mint or COLOR.locked
