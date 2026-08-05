@@ -100,7 +100,13 @@ function UI.label(props: { [string]: any }): TextLabel
 		TextSize = 16,
 	}
 	for key, value in props do
-		defaults[key] = value
+		-- StrokeThickness is OURS, not a TextLabel property. It has to be
+		-- filtered out here: UI.make assigns every key straight onto the
+		-- instance, and assigning an unknown property throws — which takes the
+		-- whole mount down with it, along with every button built after it.
+		if key ~= "StrokeThickness" then
+			defaults[key] = value
+		end
 	end
 	local label = UI.make("TextLabel", defaults) :: TextLabel
 	UI.make("UIStroke", {

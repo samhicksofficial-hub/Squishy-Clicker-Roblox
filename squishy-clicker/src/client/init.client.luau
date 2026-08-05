@@ -775,13 +775,34 @@ SyncData.OnClientEvent:Connect(function(payload)
 end)
 
 -- Spawned because mounting waits on remotes; the HUD must not wait with it.
-task.spawn(function()
+--
+-- Wrapped, because a spawned thread that throws dies SILENTLY as far as the
+-- rest of the game is concerned: the buttons built before the error are on
+-- screen and look fine, the ones after it never appear, and nothing says why.
+-- That is exactly how a one-line typo once left the game stuck on the launcher
+-- with a LAUNCH button that did nothing. Now it names itself in the Output.
+local function mount(what: string, build: () -> ())
+	task.spawn(function()
+		-- The inner wrapper declares a return type purely so pcall is typed as
+		-- giving back an error value as well as a success flag; a `() -> ()`
+		-- passed straight to pcall types as returning the flag alone.
+		local ok, err = pcall(function(): string?
+			build()
+			return nil
+		end)
+		if not ok then
+			warn(("[SquishyClicker] %s UI failed to build — %s"):format(what, tostring(err)))
+		end
+	end)
+end
+
+mount("Launcher", function()
 	Launch.mount(gui, Scene)
 end)
-task.spawn(function()
+mount("King of the Steamer", function()
 	King.mount(gui)
 end)
-task.spawn(function()
+mount("Cannon HUD", function()
 	Cannon.mount(gui, Scene)
 	-- Mounting replaced Cannon.update, so the numbers already in state need
 	-- pushing through it once — the next sync could be a click away.
