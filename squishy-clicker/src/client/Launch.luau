@@ -1,22 +1,22 @@
 --!strict
 -- ============================================================
---  SQUISHY LAUNCH  —  the cannon's UI.
+--  SQUISHY LAUNCH  —  the main game's controls.
 --
---  A launch simulator. Two taps: the first stops a sweeping
---  CHARGE meter, the second an ANGLE meter. Then the shot goes
---  out as nothing but {power, angle}, two plain 0-1 numbers.
+--  A big LAUNCH button at the bottom of the screen. Tap it to
+--  start a sweeping CHARGE meter, tap again to lock the charge,
+--  once more for the angle. Then the shot goes out as nothing but
+--  {power, angle}, two plain 0-1 numbers.
 --
---  The squishy is fired, skips down an endless rainbow track,
---  sweeps up TNT, coins and gems on the way and rolls to a stop.
---  How far it got is the score, and everything the run earned is
---  read back on a summary card at the end.
+--  The squishy is fired, skips down the valley, sweeps up TNT,
+--  cash and gems on the way and rolls to a stop. How far it got
+--  is the score, and everything the run earned is read back on a
+--  summary card at the end.
 --
 --  The client never says how far it went, what it collected or
 --  what it won. The server simulates the whole flight and sends
 --  back its shape — every hop, its peak, its duration — and this
---  draws that. See the comment at the top of the server's
---  ballistics section for why the simulation is arithmetic and
---  not Roblox physics.
+--  draws that. See the comment on the server's ballistics section
+--  for why the simulation is arithmetic and not Roblox physics.
 -- ============================================================
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -26,6 +26,7 @@ local TweenService = game:GetService("TweenService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local Format = require(Shared:WaitForChild("Format"))
+local UI = require(script.Parent:WaitForChild("UI"))
 
 local Launch = {}
 
@@ -34,34 +35,9 @@ local Launch = {}
 function Launch.setReadyIn(_seconds: number) end
 function Launch.setBest(_distance: number) end
 
-local COLOR = {
-	panel = Color3.fromRGB(255, 255, 255),
-	text = Color3.fromRGB(74, 52, 38),
-	dim = Color3.fromRGB(150, 130, 118),
-	track = Color3.fromRGB(238, 224, 212),
-	power = Color3.fromRGB(240, 130, 90),
-	angle = Color3.fromRGB(120, 190, 240),
-	go = Color3.fromRGB(126, 224, 192),
-	locked = Color3.fromRGB(228, 222, 216),
-	gold = Color3.fromRGB(255, 199, 92),
-	tnt = Color3.fromRGB(232, 118, 58),
-	coin = Color3.fromRGB(250, 196, 76),
-	gem = Color3.fromRGB(110, 220, 212),
-}
+local C = UI.color
 
-local function make(className: string, props: { [string]: any }): any
-	local inst = Instance.new(className)
-	for key, value in props do
-		(inst :: any)[key] = value
-	end
-	return inst
-end
-
-local function corner(radius: number, parent: Instance)
-	make("UICorner", { CornerRadius = UDim.new(0, radius), Parent = parent })
-end
-
--- Stage of the shot: "idle" (closed), "power", "angle", "flying", "summary".
+-- Stage of the shot: "idle", "power", "angle", "flying", "summary".
 type Stage = "idle" | "power" | "angle" | "flying" | "summary"
 
 function Launch.mount(gui: ScreenGui, scene: any)
@@ -93,171 +69,116 @@ function Launch.mount(gui: ScreenGui, scene: any)
 		end
 	end)
 
-	-- ---------- the open button, beside the Unbox tray ----------
-	local openButton = make("TextButton", {
-		Name = "CannonButton",
-		Size = UDim2.new(0, 160, 0, 44),
-		Position = UDim2.new(0, 508, 1, -100),
-		BackgroundColor3 = COLOR.gold,
-		AutoButtonColor = true,
-		Font = Enum.Font.FredokaOne,
-		Text = "🎯 Cannon",
-		TextColor3 = COLOR.text,
-		TextSize = 18,
-		ZIndex = 2,
+	-- ---------- the record banner ----------
+	local bestBanner = UI.make("Frame", {
+		Name = "BestBanner",
+		Size = UDim2.new(0, 240, 0, 44),
+		Position = UDim2.new(0.5, 0, 0, 16),
+		AnchorPoint = Vector2.new(0.5, 0),
+		BackgroundColor3 = C.orange,
+		ZIndex = 5,
 		Parent = gui,
 	})
-	corner(14, openButton)
+	UI.corner(14, bestBanner)
+	UI.gradient(bestBanner, C.orange, C.orangeDeep)
+	UI.stroke(bestBanner)
 
-	-- ---------- the aiming panel ----------
-	local panel = make("Frame", {
-		Name = "CannonPanel",
-		Size = UDim2.new(0, 340, 0, 200),
-		Position = UDim2.new(0, 24, 1, -310),
-		BackgroundColor3 = COLOR.panel,
-		BackgroundTransparency = 0.06,
-		Active = true, -- swallow taps, or aiming also squishes the squishy
-		Visible = false,
-		ZIndex = 6,
-		Parent = gui,
-	})
-	corner(18, panel)
-
-	local title = make("TextLabel", {
-		Size = UDim2.new(1, -20, 0, 26),
-		Position = UDim2.new(0, 10, 0, 10),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.FredokaOne,
-		Text = "Charge it up!",
-		TextColor3 = COLOR.text,
+	local bestLabel = UI.label({
+		Size = UDim2.fromScale(1, 1),
+		Text = "🏆 Best  0 Studs",
 		TextSize = 20,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 7,
+		ZIndex = 6,
+		Parent = bestBanner,
+	})
+
+	-- ---------- the charge panel ----------
+	-- Bottom centre, right above the launch button, so the meter and the
+	-- thumb that stops it are in the same place.
+	local panel = UI.make("Frame", {
+		Name = "ChargePanel",
+		Size = UDim2.new(0, 420, 0, 132),
+		Position = UDim2.new(0.5, 0, 1, -108),
+		AnchorPoint = Vector2.new(0.5, 1),
+		BackgroundColor3 = C.body,
+		Active = true, -- swallow taps, or aiming also squishes the squisher
+		Visible = false,
+		ZIndex = 8,
+		Parent = gui,
+	})
+	UI.corner(16, panel)
+	UI.gradient(panel, C.body, C.bodyDark)
+	UI.stroke(panel, 4)
+
+	local title = UI.label({
+		Size = UDim2.new(1, -20, 0, 30),
+		Position = UDim2.new(0, 10, 0, 6),
+		Text = "Charge it up!",
+		TextSize = 24,
+		ZIndex = 9,
 		Parent = panel,
 	})
 
-	make("TextLabel", {
-		Size = UDim2.new(1, -20, 0, 18),
-		Position = UDim2.new(0, 10, 0, 34),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamMedium,
-		Text = "tap the meter to lock it in",
-		TextColor3 = COLOR.dim,
-		TextSize = 13,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 7,
-		Parent = panel,
-	})
-
-	-- The number to beat. A distance game needs one on screen at all times.
-	local bestLabel = make("TextLabel", {
-		Size = UDim2.new(0, 150, 0, 18),
-		Position = UDim2.new(1, -160, 0, 34),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamBold,
-		Text = "best 0",
-		TextColor3 = COLOR.gold,
-		TextSize = 13,
-		TextXAlignment = Enum.TextXAlignment.Right,
-		ZIndex = 7,
-		Parent = panel,
-	})
-
-	-- Two meters, each with a bar that sweeps back and forth. A locked-in
-	-- value leaves its bar parked where it was stopped. The charge meter FILLS
-	-- rather than showing a marker, because "how full is it" is the thing the
-	-- player is actually timing.
-	local function newMeter(y: number, fill: Color3, filling: boolean): (Frame, Frame)
-		local track = make("Frame", {
-			Size = UDim2.new(1, -20, 0, 24),
+	-- Two meters. The charge one FILLS, because "how full is it" is the thing
+	-- the player is timing; the angle one slides a marker, because there the
+	-- question is "where is it pointing".
+	local function meter(y: number, top: Color3, bottom: Color3, filling: boolean, caption: string): (Frame, Frame)
+		local track = UI.make("Frame", {
+			Size = UDim2.new(1, -20, 0, 30),
 			Position = UDim2.new(0, 10, 0, y),
-			BackgroundColor3 = COLOR.track,
+			BackgroundColor3 = Color3.fromRGB(96, 58, 26),
 			ClipsDescendants = true,
-			ZIndex = 7,
+			ZIndex = 9,
 			Parent = panel,
 		})
-		corner(12, track)
+		UI.corner(12, track)
+		UI.stroke(track)
 
-		local bar = make("Frame", {
-			Size = filling and UDim2.new(0, 0, 1, 0) or UDim2.new(0, 10, 1, -6),
-			Position = filling and UDim2.fromScale(0, 0) or UDim2.new(0, 3, 0, 3),
-			BackgroundColor3 = fill,
+		local bar = UI.make("Frame", {
+			Size = filling and UDim2.new(0, 0, 1, 0) or UDim2.new(0, 16, 1, -8),
+			Position = filling and UDim2.fromScale(0, 0) or UDim2.new(0, 4, 0, 4),
+			BackgroundColor3 = top,
 			BorderSizePixel = 0,
-			ZIndex = 8,
+			ZIndex = 10,
 			Parent = track,
 		})
-		corner(filling and 12 or 5, bar)
+		UI.corner(filling and 12 or 8, bar)
+		UI.gradient(bar, top, bottom)
+
+		UI.label({
+			Size = UDim2.fromScale(1, 1),
+			Text = caption,
+			TextSize = 15,
+			ZIndex = 12,
+			Parent = track,
+		})
 		return track, bar
 	end
 
-	local powerTrack, powerBar = newMeter(60, COLOR.power, true)
-	local angleTrack, angleBar = newMeter(94, COLOR.angle, false)
+	local _, powerBar = meter(42, C.orange, C.orangeDeep, true, "CHARGE")
+	local _, angleBar = meter(80, C.blue, C.blueDeep, false, "ANGLE")
 
-	local function meterLabel(track: Frame, text: string)
-		make("TextLabel", {
-			Size = UDim2.new(1, 0, 1, 0),
-			BackgroundTransparency = 1,
-			Font = Enum.Font.GothamBold,
-			Text = text,
-			TextColor3 = COLOR.text,
-			TextTransparency = 0.35,
-			TextSize = 12,
-			ZIndex = 9,
-			Parent = track,
-		})
-	end
-	meterLabel(powerTrack, "CHARGE")
-	meterLabel(angleTrack, "ANGLE")
-
-	local status = make("TextLabel", {
-		Size = UDim2.new(1, -20, 0, 22),
-		Position = UDim2.new(0, 10, 0, 124),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamBold,
-		Text = "",
-		TextColor3 = COLOR.text,
-		TextSize = 14,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 7,
-		Parent = panel,
+	-- ---------- the launch button ----------
+	local launchButton = UI.button({
+		parent = gui,
+		size = UDim2.new(0, 300, 0, 78),
+		position = UDim2.new(0.5, 0, 1, -18),
+		anchor = Vector2.new(0.5, 1),
+		text = "🚀 LAUNCH!",
+		textSize = 34,
+		top = C.green,
+		bottom = C.greenDeep,
+		zIndex = 8,
+		radius = 18,
 	})
-
-	local lockButton = make("TextButton", {
-		Size = UDim2.new(1, -20, 0, 38),
-		Position = UDim2.new(0, 10, 1, -48),
-		BackgroundColor3 = COLOR.go,
-		AutoButtonColor = true,
-		Font = Enum.Font.FredokaOne,
-		Text = "LOCK CHARGE",
-		TextColor3 = COLOR.text,
-		TextSize = 17,
-		ZIndex = 7,
-		Parent = panel,
-	})
-	corner(12, lockButton)
-
-	local closeButton = make("TextButton", {
-		Size = UDim2.new(0, 28, 0, 28),
-		Position = UDim2.new(1, -36, 0, 8),
-		BackgroundColor3 = COLOR.locked,
-		AutoButtonColor = true,
-		Font = Enum.Font.GothamBold,
-		Text = "✕",
-		TextColor3 = COLOR.text,
-		TextSize = 15,
-		ZIndex = 8,
-		Parent = panel,
-	})
-	corner(8, closeButton)
 
 	-- ---------- the in-flight readout ----------
-	-- Deliberately huge and centred at the top of the screen rather than tucked
-	-- in the panel: while the shot is in the air the distance is the only thing
-	-- on screen worth reading, and it has to be legible at a glance on a phone.
-	local flightHud = make("Frame", {
+	-- Deliberately huge and centred rather than tucked in a panel: while the
+	-- shot is in the air the distance is the only thing worth reading, and it
+	-- has to be legible at a glance on a phone.
+	local flightHud = UI.make("Frame", {
 		Name = "FlightHud",
-		Size = UDim2.new(0, 420, 0, 132),
-		Position = UDim2.new(0.5, 0, 0, 24),
+		Size = UDim2.new(0, 460, 0, 140),
+		Position = UDim2.new(0.5, 0, 0, 20),
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 1,
 		Visible = false,
@@ -265,162 +186,123 @@ function Launch.mount(gui: ScreenGui, scene: any)
 		Parent = gui,
 	})
 
-	local distanceLabel = make("TextLabel", {
-		Size = UDim2.new(1, 0, 0, 76),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.FredokaOne,
+	local distanceLabel = UI.label({
+		Size = UDim2.new(1, 0, 0, 82),
 		Text = "0",
-		TextColor3 = Color3.fromRGB(255, 255, 255),
-		TextStrokeColor3 = Color3.fromRGB(52, 38, 30),
-		TextStrokeTransparency = 0.1,
-		TextSize = 68,
+		TextSize = 76,
+		StrokeThickness = 4,
 		ZIndex = 21,
 		Parent = flightHud,
 	})
-
-	make("TextLabel", {
-		Size = UDim2.new(1, 0, 0, 22),
-		Position = UDim2.new(0, 0, 0, 70),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.FredokaOne,
+	UI.label({
+		Size = UDim2.new(1, 0, 0, 24),
+		Position = UDim2.new(0, 0, 0, 78),
 		Text = "STUDS",
-		TextColor3 = COLOR.gold,
-		TextStrokeColor3 = Color3.fromRGB(52, 38, 30),
-		TextStrokeTransparency = 0.25,
-		TextSize = 18,
+		TextSize = 20,
+		TextColor3 = Color3.fromRGB(252, 214, 132),
 		ZIndex = 21,
 		Parent = flightHud,
 	})
-
-	local vitalsLabel = make("TextLabel", {
-		Size = UDim2.new(1, 0, 0, 26),
-		Position = UDim2.new(0, 0, 0, 96),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamBold,
+	local vitalsLabel = UI.label({
+		Size = UDim2.new(1, 0, 0, 28),
+		Position = UDim2.new(0, 0, 0, 104),
 		Text = "",
-		TextColor3 = Color3.fromRGB(255, 255, 255),
-		TextStrokeColor3 = Color3.fromRGB(52, 38, 30),
-		TextStrokeTransparency = 0.25,
-		TextSize = 17,
+		TextSize = 19,
 		ZIndex = 21,
 		Parent = flightHud,
 	})
 
 	-- ---------- the end-of-flight summary ----------
-	local summary = make("Frame", {
-		Name = "FlightSummary",
-		Size = UDim2.new(0, 340, 0, 320),
-		Position = UDim2.new(0.5, 0, 0.5, 0),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		BackgroundColor3 = COLOR.panel,
-		BackgroundTransparency = 0.04,
-		Active = true,
-		Visible = false,
-		ZIndex = 24,
-		Parent = gui,
-	})
-	corner(20, summary)
-
-	local summaryTitle = make("TextLabel", {
-		Size = UDim2.new(1, -24, 0, 32),
-		Position = UDim2.new(0, 12, 0, 14),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.FredokaOne,
-		Text = "Landed!",
-		TextColor3 = COLOR.text,
-		TextSize = 26,
-		ZIndex = 25,
-		Parent = summary,
+	local summary = UI.panel({
+		parent = gui,
+		name = "FlightSummary",
+		size = UDim2.new(0, 420, 0, 400),
+		position = UDim2.fromScale(0.5, 0.5),
+		icon = "🚀",
+		title = "Landed!",
+		top = C.green,
+		bottom = C.greenDeep,
+		zIndex = 30,
 	})
 
-	local summaryDistance = make("TextLabel", {
-		Size = UDim2.new(1, -24, 0, 56),
-		Position = UDim2.new(0, 12, 0, 46),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.FredokaOne,
-		Text = "0 studs",
-		TextColor3 = COLOR.power,
-		TextSize = 44,
-		ZIndex = 25,
-		Parent = summary,
+	local summaryDistance = UI.label({
+		Size = UDim2.new(1, -24, 0, 64),
+		Position = UDim2.new(0, 12, 0, 8),
+		Text = "0 Studs",
+		TextSize = 50,
+		StrokeThickness = 3,
+		ZIndex = 33,
+		Parent = summary.body,
 	})
 
 	-- One row per currency, so the reward reads as three separate wins rather
 	-- than one sentence nobody parses.
-	local function rewardRow(y: number, color: Color3): TextLabel
-		local row = make("Frame", {
-			Size = UDim2.new(1, -24, 0, 34),
-			Position = UDim2.new(0, 12, 0, y),
-			BackgroundColor3 = color,
-			BackgroundTransparency = 0.82,
-			ZIndex = 25,
-			Parent = summary,
+	local function rewardRow(y: number, top: Color3, bottom: Color3): TextLabel
+		local card = UI.card({
+			parent = summary.body,
+			size = UDim2.new(1, -24, 0, 44),
+			position = UDim2.new(0, 12, 0, y),
+			top = top,
+			bottom = bottom,
+			zIndex = 33,
 		})
-		corner(10, row)
-		return make("TextLabel", {
-			Size = UDim2.new(1, -16, 1, 0),
-			Position = UDim2.new(0, 8, 0, 0),
-			BackgroundTransparency = 1,
-			Font = Enum.Font.GothamBold,
+		return UI.label({
+			Size = UDim2.new(1, -20, 1, 0),
+			Position = UDim2.new(0, 12, 0, 0),
 			Text = "",
-			TextColor3 = COLOR.text,
-			TextSize = 15,
+			TextSize = 20,
 			TextXAlignment = Enum.TextXAlignment.Left,
-			ZIndex = 26,
-			Parent = row,
+			ZIndex = 34,
+			Parent = card,
 		})
 	end
 
-	local tntRow = rewardRow(112, COLOR.tnt)
-	local coinRow = rewardRow(150, COLOR.coin)
-	local gemRow = rewardRow(188, COLOR.gem)
+	local tntRow = rewardRow(78, C.tnt, Color3.fromRGB(212, 106, 40))
+	local coinRow = rewardRow(128, C.cash, Color3.fromRGB(84, 186, 60))
+	local gemRow = rewardRow(178, C.gem, Color3.fromRGB(64, 190, 190))
 
-	local breakdown = make("TextLabel", {
-		Size = UDim2.new(1, -24, 0, 46),
+	local breakdown = UI.label({
+		Size = UDim2.new(1, -24, 0, 66),
 		Position = UDim2.new(0, 12, 0, 228),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamMedium,
 		Text = "",
-		TextColor3 = COLOR.dim,
-		TextSize = 12,
+		TextSize = 14,
+		TextColor3 = Color3.fromRGB(252, 226, 180),
 		TextWrapped = true,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextYAlignment = Enum.TextYAlignment.Top,
-		ZIndex = 25,
-		Parent = summary,
+		StrokeThickness = 1.5,
+		ZIndex = 33,
+		Parent = summary.body,
 	})
 
-	local againButton = make("TextButton", {
-		Size = UDim2.new(1, -24, 0, 38),
-		Position = UDim2.new(0, 12, 1, -48),
-		BackgroundColor3 = COLOR.go,
-		AutoButtonColor = true,
-		Font = Enum.Font.FredokaOne,
-		Text = "NICE!",
-		TextColor3 = COLOR.text,
-		TextSize = 18,
-		ZIndex = 25,
-		Parent = summary,
+	local againButton = UI.button({
+		parent = summary.body,
+		size = UDim2.new(1, -24, 0, 50),
+		position = UDim2.new(0, 12, 1, -60),
+		text = "LAUNCH AGAIN",
+		textSize = 24,
+		top = C.green,
+		bottom = C.greenDeep,
+		zIndex = 33,
 	})
-	corner(12, againButton)
 
 	-- ---------- driving the meters ----------
 	local function setStage(next: Stage)
 		stage = next
 		panel.Visible = next == "power" or next == "angle"
 		flightHud.Visible = next == "flying"
-		summary.Visible = next == "summary"
+		summary.root.Visible = next == "summary"
+		bestBanner.Visible = next == "idle" or next == "power" or next == "angle"
+		launchButton.button.Visible = next == "idle" or next == "power" or next == "angle"
 
 		if next == "power" then
 			title.Text = "Charge it up!"
-			title.TextColor3 = COLOR.text
-			lockButton.Text = "LOCK CHARGE"
-			lockButton.BackgroundColor3 = COLOR.go
-			status.Text = ""
+			launchButton.button.Text = "LOCK CHARGE"
 		elseif next == "angle" then
 			title.Text = "Now the angle!"
-			lockButton.Text = "FIRE!"
-			lockButton.BackgroundColor3 = COLOR.power
+			launchButton.button.Text = "🔥 FIRE!"
+		elseif next == "idle" then
+			launchButton.button.Text = "🚀 LAUNCH!"
 		end
 	end
 
@@ -434,26 +316,42 @@ function Launch.mount(gui: ScreenGui, scene: any)
 
 	local function closeAiming()
 		setStage("idle")
-		scene.setView("main")
 		-- Now that nothing is in the air, the next shot's track can go down.
 		applyPendingField()
 	end
 
-	local function openAiming()
-		if readyIn > 0 or stage ~= "idle" then
-			return
-		end
-		chosenPower = 0
-		sweep = 0
-		powerBar.Size = UDim2.new(0, 0, 1, 0)
-		angleBar.Position = UDim2.new(0, 3, 0, 3)
-		scene.setView("cannon")
-		setStage("power")
+	summary.close.Activated:Connect(closeAiming)
+	againButton.button.Activated:Connect(closeAiming)
+
+	local function currentSweep(): number
+		return sweep <= 1 and sweep or 2 - sweep
 	end
 
-	openButton.Activated:Connect(openAiming)
-	closeButton.Activated:Connect(closeAiming)
-	againButton.Activated:Connect(closeAiming)
+	launchButton.button.Activated:Connect(function()
+		if stage == "idle" then
+			if readyIn > 0 then
+				return
+			end
+			chosenPower = 0
+			sweep = 0
+			powerBar.Size = UDim2.new(0, 0, 1, 0)
+			angleBar.Position = UDim2.new(0, 4, 0, 4)
+			scene.setView("main")
+			setStage("power")
+		elseif stage == "power" then
+			chosenPower = currentSweep()
+			powerBar.Size = UDim2.fromScale(chosenPower, 1)
+			sweep = 0
+			setStage("angle")
+		elseif stage == "angle" then
+			local chosenAngle = currentSweep()
+			setStage("flying")
+			distanceLabel.Text = "0"
+			vitalsLabel.Text = ""
+			-- Two numbers, nothing else. The server does the rest.
+			shotRemote:FireServer(chosenPower, chosenAngle)
+		end
+	end)
 
 	-- The sweep runs on the render step so the meters move smoothly; they are
 	-- only ever a display, and the value is read at the instant of the tap.
@@ -482,34 +380,14 @@ function Launch.mount(gui: ScreenGui, scene: any)
 
 		if stage == "power" then
 			powerBar.Size = UDim2.fromScale(value, 1)
-			status.Text = ("charge %d%%"):format(math.floor(value * 100 + 0.5))
+			title.Text = ("Charge  %d%%"):format(math.floor(value * 100 + 0.5))
 		else
-			angleBar.Position = UDim2.new(value, -value * 13 + 3, 0, 3)
+			angleBar.Position = UDim2.new(value, -value * 20 + 4, 0, 4)
 			scene.setCannonAim(value)
-			status.Text = ("charge %d%%   ·   angle %d°"):format(
+			title.Text = ("Charge %d%%   ·   Angle %d°"):format(
 				math.floor(chosenPower * 100 + 0.5),
 				math.floor(Config.LaunchMinAngle + (Config.LaunchMaxAngle - Config.LaunchMinAngle) * value + 0.5)
 			)
-		end
-	end)
-
-	local function currentSweep(): number
-		return sweep <= 1 and sweep or 2 - sweep
-	end
-
-	lockButton.Activated:Connect(function()
-		if stage == "power" then
-			chosenPower = currentSweep()
-			powerBar.Size = UDim2.fromScale(chosenPower, 1)
-			sweep = 0
-			setStage("angle")
-		elseif stage == "angle" then
-			local chosenAngle = currentSweep()
-			setStage("flying")
-			distanceLabel.Text = "0"
-			vitalsLabel.Text = ""
-			-- Two numbers, nothing else. The server does the rest.
-			shotRemote:FireServer(chosenPower, chosenAngle)
 		end
 	end)
 
@@ -520,7 +398,8 @@ function Launch.mount(gui: ScreenGui, scene: any)
 		end
 
 		-- The stage says how long its animation runs, so the summary can wait
-		-- for the landing exactly rather than on a guessed timer.
+		-- for the landing exactly rather than on a guessed timer. Announcing
+		-- the distance mid-flight would give the ending away.
 		local flightSeconds = scene.playLaunch(result)
 
 		task.delay(flightSeconds + 0.4, function()
@@ -528,25 +407,24 @@ function Launch.mount(gui: ScreenGui, scene: any)
 				return
 			end
 			best = math.max(result.best or 0, best)
-			bestLabel.Text = ("best %s"):format(Format.abbreviate(math.floor(best)))
+			bestLabel.Text = ("🏆 Best  %s Studs"):format(Format.abbreviate(math.floor(best)))
 
-			summaryTitle.Text = result.record and "NEW BEST!" or "Landed!"
-			summaryTitle.TextColor3 = result.record and COLOR.gold or COLOR.text
-			summaryDistance.Text = ("%s studs"):format(Format.abbreviate(math.floor(result.distance or 0)))
+			summary.title.Text = result.record and "NEW BEST!" or "Landed!"
+			summaryDistance.Text = ("%s Studs"):format(Format.abbreviate(math.floor(result.distance or 0)))
 
 			tntRow.Text = ("🧨  +%s TNT"):format(Format.abbreviate(result.tnt or 0))
-			coinRow.Text = ("🪙  +%s coins"):format(Format.abbreviate(result.coins or 0))
-			gemRow.Text = ("💎  +%s gems"):format(Format.abbreviate(result.gems or 0))
+			coinRow.Text = ("💵  +%s Cash"):format(Format.abbreviate(result.coins or 0))
+			gemRow.Text = ("💎  +%s Gems"):format(Format.abbreviate(result.gems or 0))
 
 			-- The multiplier breakdown: what each part of the account actually
 			-- contributed, so an upgrade's effect is visible rather than felt.
 			local lines = {
-				("%d bounce%s  ·  rebirth ×%d"):format(
+				("%d bounce%s   ·   rebirth ×%d"):format(
 					result.bounces or 0,
 					(result.bounces or 0) == 1 and "" or "s",
 					result.rebirths or 0
 				),
-				("coins ×%.2f   ·   TNT ×%.2f"):format(result.coinMultiplier or 1, result.tntMultiplier or 1),
+				("cash ×%.2f   ·   TNT ×%.2f"):format(result.coinMultiplier or 1, result.tntMultiplier or 1),
 			}
 			if result.boosted then
 				table.insert(lines, "🧨 Rain TNT was running")
@@ -562,8 +440,8 @@ function Launch.mount(gui: ScreenGui, scene: any)
 			breakdown.Text = table.concat(lines, "\n")
 
 			setStage("summary")
-			summary.BackgroundTransparency = 1
-			TweenService:Create(summary, TweenInfo.new(0.25), { BackgroundTransparency = 0.04 }):Play()
+			summary.root.BackgroundTransparency = 1
+			TweenService:Create(summary.root, TweenInfo.new(0.22), { BackgroundTransparency = 0 }):Play()
 		end)
 	end)
 
@@ -574,7 +452,7 @@ function Launch.mount(gui: ScreenGui, scene: any)
 
 	function Launch.setBest(distance: number)
 		best = math.max(distance, 0)
-		bestLabel.Text = ("best %s"):format(Format.abbreviate(math.floor(best)))
+		bestLabel.Text = ("🏆 Best  %s Studs"):format(Format.abbreviate(math.floor(best)))
 	end
 
 	task.spawn(function()
@@ -583,17 +461,15 @@ function Launch.mount(gui: ScreenGui, scene: any)
 			if readyIn > 0 then
 				readyIn = math.max(readyIn - 0.25, 0)
 			end
-			if readyIn > 0 then
-				openButton.Text = ("🎯 %ds"):format(math.ceil(readyIn))
-				openButton.BackgroundColor3 = COLOR.locked
-				openButton.AutoButtonColor = false
-			else
-				openButton.Text = "🎯 Cannon"
-				openButton.BackgroundColor3 = COLOR.gold
-				openButton.AutoButtonColor = true
+			if stage == "idle" then
+				local ready = readyIn <= 0
+				launchButton.button.Text = ready and "🚀 LAUNCH!" or ("🚀 %ds"):format(math.ceil(readyIn))
+				UI.setButtonEnabled(launchButton, ready, C.green, C.greenDeep)
 			end
 		end
 	end)
+
+	setStage("idle")
 end
 
 return Launch

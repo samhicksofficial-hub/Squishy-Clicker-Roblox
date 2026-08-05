@@ -201,6 +201,42 @@ local Config = {
 	BoostPickupMultiplier = 3,
 	BoostDensityMultiplier = 2,
 
+	-- ===== Worlds =====
+	-- Retunes of the same valley rather than separate maps: a world changes
+	-- the palette of the ground and the canyon and multiplies what the track
+	-- pays, and is unlocked by rebirths. One table drives both the Worlds
+	-- panel and the colours the stage paints itself, so adding an entry here
+	-- is the whole job.
+	Worlds = {
+		{
+			id = "meadow",
+			name = "Sunny Meadow",
+			rebirths = 0,
+			multiplier = 1,
+			grass = Color3.fromRGB(138, 214, 74),
+			grassDark = Color3.fromRGB(112, 190, 58),
+			canyon = Color3.fromRGB(226, 118, 118),
+		},
+		{
+			id = "sunset",
+			name = "Sunset Mesa",
+			rebirths = 3,
+			multiplier = 1.5,
+			grass = Color3.fromRGB(238, 176, 96),
+			grassDark = Color3.fromRGB(214, 148, 72),
+			canyon = Color3.fromRGB(168, 86, 148),
+		},
+		{
+			id = "frost",
+			name = "Frostbite Pass",
+			rebirths = 5,
+			multiplier = 2.2,
+			grass = Color3.fromRGB(214, 238, 248),
+			grassDark = Color3.fromRGB(178, 214, 236),
+			canyon = Color3.fromRGB(120, 158, 206),
+		},
+	},
+
 	-- ===== Eggs and pets =====
 	-- Up to this many pets follow the squishy, and their bonuses add up.
 	MaxEquippedPets = 5,

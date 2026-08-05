@@ -21,6 +21,7 @@ local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local Format = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Format"))
 local Models = require(script.Parent:WaitForChild("Models"))
 
 local Scene = {}
@@ -41,9 +42,25 @@ local FIELD_OF_VIEW = 50
 -- steamer occupies the same spot on screen the squisher does in the main view.
 local STEAMER_ORIGIN = ORIGIN + Vector3.new(-16, 0, 17)
 
--- The cannon sits the same 90° out on the other side, so the three views are
--- one camera turning left, centre and right rather than three cameras.
-local CANNON_ORIGIN = ORIGIN + Vector3.new(17, 0, 18)
+-- ---------- the launch valley ----------
+-- The launcher is the MAIN game now, and it lives a long way from the toy
+-- shop rather than 90° off it.
+--
+-- That distance is not decoration. When all three views shared one camera
+-- position, every piece of scenery on the range had to be checked against the
+-- shop's frustum by hand, and half the map's dimensions were set by "does
+-- this show up in the corner of the toy shop" rather than by what the valley
+-- wanted to be. Giving the valley its own camera station 600 studs away
+-- removes that whole class of problem: the two sets can never see each other,
+-- so the valley can be as wide and as tall as it likes.
+local CANNON_ORIGIN = ORIGIN + Vector3.new(0, 0, 600)
+
+-- Where the camera stands to watch the valley, and what it looks at. Well back
+-- and high, on a shallow downward angle, so the launcher sits in the lower
+-- foreground and the track runs away to a vanishing point behind it — which is
+-- the shot the whole map is composed for.
+local VALLEY_CAM_POS = CANNON_ORIGIN + Vector3.new(-24, 13, 0)
+local VALLEY_CAM_LOOK = CANNON_ORIGIN + Vector3.new(58, 2, 0)
 -- ---------- fitting an unbounded track onto a finite stage ----------
 -- Distances run from a few hundred studs to seven figures, so nothing here is
 -- drawn at 1:1 and nothing is drawn to the end. Instead:
@@ -77,12 +94,10 @@ local runScale = RANGE_SCALE
 local heightScale = RANGE_SCALE
 local scroll = 0 -- stage studs the world has slid backwards
 
--- The recycling stripe pool. Its span is the whole visible track, and the
--- rainbow runs exactly once around it so a stripe wrapping from the far end
--- back to the near one lands on the colour its new neighbour expects.
-local TRACK_STRIPES = 64
-local STRIPE_DEPTH = 2.2
-local TRACK_SPAN = TRACK_STRIPES * STRIPE_DEPTH
+-- How much track is drawn ahead of the launcher, in stage studs. The valley
+-- camera looks a long way down the course, so this has to cover the view to
+-- the vanishing point — anything past it is culled rather than drawn.
+local TRACK_SPAN = 220
 -- The barrel's pivot, which is also where a shot starts from. Sits on top of
 -- the cannon's plinth, so raising the plinth means raising this.
 local MUZZLE_HEIGHT = 3.6
@@ -149,6 +164,11 @@ local jiggle = spring(150, 11)
 local glow = spring(90, 12)
 local rayGlow = spring(40, 9)
 
+-- 0 = the toy shop, 1 = the launch valley. The valley is where the game
+-- starts, so this begins pinned at 1 rather than easing in from the shop.
+local viewRange = spring(26, 9)
+viewRange.value = 1
+viewRange.target = 1
 -- 0 = facing the squisher, 1 = turned 90° left to the steamer nook. Springy
 -- so the turn eases out with a hint of overshoot instead of lerping flatly.
 local viewYaw = spring(30, 10)
@@ -292,40 +312,77 @@ local function onScreen(stageX: number): boolean
 	return stageX > CANNON_ORIGIN.X - 12 and stageX < CANNON_ORIGIN.X + TRACK_SPAN
 end
 
--- The range is deliberately NOT the toy shop: the cannon fires out of the shop
--- and onto a bright rainbow runway under open sky. It's the one view where
--- distance is the whole point, and a wall at the end of it would fight that —
--- so the course simply runs to the horizon.
--- All three views share one camera position, so the range has to keep out of
--- the main view's frustum entirely. That is what fixes these bounds: the
--- runway is narrow and the grass starts well out along +X and +Z, because
--- anything nearer than this shows up as a wedge of lawn inside the toy shop.
--- Twelve studs across still fills most of the cannon view at this distance.
-local RANGE_HALF_WIDTH = 6
+-- A wide grass valley running between stepped red canyon walls, under open
+-- sky, with the distance painted flat on the ground and shrinking away to a
+-- vanishing point. Nothing caps the far end: in a game about distance, a wall
+-- to stop at would be the wrong idea.
+local VALLEY_HALF_WIDTH = 26 -- grass, from the centre line out
+local TRACK_HALF_WIDTH = 17 -- the mown strip the distance markers sit on
 local RANGE_DRAWN = TRACK_SPAN
 
-local GRASS_COLOR = Color3.fromRGB(124, 200, 84)
-local SAND_COLOR = Color3.fromRGB(243, 222, 168)
-local WATER_COLOR = Color3.fromRGB(118, 200, 232)
+local GRASS_COLOR = Color3.fromRGB(138, 214, 74)
+local GRASS_DARK = Color3.fromRGB(112, 190, 58)
+local CANYON_COLOR = Color3.fromRGB(226, 118, 118)
+local CANYON_TOP = Color3.fromRGB(150, 214, 88)
+local WOOD_COLOR = Color3.fromRGB(150, 104, 62)
 
--- Grass apron either side of the runway, laid over the shop's floorboards.
--- Every one of these four bounds is set by the main view rather than by taste:
--- the near corner (GRASS_START_X, GRASS_NEAR_Z) is the one that decides it,
--- and it sits outside the main camera's frustum with room to spare even on an
--- ultrawide screen. Pull either in and lawn appears inside the toy shop.
-local GRASS_START_X = CANNON_ORIGIN.X - 5
-local GRASS_END_X = CANNON_ORIGIN.X + RANGE_DRAWN + 15
-local GRASS_NEAR_Z = CANNON_ORIGIN.Z - 8
-local GRASS_FAR_Z = CANNON_ORIGIN.Z + 22
+-- The valley floor. One long slab, wide enough that the canyon walls are
+-- scenery rather than fences.
 local grass = block(
-	Vector3.new(GRASS_END_X - GRASS_START_X, 0.5, GRASS_FAR_Z - GRASS_NEAR_Z),
-	Vector3.new((GRASS_START_X + GRASS_END_X) * 0.5, ORIGIN.Y - 0.19, (GRASS_NEAR_Z + GRASS_FAR_Z) * 0.5),
+	Vector3.new(RANGE_DRAWN + 80, 1, VALLEY_HALF_WIDTH * 2),
+	CANNON_ORIGIN + Vector3.new(RANGE_DRAWN * 0.5 - 20, -0.5, 0),
 	GRASS_COLOR
 )
 grass.Material = Enum.Material.Grass
 
--- The cannon's little island: a ring of water round a sand bank, straight out
--- of the reference. Cylinders rather than blocks so it reads as an island.
+-- A slightly darker mown strip down the middle, so the track reads as a track
+-- without needing a painted road on it.
+local mown = block(
+	Vector3.new(RANGE_DRAWN + 80, 1, TRACK_HALF_WIDTH * 2),
+	CANNON_ORIGIN + Vector3.new(RANGE_DRAWN * 0.5 - 20, -0.46, 0),
+	GRASS_DARK
+)
+mown.Material = Enum.Material.Grass
+
+-- ---------- the canyon walls ----------
+-- Stepped terraces of red rock either side, each step capped with grass, in
+-- the blocky style of the reference. Built once at full length rather than
+-- recycled: they are pure silhouette, and a seam sliding past at the edge of
+-- frame would be more noticeable than the repetition is.
+local CANYON_STEPS = 5
+local CANYON_STEP_HEIGHT = 5
+local CANYON_STEP_DEPTH = 6
+
+-- Kept so a world change can repaint them; nothing else touches these.
+local canyonFaces: { BasePart } = {}
+local canyonLips: { BasePart } = {}
+
+for side = -1, 1, 2 do
+	for step = 1, CANYON_STEPS do
+		local outward = VALLEY_HALF_WIDTH + (step - 1) * CANYON_STEP_DEPTH
+		local height = step * CANYON_STEP_HEIGHT
+
+		local face = block(
+			Vector3.new(RANGE_DRAWN + 80, height, CANYON_STEP_DEPTH),
+			CANNON_ORIGIN + Vector3.new(RANGE_DRAWN * 0.5 - 20, height * 0.5, side * (outward + CANYON_STEP_DEPTH * 0.5)),
+			CANYON_COLOR
+		)
+		face.Material = Enum.Material.Sandstone
+		table.insert(canyonFaces, face)
+
+		-- The grassy lip on top of each terrace, which is what makes the
+		-- reference's cliffs read as land rather than as a red wall.
+		local lip = block(
+			Vector3.new(RANGE_DRAWN + 80, 0.8, CANYON_STEP_DEPTH),
+			CANNON_ORIGIN + Vector3.new(RANGE_DRAWN * 0.5 - 20, height + 0.4, side * (outward + CANYON_STEP_DEPTH * 0.5)),
+			CANYON_TOP
+		)
+		lip.Material = Enum.Material.Grass
+		table.insert(canyonLips, lip)
+	end
+end
+
+-- Flat cylinders, for the launch pad and its island.
 local function disc(diameter: number, height: number, centre: Vector3, color: Color3): Part
 	local part = Instance.new("Part")
 	part.Shape = Enum.PartType.Cylinder
@@ -341,23 +398,56 @@ local function disc(diameter: number, height: number, centre: Vector3, color: Co
 	return part
 end
 
-disc(12, 0.35, CANNON_ORIGIN + Vector3.new(0, 0.1, 0), WATER_COLOR)
-disc(9.5, 0.5, CANNON_ORIGIN + Vector3.new(0, 0.2, 0), SAND_COLOR)
+-- ---------- the distance ladder ----------
+-- The numbers painted flat on the grass, shrinking away down the valley. This
+-- is the single most important thing on the map: it is the only thing telling
+-- the player how far they have got, and perspective does the rest.
+--
+-- An infinite track cannot have fixed signs, so this is a POOL that shows a
+-- sliding window of round numbers. The step is chosen per field, so at 300
+-- studs of reach it counts in 50s and at 300,000 it counts in 50,000s — the
+-- ladder always reads the same however strong the player is.
+local LADDER_RUNGS = 14
+local ladderStep = 50
 
--- ---------- the rainbow runway ----------
--- Bands laid ACROSS the course, marching away from the cannon. Perpendicular
--- stripes are what give a flat plane its sense of speed, and they are the
--- reason the treadmill reads as motion at all.
-local trackStripes: { BasePart } = {}
-for step = 1, TRACK_STRIPES do
-	local stripe = block(
-		Vector3.new(STRIPE_DEPTH, 0.3, RANGE_HALF_WIDTH * 2),
-		CANNON_ORIGIN + Vector3.new(step * STRIPE_DEPTH, 0.25, 0),
-		-- One full rainbow around the pool, so the wrap is seamless.
-		Color3.fromHSV((step - 1) / TRACK_STRIPES, 0.82, 1)
-	)
-	stripe.Material = Enum.Material.SmoothPlastic
-	table.insert(trackStripes, stripe)
+type Rung = { plate: BasePart, label: TextLabel }
+local ladder: { Rung } = {}
+for _ = 1, LADDER_RUNGS do
+	local plate = block(Vector3.new(9, 0.12, TRACK_HALF_WIDTH * 1.7), CANNON_ORIGIN, GRASS_DARK)
+	plate.Transparency = 1 -- the plate is only a surface to print on
+
+	local surface = Instance.new("SurfaceGui")
+	surface.Face = Enum.NormalId.Top
+	surface.PixelsPerStud = 26
+	surface.AlwaysOnTop = false
+	surface.Parent = plate
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.Text = ""
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextStrokeColor3 = Color3.fromRGB(48, 40, 34)
+	label.TextStrokeTransparency = 0
+	label.TextScaled = true
+	label.Rotation = 180 -- printed to be read from the launcher, not from the far end
+	label.Parent = surface
+
+	table.insert(ladder, { plate = plate, label = label })
+end
+
+-- A round-ish step for the current scale: the ladder should show roughly ten
+-- rungs across the visible track whatever the numbers are, and it should show
+-- them as 50s and 500s rather than as 47s and 468s.
+local function niceStep(rough: number): number
+	local magnitude = 10 ^ math.floor(math.log(math.max(rough, 1), 10))
+	for _, multiple in { 1, 2, 5, 10 } do
+		if magnitude * multiple >= rough then
+			return magnitude * multiple
+		end
+	end
+	return magnitude * 10
 end
 
 -- Returns the invisible anchor rather than the label: a sign on the treadmill
@@ -408,31 +498,91 @@ local milestoneSigns: { MilestoneSign } = {}
 for index, milestone in Config.DistanceMilestones do
 	local color = MILESTONE_COLORS[index] or Color3.fromRGB(238, 232, 224)
 
-	local gate = block(Vector3.new(0.8, 0.16, RANGE_HALF_WIDTH * 2), CANNON_ORIGIN, Color3.fromRGB(255, 255, 255))
+	local gate = block(Vector3.new(1.2, 0.2, TRACK_HALF_WIDTH * 2), CANNON_ORIGIN, Color3.fromRGB(255, 255, 255))
 	gate.Material = Enum.Material.SmoothPlastic
 
 	table.insert(milestoneSigns, {
 		at = milestone.at,
 		gate = gate,
-		post = block(Vector3.new(0.35, 7, 0.35), CANNON_ORIGIN, Color3.fromRGB(250, 248, 244)),
-		sign = floatingLabel(CANNON_ORIGIN, ("%s studs"):format(milestone.name), color, 150, 40),
+		post = block(Vector3.new(0.5, 9, 0.5), CANNON_ORIGIN, Color3.fromRGB(250, 248, 244)),
+		sign = floatingLabel(CANNON_ORIGIN, ("%s studs"):format(milestone.name), color, 190, 48),
 	})
 end
 
--- Boulders down the far side of the course, purely so it isn't a bare green
--- field. Far side only: the near side is where the shop is, and there is not
--- enough lawn between the runway and the corner to put anything on.
+-- ---------- scenery ----------
+-- Trees, bushes, crates, logs and the odd truck scattered up both banks of the
+-- valley. Fixed geometry rather than treadmill-recycled: the eye reads the
+-- ladder and the canyon for motion, and props sliding past would only compete
+-- with them. Seeded, so the same valley is laid out identically every run.
 local rangeRandom = Random.new(19)
-for _ = 1, 12 do
-	local along = rangeRandom:NextNumber(4, RANGE_DRAWN)
-	local out = rangeRandom:NextNumber(RANGE_HALF_WIDTH + 4, RANGE_HALF_WIDTH + 14)
-	local size = rangeRandom:NextNumber(1.4, 3.2)
-	local rock = block(
-		Vector3.new(size, size * 0.75, size * 1.2),
-		CANNON_ORIGIN + Vector3.new(along, size * 0.3, out),
-		Color3.fromRGB(152, 152, 158)
-	)
-	rock.Material = Enum.Material.Slate
+
+local function tree(at: Vector3, scale: number)
+	local trunk = block(Vector3.new(0.9 * scale, 3 * scale, 0.9 * scale), at + Vector3.new(0, 1.5 * scale, 0), WOOD_COLOR)
+	trunk.Material = Enum.Material.Wood
+	-- Three shrinking slabs rather than a cone: the reference's trees are
+	-- stacked blocks, and it reads better at a distance than a smooth shape.
+	for tier = 0, 2 do
+		local width = (5 - tier * 1.3) * scale
+		local leaf = block(
+			Vector3.new(width, 1.6 * scale, width),
+			at + Vector3.new(0, (3.4 + tier * 1.4) * scale, 0),
+			tier == 0 and Color3.fromRGB(96, 186, 76) or Color3.fromRGB(120, 208, 92)
+		)
+		leaf.Material = Enum.Material.Grass
+	end
+end
+
+local function crate(at: Vector3, size: number)
+	local box = block(Vector3.new(size, size, size), at + Vector3.new(0, size * 0.5, 0), Color3.fromRGB(198, 132, 74))
+	box.Material = Enum.Material.WoodPlanks
+end
+
+local function logPile(at: Vector3)
+	for index = 0, 2 do
+		local piece = Instance.new("Part")
+		piece.Shape = Enum.PartType.Cylinder
+		piece.Size = Vector3.new(3.4, 1.1, 1.1)
+		piece.CFrame = CFrame.new(at + Vector3.new(0, 0.55 + (index > 1 and 1 or 0), (index % 2) * 1.2))
+		piece.Color = WOOD_COLOR
+		piece.Material = Enum.Material.Wood
+		piece.Anchored = true
+		piece.CanCollide = false
+		piece.CanQuery = false
+		piece.CanTouch = false
+		piece.Parent = stage
+	end
+end
+
+local function truck(at: Vector3)
+	local body = block(Vector3.new(5, 2, 2.6), at + Vector3.new(0, 1.6, 0), Color3.fromRGB(214, 74, 92))
+	body.Material = Enum.Material.SmoothPlastic
+	block(Vector3.new(2, 1.5, 2.4), at + Vector3.new(1.4, 3.2, 0), Color3.fromRGB(122, 158, 226))
+	for _, corner in { Vector3.new(-1.6, 0.7, 1.4), Vector3.new(1.6, 0.7, 1.4), Vector3.new(-1.6, 0.7, -1.4), Vector3.new(1.6, 0.7, -1.4) } do
+		block(Vector3.new(1.4, 1.4, 0.6), at + corner, Color3.fromRGB(58, 52, 56))
+	end
+end
+
+for index = 1, 26 do
+	local side = index % 2 == 0 and 1 or -1
+	local along = rangeRandom:NextNumber(-14, RANGE_DRAWN + 40)
+	-- Out on the banks, clear of the mown strip the numbers are printed on.
+	local out = side * rangeRandom:NextNumber(TRACK_HALF_WIDTH + 3, VALLEY_HALF_WIDTH - 2)
+	local at = CANNON_ORIGIN + Vector3.new(along, 0, out)
+
+	local roll = rangeRandom:NextNumber()
+	if roll < 0.42 then
+		tree(at, rangeRandom:NextNumber(0.8, 1.5))
+	elseif roll < 0.6 then
+		local size = rangeRandom:NextNumber(2.2, 3.6)
+		local bush = block(Vector3.new(size, size * 0.7, size), at + Vector3.new(0, size * 0.35, 0), Color3.fromRGB(104, 196, 80))
+		bush.Material = Enum.Material.Grass
+	elseif roll < 0.76 then
+		crate(at, rangeRandom:NextNumber(1.6, 2.6))
+	elseif roll < 0.9 then
+		logPile(at)
+	else
+		truck(at)
+	end
 end
 
 -- ---------- the pickups strung along the track ----------
@@ -551,8 +701,8 @@ local TNT_SPOTS = {
 	Vector3.new(-3.2, 1.3, -2.1),
 }
 for _, spot in TNT_SPOTS do
-	local crate = block(Vector3.new(1.3, 1.3, 1.3), CANNON_ORIGIN + spot + Vector3.new(0, 1.1, 0), Color3.fromRGB(228, 118, 58))
-	crate.Material = Enum.Material.WoodPlanks
+	local box = block(Vector3.new(1.3, 1.3, 1.3), CANNON_ORIGIN + spot + Vector3.new(0, 1.1, 0), Color3.fromRGB(228, 118, 58))
+	box.Material = Enum.Material.WoodPlanks
 end
 
 -- The barrel is the one moving piece: the render loop tilts it to the aim.
@@ -964,6 +1114,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	advance(squash, dt)
 	advance(clickerSquash, dt)
 	advance(viewYaw, dt)
+	advance(viewRange, dt)
 	advance(lidLift, dt)
 	advance(lidTilt, dt)
 	advance(lidSide, dt)
@@ -1090,15 +1241,24 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	-- chase camera watches it, so both read the position from one place.
 	local shotPosition = rangeSpot(flight.flown, flight.height) + Vector3.new(0, MUZZLE_HEIGHT, 0)
 
-	-- Recycle the runway stripes through the scroll window. Modulo on the pool
-	-- span means a stripe leaving the near end reappears at the far one, and
-	-- the rainbow runs exactly once around the pool so the seam is invisible.
-	for index, stripe in trackStripes do
-		local along = (index * STRIPE_DEPTH - scroll) % TRACK_SPAN
-		stripe.Position = CANNON_ORIGIN + Vector3.new(along, 0.25, 0)
+	-- The distance ladder. Rungs sit on multiples of ladderStep in GAME studs,
+	-- and the window of multiples currently on screen slides as the shot
+	-- travels — so the numbers count up past the player rather than the track
+	-- being a fixed set of signs.
+	local firstRung = math.floor(scroll / (ladderStep * runScale)) + 1
+	for index, rung in ladder do
+		local at = (firstRung + index - 1) * ladderStep
+		local spot = rangeSpot(at, 0)
+		if onScreen(spot.X) and at > 0 then
+			rung.plate.Position = spot + Vector3.new(0, 0.08, 0)
+			rung.label.Text = ("%s Studs"):format(Format.abbreviate(at))
+			rung.label.TextTransparency = 0
+		else
+			rung.label.TextTransparency = 1
+		end
 	end
 
-	-- Milestone signs have no fixed home: 1,000,000 studs is wherever the
+	-- Milestone gates have no fixed home: 1,000,000 studs is wherever the
 	-- treadmill currently puts it, and most of them are off-stage most of the
 	-- time. Parked out of sight rather than destroyed and rebuilt.
 	for _, sign in milestoneSigns do
@@ -1107,9 +1267,9 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		sign.gate.Transparency = visible and 0 or 1
 		sign.post.Transparency = visible and 0 or 1
 		if visible then
-			sign.gate.Position = spot + Vector3.new(0, 0.45, 0)
-			sign.post.Position = spot + Vector3.new(0, 3.7, RANGE_HALF_WIDTH + 2)
-			sign.sign.Position = spot + Vector3.new(0, 8.2, RANGE_HALF_WIDTH + 2)
+			sign.gate.Position = spot + Vector3.new(0, 0.5, 0)
+			sign.post.Position = spot + Vector3.new(0, 4.7, TRACK_HALF_WIDTH + 2)
+			sign.sign.Position = spot + Vector3.new(0, 10.5, TRACK_HALF_WIDTH + 2)
 		end
 	end
 
@@ -1150,12 +1310,12 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	local chaseWanted = (flight.progress < 1 or elapsed < flight.holdUntil) and 1 or 0
 	flightCam += (chaseWanted - flightCam) * math.min(dt * 3.5, 1)
 
-	-- The blur exists to push the toy shop back behind the squisher, but on
-	-- the range the distance IS the subject — blurring it would fog out the
-	-- far end of the runway, which is the bit worth looking at. So it fades
-	-- off as the camera turns right, and off entirely during a flight.
-	local towardCannon = math.clamp(-viewYaw.value, 0, 1)
-	depthOfField.FarIntensity = backdropFaded and 0.6 * (1 - math.max(towardCannon, flightCam)) or 0
+	-- The blur exists to push the toy shop back behind the squisher, but in
+	-- the valley the distance IS the subject — blurring it would fog out the
+	-- far end of the track, which is the bit worth looking at. So it fades off
+	-- as the camera travels out there, and off entirely during a flight.
+	local away = math.max(math.clamp(viewRange.value, 0, 1), flightCam)
+	depthOfField.FarIntensity = backdropFaded and 0.6 * (1 - away) or 0
 
 	-- The barrel and its two trim pieces all hang off one pivot, so the mouth
 	-- can never drift away from the end of the barrel it belongs to.
@@ -1253,12 +1413,21 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		-- 1 is 90° left onto the steamer nook, -1 is 90° right onto the
 		-- cannon. (+yaw about Y turns left.) The clamp allows a little past
 		-- each end so the spring's overshoot isn't cut off.
-		local yaw = math.clamp(viewYaw.value, -1.15, 1.15) * math.rad(90)
+		-- The shop camera stands still and TURNS: viewYaw 0 faces the
+		-- squisher, 1 is 90° left onto the steamer nook. (+yaw about Y turns
+		-- left.) The clamp allows a little past each end so the spring's
+		-- overshoot isn't cut off.
+		local yaw = math.clamp(viewYaw.value, -0.15, 1.15) * math.rad(90)
 		local dir = CFrame.fromEulerAnglesXYZ(0, yaw, 0):VectorToWorldSpace(BASE_LOOK_DIR)
-		-- Shake in view space, so it reads as shake from either angle.
+		-- Shake in view space, so it reads as shake from any angle.
 		local right = dir:Cross(Vector3.new(0, 1, 0)).Unit
 		local jolt = right * ((math.random() - 0.5) * shake) + Vector3.new(0, (math.random() - 0.5) * shake, 0)
-		local resting = CFrame.lookAt(CAMERA_POS + jolt, CAMERA_POS + jolt + dir)
+		local shopCFrame = CFrame.lookAt(CAMERA_POS + jolt, CAMERA_POS + jolt + dir)
+
+		-- The valley is a different PLACE, not a different angle, so this is a
+		-- travelling shot rather than a turn.
+		local valleyCFrame = CFrame.lookAt(VALLEY_CAM_POS + jolt, VALLEY_CAM_LOOK)
+		local resting = shopCFrame:Lerp(valleyCFrame, math.clamp(viewRange.value, 0, 1))
 
 		if flightCam > 0.001 then
 			-- The whole point of a distance game is watching the distance, so
@@ -1320,6 +1489,11 @@ function Scene.setLaunchField(field: { PickupEntry })
 	-- stretch cap stops a high, short shot from becoming a needle.
 	runScale = TRACK_RUN / furthest
 	heightScale = math.min(STAGE_APEX / highest, runScale * MAX_HEIGHT_STRETCH)
+
+	-- Retune the distance ladder to match: about ten rungs across the visible
+	-- track, snapped to a round number so it counts in 50s and 500s rather
+	-- than in 47s and 468s.
+	ladderStep = niceStep(TRACK_SPAN / runScale / 10)
 
 	for index, prize in pickupParts do
 		local entry = field[index]
@@ -1422,15 +1596,47 @@ function Scene.setPets(colors: { Color3 })
 	end
 end
 
--- Turn the camera: "unbox" swings 90° left onto the steamer nook, "cannon"
--- swings 90° right onto the range, anything else back to the squisher.
+-- Move the camera. "main" and "cannon" are the launch valley, which is where
+-- the game lives; "unbox" and "clicker" travel back to the toy shop, the
+-- steamer nook and the squisher respectively.
 function Scene.setView(view: string)
 	if view == "unbox" then
+		viewRange.target = 0
 		viewYaw.target = 1
-	elseif view == "cannon" then
-		viewYaw.target = -1
-	else
+	elseif view == "clicker" then
+		viewRange.target = 0
 		viewYaw.target = 0
+	else
+		viewRange.target = 1
+	end
+end
+
+-- Which half of the game the camera is on, so the HUD can show the launcher's
+-- controls or the shop's rather than both at once.
+function Scene.atValley(): boolean
+	return viewRange.target > 0.5
+end
+
+-- Repaint the valley in another world's palette. A world is a retune of the
+-- same track rather than a second map — the geometry, the ladder and the
+-- treadmill are identical, which is why switching is a colour swap and not a
+-- teleport. Everything repainted here is cosmetic; the server still owns
+-- every number that decides a payout.
+function Scene.setWorld(index: number)
+	local world = Config.Worlds[index]
+	if not world then
+		return
+	end
+	grass.Color = world.grass
+	mown.Color = world.grassDark
+	for _, face in canyonFaces do
+		face.Color = world.canyon
+	end
+	for _, lip in canyonLips do
+		lip.Color = world.grass
+	end
+	for _, rung in ladder do
+		rung.plate.Color = world.grassDark
 	end
 end
 

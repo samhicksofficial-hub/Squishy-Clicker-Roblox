@@ -1,4 +1,17 @@
-# 🥟 Squishy Clicker — Steamer Edition
+# 🚀 Squishy Launcher
+
+**The launcher is the game.** You start in a grass valley between red canyon
+walls, with a cannon in the foreground and the distance painted flat on the
+ground running away to the horizon. Charge, angle, fire, and watch how far
+your squishy skips.
+
+The clicker half — the steamer, the collection, the squisher on its cushion —
+is still all there, and still feeds the launcher through stars. It just lives
+behind two buttons on the nav rail now rather than being the whole screen.
+
+---
+
+## 🥟 The clicker half — Steamer Edition
 
 Tap the bamboo steamer. After enough taps it pops open and reveals a random
 dumpling squishy — Common through Mythical. Collect copies, then prestige a
@@ -77,6 +90,52 @@ would mean trusting a client's word for how far it went; deterministic
 arithmetic on the server cannot be argued with, and a forty-second flight
 costs no simulation time at all.
 
+## The map
+
+One long valley: a grass floor, a darker mown strip down the middle with the
+distance printed flat on it, and five stepped terraces of red rock up each
+side with grassy lips — the blocky canyon of the reference. Trees, bushes,
+crates, log piles and the odd truck are scattered up both banks from a seeded
+Random, so the valley is laid out identically every run.
+
+The valley sits 600 studs from the toy shop and has its **own camera
+station**, rather than being 90° off the same one. That distance is not
+decoration: when all the views shared one camera position, every piece of
+scenery had to be hand-checked against the shop's frustum, and half the map's
+dimensions were set by "does this show up in the corner of the toy shop"
+rather than by what the valley wanted to be. Now the two sets can never see
+each other and the valley is as wide as it likes.
+
+The distance ladder is a **pool**, not a set of signs. It shows a sliding
+window of round numbers whose step is chosen per shot, so at 300 studs of
+reach it counts in 50s and at 300,000 it counts in 50,000s — the ladder always
+reads the same however strong the player is.
+
+**Worlds** are retunes of that one valley: a palette swap on the grass and the
+canyon, gated on rebirths. Adding one is a single entry in `Config.Worlds`,
+which drives both the Worlds panel and the colours the stage paints itself.
+
+## The look
+
+`src/client/UI.luau` holds the whole visual style — heavy dark outlines,
+gradient header bars with an icon and a red X, warm embossed panel bodies,
+bold outlined text, green price pills. Everything on screen is built through
+it, so changing a stroke width or a header gradient once changes the game.
+
+Two rules worth knowing before adding to it: strokes are `Border` mode so they
+never eat into a fill, and nothing in the kit parents itself anywhere — callers
+pass a parent and the kit only builds.
+
+## Game Shop
+
+The Starter Pack / VIP Bundle / Auto Clicker cards are a **shell**. Each one
+knows its name, its contents and its price, and nothing else. Wiring a card to
+a real purchase means giving it a developer product or gamepass id and calling
+`MarketplaceService` — deliberately not done here, because those ids have to
+come from this game's own Creator Dashboard, and a made-up one would charge
+somebody for the wrong thing. Add the ids and the wiring, and the cards are
+ready for them.
+
 **King of the Steamer** — one giant steamer the whole server clicks together,
 in the panel on the right. The goal scales with how many people are in the
 server, fixed at the start of each round. When it opens, everyone who helped
@@ -103,8 +162,9 @@ a fresh round.
 │       ├── init.client.luau   the HUD, and wiring it to the stage
 │       ├── Scene.luau         the 3D stage: toy shop, track, camera, reveals
 │       ├── Models.luau        builds the steamer and every squishy shape
-│       ├── Launch.luau        the cannon: charge meter, flight HUD, summary
-│       ├── Cannon.luau        wallet, power shop, rebirth, eggs, pets, Rain TNT
+│       ├── UI.luau            the chunky-outline look: panels, buttons, labels
+│       ├── Launch.luau        the launcher: charge meter, flight HUD, summary
+│       ├── Cannon.luau        wallet, nav rail, upgrades, rebirth, worlds, pets, shop
 │       ├── King.luau          the shared-steamer minigame's panel
 │       └── Debug.luau         the Studio-only test menu
 ```

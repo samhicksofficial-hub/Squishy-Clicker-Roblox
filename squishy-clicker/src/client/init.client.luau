@@ -139,6 +139,13 @@ local clickArea = make("TextButton", {
 })
 
 clickArea.MouseButton1Down:Connect(function()
+	-- Only counts while the camera is actually at the squisher. The launcher
+	-- is the main game now and its view fills the screen, so without this
+	-- every tap aimed at the valley would also be squishing a squishy that is
+	-- 600 studs away and off camera.
+	if Scene.atValley() then
+		return
+	end
 	Scene.click()
 	ClickSteamer:FireServer()
 end)
@@ -223,7 +230,7 @@ local headerLabel = make("TextLabel", {
 -- ---------- click progress (bottom left, under the steamer) ----------
 local progressShell = make("Frame", {
 	Size = UDim2.new(0, 300, 0, 28),
-	Position = UDim2.new(0, 24, 1, -92),
+	Position = UDim2.new(0, 124, 1, -92),
 	BackgroundColor3 = COLOR.progressBg,
 	ZIndex = 2,
 	Parent = gui,
@@ -251,7 +258,7 @@ local progressLabel = make("TextLabel", {
 
 make("TextLabel", {
 	Size = UDim2.new(0, 300, 0, 20),
-	Position = UDim2.new(0, 24, 1, -116),
+	Position = UDim2.new(0, 124, 1, -116),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamMedium,
 	Text = "tap anywhere to squish!",
@@ -269,7 +276,7 @@ make("TextLabel", {
 -- fill the bar, then unbox.
 local unboxButton = make("TextButton", {
 	Size = UDim2.new(0, 160, 0, 44),
-	Position = UDim2.new(0, 336, 1, -100),
+	Position = UDim2.new(0, 436, 1, -100),
 	BackgroundColor3 = COLOR.locked,
 	AutoButtonColor = false,
 	Font = Enum.Font.FredokaOne,
@@ -301,7 +308,7 @@ end)
 -- than a bug.
 local costLabel = make("TextLabel", {
 	Size = UDim2.new(0, 320, 0, 20),
-	Position = UDim2.new(0, 24, 1, -58),
+	Position = UDim2.new(0, 124, 1, -58),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamMedium,
 	Text = "",
@@ -617,7 +624,7 @@ SteamerOpened.OnClientEvent:Connect(playReveal)
 local function showCostRise(amount: number)
 	local floater = make("TextLabel", {
 		Size = UDim2.new(0, 200, 0, 26),
-		Position = UDim2.new(0, 24, 1, -92),
+		Position = UDim2.new(0, 124, 1, -92),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.FredokaOne,
 		Text = ("+%d click%s to open"):format(amount, amount == 1 and "" or "s"),
@@ -630,7 +637,7 @@ local function showCostRise(amount: number)
 	TweenService:Create(
 		floater,
 		TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Position = UDim2.new(0, 24, 1, -140), TextTransparency = 1 }
+		{ Position = UDim2.new(0, 124, 1, -140), TextTransparency = 1 }
 	):Play()
 	task.delay(1.2, function()
 		floater:Destroy()
@@ -642,7 +649,7 @@ end
 local function showBanked()
 	local floater = make("TextLabel", {
 		Size = UDim2.new(0, 220, 0, 26),
-		Position = UDim2.new(0, 336, 1, -110),
+		Position = UDim2.new(0, 436, 1, -110),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.FredokaOne,
 		Text = "🥡 steamer banked!",
@@ -655,7 +662,7 @@ local function showBanked()
 	TweenService:Create(
 		floater,
 		TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Position = UDim2.new(0, 336, 1, -158), TextTransparency = 1 }
+		{ Position = UDim2.new(0, 436, 1, -158), TextTransparency = 1 }
 	):Play()
 	task.delay(1.2, function()
 		floater:Destroy()
