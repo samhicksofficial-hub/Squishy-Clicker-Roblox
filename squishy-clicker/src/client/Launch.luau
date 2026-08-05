@@ -40,6 +40,10 @@ local C = UI.color
 -- Stage of the shot: "idle", "power", "angle", "flying", "summary".
 type Stage = "idle" | "power" | "angle" | "flying" | "summary"
 
+-- How long to wait for the server's verdict before giving the screen back.
+-- Comfortably longer than any round trip, and shorter than a player's patience.
+local LAUNCH_TIMEOUT = 6
+
 function Launch.mount(gui: ScreenGui, scene: any)
 	local remotes = ReplicatedStorage:WaitForChild("Remotes")
 	local shotRemote = remotes:WaitForChild("LaunchShot") :: RemoteEvent
@@ -51,6 +55,9 @@ function Launch.mount(gui: ScreenGui, scene: any)
 	local chosenPower = 0
 	local readyIn = 0 -- seconds left on the cooldown, straight from the server
 	local best = 0 -- furthest ever flown, straight from the server
+	-- Bumped on every shot AND every reply, so a late watchdog can tell
+	-- whether the shot it was armed for is still the one in the air.
+	local shotToken = 0
 
 	-- The server lays out the NEXT shot's pickups the instant it scores this
 	-- one, which lands here while the squishy is still in the air. Applying it
@@ -156,6 +163,25 @@ function Launch.mount(gui: ScreenGui, scene: any)
 
 	local _, powerBar = meter(42, C.orange, C.orangeDeep, true, "CHARGE")
 	local _, angleBar = meter(80, C.blue, C.blueDeep, false, "ANGLE")
+
+	-- ---------- the notice line ----------
+	-- Sits just above the launch button and says why a shot did not happen.
+	-- A refusal the player cannot see is indistinguishable from a broken game,
+	-- which is exactly how the cooldown used to read.
+	local notice = UI.label({
+		Name = "LaunchNotice",
+		Size = UDim2.new(0, 420, 0, 30),
+		Position = UDim2.new(0.5, 0, 1, -104),
+		AnchorPoint = Vector2.new(0.5, 1),
+		Text = "",
+		TextSize = 20,
+		TextColor3 = Color3.fromRGB(252, 214, 132),
+		StrokeThickness = 3,
+		Visible = false,
+		ZIndex = 9,
+		Parent = gui,
+	})
+	local noticeToken = 0
 
 	-- ---------- the launch button ----------
 	local launchButton = UI.button({
@@ -320,6 +346,22 @@ function Launch.mount(gui: ScreenGui, scene: any)
 		applyPendingField()
 	end
 
+	-- A refused or lost shot. Hands the screen straight back rather than
+	-- leaving the player looking at a flight that is never going to happen.
+	local function abandonShot(reason: string)
+		shotToken += 1 -- disarm any watchdog still counting down for this shot
+		closeAiming()
+		notice.Text = reason
+		notice.Visible = true
+		noticeToken += 1
+		local token = noticeToken
+		task.delay(2.6, function()
+			if token == noticeToken then
+				notice.Visible = false
+			end
+		end)
+	end
+
 	summary.close.Activated:Connect(closeAiming)
 	againButton.button.Activated:Connect(closeAiming)
 
@@ -350,6 +392,22 @@ function Launch.mount(gui: ScreenGui, scene: any)
 			vitalsLabel.Text = ""
 			-- Two numbers, nothing else. The server does the rest.
 			shotRemote:FireServer(chosenPower, chosenAngle)
+
+			-- WATCHDOG. Entering "flying" hides the launch button and hands the
+			-- screen to the flight HUD, and it has to happen now rather than on
+			-- the reply — otherwise the meters keep sweeping under the player's
+			-- thumb while the round trip completes. The cost is that a reply
+			-- which never arrives leaves the UI dead: HUD stuck at zero, no
+			-- button, no way back. The server answers every refusal it can, but
+			-- a dropped packet or a rate-limit drop answers nothing, so this
+			-- catches whatever falls through.
+			shotToken += 1
+			local token = shotToken
+			task.delay(LAUNCH_TIMEOUT, function()
+				if stage == "flying" and token == shotToken then
+					abandonShot("No answer from the cannon — try again.")
+				end
+			end)
 		end
 	end)
 
@@ -393,9 +451,22 @@ function Launch.mount(gui: ScreenGui, scene: any)
 
 	-- ---------- the server's verdict ----------
 	resultRemote.OnClientEvent:Connect(function(result)
-		if typeof(result) ~= "table" or typeof(result.arcs) ~= "table" then
+		if typeof(result) ~= "table" then
 			return
 		end
+
+		-- A refusal. The server tells us why rather than dropping the request,
+		-- so the screen comes straight back with a reason on it.
+		if result.ok == false then
+			abandonShot(typeof(result.reason) == "string" and result.reason or "The cannon refused that shot.")
+			return
+		end
+
+		if typeof(result.arcs) ~= "table" then
+			return
+		end
+		-- A real verdict arrived: disarm the watchdog armed when we fired.
+		shotToken += 1
 
 		-- The stage says how long its animation runs, so the summary can wait
 		-- for the landing exactly rather than on a guessed timer. Announcing

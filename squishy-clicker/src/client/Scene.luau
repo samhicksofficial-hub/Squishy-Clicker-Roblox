@@ -1412,8 +1412,11 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	barrelMouth.CFrame = barrelPivot * CFrame.new(BARREL_LENGTH - 0.1, 0, 0)
 
 	local toy = clickerModel
-	-- What the summons follow. Set by whichever branch below actually draws.
-	local toyPosition = CLICKER_SPOT + Vector3.new(0, CLICKER_REST_Y, 0)
+	-- What the summons follow. Deliberately the CUSHION, not wherever the
+	-- squisher happens to be: mid-shot the squisher is the cannonball, 600
+	-- studs away in the valley, and summons chasing it would streak across the
+	-- whole map at launch. They stay home and wait.
+	local summonAnchor = CLICKER_SPOT + Vector3.new(0, CLICKER_REST_Y, 0)
 
 	if toy then
 		local cs = clickerSquash.value
@@ -1437,7 +1440,6 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			local impact = nearGround * nearGround * nearGround
 			local squashed = Vector3.new(1 + impact * 0.4, 1 - impact * 0.35, 1 + impact * 0.4)
 
-			toyPosition = shotPosition
 			Models.apply(
 				toy.rig,
 				CFrame.new(shotPosition) * CFrame.fromEulerAnglesXYZ(0, 0, -tumble),
@@ -1449,7 +1451,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			-- the live Y scale also means a squash presses down onto the
 			-- cushion rather than shrinking away from it.
 			local restY = CLICKER_REST_Y - toy.lowestY * toyScale.Y
-			toyPosition = CLICKER_SPOT + Vector3.new(0, restY, 0)
+			summonAnchor = CLICKER_SPOT + Vector3.new(0, restY, 0)
 			Models.apply(
 				toy.rig,
 				CFrame.new(CLICKER_SPOT + Vector3.new(0, restY + math.sin(elapsed * 2.1) * 0.05, 0))
@@ -1463,7 +1465,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	-- it. Critically damped springs rather than a fixed offset, so they swing
 	-- wide on a turn and stretch out at speed instead of moving as one rigid
 	-- object — the lag IS the effect.
-	local ahead = toyPosition
+	local ahead = summonAnchor
 	for index, follower in followers do
 		local target = ahead - Vector3.new(FOLLOW_SPACING, 0, 0)
 		local pull = (target - follower.position) * PET_STIFFNESS - follower.velocity * PET_DAMPING

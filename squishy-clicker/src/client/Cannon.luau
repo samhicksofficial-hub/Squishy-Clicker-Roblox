@@ -18,6 +18,7 @@
 --  agreeing with each other.
 -- ============================================================
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -718,9 +719,15 @@ function Cannon.mount(gui: ScreenGui, scene: any)
 			return
 		end
 
-		-- Draw it as the squishy they actually launched, when we know it.
-		local squishy = typeof(shot.clickerId) == "string" and Squishies.byId[shot.clickerId]
-		scene.playGhost(shot, squishy and squishy.color or Color3.fromRGB(250, 240, 220))
+		-- Everyone gets the broadcast, including whoever fired it. Their own
+		-- shot is already flying as the real thing, so drawing a ghost of it
+		-- too would put two squishies down the valley for one launch.
+		local mine = shot.userId == Players.LocalPlayer.UserId
+		if not mine then
+			-- Draw it as the squishy they actually launched, when we know it.
+			local squishy = typeof(shot.clickerId) == "string" and Squishies.byId[shot.clickerId]
+			scene.playGhost(shot, squishy and squishy.color or Color3.fromRGB(250, 240, 220))
+		end
 
 		table.insert(feedLines, 1, ("%s — %s"):format(shot.name, Format.abbreviate(math.floor(shot.distance or 0))))
 		while #feedLines > Config.LobbyFeedSize do

@@ -862,6 +862,16 @@ end)
 
 refresh()
 
+-- Tell the server we are listening. Its join sync and — more importantly — its
+-- join LaunchField both fire the moment the player is added, which routinely
+-- beats this script to connecting its handlers. A lost sync fixes itself on
+-- the next click; a lost field left the track with no pickups on it at all
+-- until after the player's first shot.
+task.spawn(function()
+	local ready = Remotes:WaitForChild("ClientReady") :: RemoteEvent
+	ready:FireServer()
+end)
+
 -- Studio-only debug menu. Spawned because it waits on a remote that will never
 -- arrive in a published game, and the HUD must not wait with it.
 task.spawn(function()

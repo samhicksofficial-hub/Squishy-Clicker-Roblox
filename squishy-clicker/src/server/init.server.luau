@@ -126,6 +126,18 @@ local SyncData = Instance.new("RemoteEvent")
 SyncData.Name = "SyncData"
 SyncData.Parent = Remotes
 
+-- "I have finished connecting my handlers, send me everything."
+--
+-- The server fires the join sync from PlayerAdded (and from the GetPlayers
+-- catch-up loop, which runs the instant the server script does). Both can and
+-- do beat the client to connecting its listeners, and anything sent before
+-- then is simply gone. SyncData survives that because a click re-sends it
+-- seconds later — but LaunchField only goes out on join, so a lost one left
+-- the whole track bare until after the player's first shot.
+local ClientReady = Instance.new("RemoteEvent")
+ClientReady.Name = "ClientReady"
+ClientReady.Parent = Remotes
+
 -- ---------- Debug ----------
 -- The debug remote is the one thing here that hands out free squishies, so it
 -- only exists in Studio (or for the UserIds you allowlist in Config). In a
@@ -723,9 +735,15 @@ local function loadData(player: Player): PlayerData
 		unopened = loaded and loaded.unopened or 0,
 		clickerId = loaded and loaded.clickerId or nil,
 		-- Deliberately not persisted: a cannon cooldown surviving a rejoin
-		-- would punish reconnecting, and rejoining to skip 15 seconds is not
-		-- an exploit worth defending against.
-		lastLaunch = 0,
+		-- would punish reconnecting, and rejoining to skip the wait is not an
+		-- exploit worth defending against.
+		--
+		-- -inf rather than 0 because these are compared against os.clock(),
+		-- which counts from when the SERVER started, not from any epoch. At 0
+		-- a freshly started server reads as "launched at clock zero", so the
+		-- first several seconds of every Studio session silently refused every
+		-- shot. -inf is the only value that honestly means "never".
+		lastLaunch = -math.huge,
 		-- Saves that predate the distance cannon simply have no record yet.
 		-- Every field below follows the same shape, so a save written before
 		-- this update loads as a player who has never touched the cannon
@@ -742,11 +760,9 @@ local function loadData(player: Player): PlayerData
 		milestones = loaded and loaded.milestones or {},
 		steamersBought = loaded and loaded.steamersBought or 0,
 		active = loaded and loaded.active or {},
-		-- Not persisted: a boost cooldown surviving a rejoin would punish
-		-- reconnecting, and rejoining to skip two minutes is not an exploit
-		-- worth defending against.
+		-- Not persisted, and -inf for the same reason as lastLaunch above.
 		boostUntil = 0,
-		lastBoost = 0,
+		lastBoost = -math.huge,
 
 		limits = {},
 	}
@@ -868,7 +884,31 @@ ClickSteamer.OnServerEvent:Connect(function(player)
 	sync(player)
 end)
 
+-- The client says when it is listening, and gets the join payload again. Rate
+-- limited like everything else, and it hands out nothing a sync wouldn't.
+ClientReady.OnServerEvent:Connect(function(player)
+	local data = dataByPlayer[player]
+	if not data or overRate(data, "ready", 3) then
+		return
+	end
+	if #data.launchField == 0 then
+		data.launchField = makeLaunchField(data)
+	end
+	LaunchField:FireClient(player, data.launchField)
+	sync(player)
+	-- King of the Steamer answers this same remote in its own section below,
+	-- where its snapshot function is in scope.
+end)
+
 -- ---------- Squishy Launch (the cannon) ----------
+
+-- A launch request the server will not honour. The client commits to its
+-- "flying" state the moment it asks — it has to, or the meters would keep
+-- sweeping — so a silent drop leaves it stuck there forever with the flight
+-- HUD reading zero and no launch button. Every refusal therefore ANSWERS.
+local function rejectLaunch(player: Player, reason: string)
+	LaunchResult:FireClient(player, { ok = false, reason = reason })
+end
 
 LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 	local data = dataByPlayer[player]
@@ -876,6 +916,8 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 		return
 	end
 	if overRate(data, "launch", MAX_LAUNCHES_PER_SECOND) then
+		-- The one refusal that stays silent: answering a flood is the flood.
+		-- The client's own watchdog un-sticks it a moment later.
 		return
 	end
 
@@ -883,16 +925,20 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 	-- (which slips through math.clamp) and out-of-range are all rejected
 	-- before a single number is trusted.
 	if typeof(power) ~= "number" or typeof(angle) ~= "number" then
+		rejectLaunch(player, "That shot didn't make sense.")
 		return
 	end
 	if power ~= power or angle ~= angle then
+		rejectLaunch(player, "That shot didn't make sense.")
 		return
 	end
 	power = math.clamp(power, 0, 1)
 	angle = math.clamp(angle, 0, 1)
 
 	local now = os.clock()
-	if now - data.lastLaunch < Config.LaunchCooldownSeconds then
+	local waitLeft = Config.LaunchCooldownSeconds - (now - data.lastLaunch)
+	if waitLeft > 0 then
+		rejectLaunch(player, ("Cannon reloading — %ds"):format(math.ceil(waitLeft)))
 		return
 	end
 	data.lastLaunch = now
@@ -1285,9 +1331,11 @@ if DebugAction then
 				SteamerOpened:FireClient(player, squishy.id)
 			end
 		elseif action == "readyCannon" then
-			-- Sitting out a cooldown while testing is misery.
-			data.lastLaunch = 0
-			data.lastBoost = 0
+			-- Sitting out a cooldown while testing is misery. -inf, not 0:
+			-- these are compared against os.clock(), which starts near zero on
+			-- a fresh server, so 0 would leave the cooldown still running.
+			data.lastLaunch = -math.huge
+			data.lastBoost = -math.huge
 		elseif action == "richCannon" then
 			-- Enough of everything to reach every screen the cannon has.
 			data.tnt += 1000000
@@ -1489,6 +1537,11 @@ Players.PlayerAdded:Connect(sendKingStateTo)
 for _, existing in Players:GetPlayers() do
 	task.spawn(sendKingStateTo, existing)
 end
+
+-- ...and again once the client says it is actually listening, since both of
+-- the above can beat it to connecting. Same remote as the launcher's ready
+-- handshake; this is the second listener on it.
+ClientReady.OnServerEvent:Connect(sendKingStateTo)
 
 Players.PlayerRemoving:Connect(function(player)
 	king.contributions[player] = nil
