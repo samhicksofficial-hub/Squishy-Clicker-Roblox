@@ -125,14 +125,9 @@ local screen = make("ScreenGui", {
 })
 
 -- Everything is built at fixed pixel sizes, which is the only sane way to lay
--- out chunky panels — but it means the whole HUD has to be SCALED to fit,
--- rather than each panel guessing at the screen. So the real root is a
--- full-screen frame with one UIScale on it, and every panel in the game is a
--- child of that. On a small window the HUD shrinks as one piece instead of
--- overlapping itself.
---
--- It has to be a Frame rather than the ScreenGui: UIScale applies to a
--- GuiObject and its descendants, and a ScreenGui is not one.
+-- out chunky panels — so the HUD has to be SCALED to fit the window rather
+-- than each panel guessing at it. This frame is the real root; every panel in
+-- the game is a child of it.
 local gui = make("Frame", {
 	Name = "Root",
 	Size = UDim2.fromScale(1, 1),
@@ -140,12 +135,58 @@ local gui = make("Frame", {
 	Parent = screen,
 })
 
-local uiScale = make("UIScale", { Parent = gui })
-
 -- The size the HUD is laid out for. Anything smaller scales down; anything
 -- bigger scales up a little, but not without limit, or a 4K screen gets a HUD
 -- with letters four inches tall.
 local DESIGN_WIDTH, DESIGN_HEIGHT = 1280, 720
+local hudScale = 1
+
+-- ONE UIScale PER TOP-LEVEL PANEL, not one on the root.
+--
+-- A single UIScale on the root looks like the obvious answer and is wrong: it
+-- scales POSITIONS outward from the root's top-left corner, so anything
+-- anchored to the right or bottom edge is pushed off the screen when the scale
+-- is above 1, and dragged into the middle when it is below. That is exactly
+-- what put the wallet, the collection panel and the whole bottom-left bar
+-- outside the window on a wide monitor.
+--
+-- Per-panel scaling has none of that. Each panel stays positioned against the
+-- screen edge it belongs to, and the scale only shrinks it in place around its
+-- own anchor point — right-anchored panels shrink rightwards, centred ones
+-- shrink towards the centre, and nothing moves.
+local panelScales: { UIScale } = {}
+
+local function scalePanel(child: Instance)
+	if not child:IsA("GuiObject") then
+		return
+	end
+
+	-- Skip anything that already sizes itself off the screen. A UIScale
+	-- multiplies the size it computes, so a panel asking for "full height
+	-- minus 210" would come out 10% taller than the screen and hang off the
+	-- bottom. Those panels are responsive already and need no help; this is
+	-- only for the fixed-pixel ones. (The full-screen click catcher is the
+	-- other thing this protects — scaling that would leave a dead margin.)
+	local size = child.Size
+	if size.X.Scale ~= 0 or size.Y.Scale ~= 0 then
+		return
+	end
+
+	local existing = child:FindFirstChildOfClass("UIScale")
+	if existing then
+		existing.Scale = hudScale
+		return
+	end
+	local scale = Instance.new("UIScale")
+	scale.Scale = hudScale
+	scale.Parent = child
+	table.insert(panelScales, scale)
+end
+
+-- Panels are built by five different modules across several frames, and some
+-- of them (reveal banners, the hatch popup) appear long after startup — so
+-- this watches for new ones rather than sweeping the tree once.
+gui.ChildAdded:Connect(scalePanel)
 
 local function fitHud()
 	local camera = workspace.CurrentCamera
@@ -156,26 +197,33 @@ local function fitHud()
 	if viewport.X <= 0 or viewport.Y <= 0 then
 		return
 	end
-	-- The SMALLER of the two ratios, so nothing is ever cut off: on a wide
-	-- short window it is the height that decides, and on a tall narrow one
-	-- (a phone held upright) it is the width.
-	uiScale.Scale = math.clamp(math.min(viewport.X / DESIGN_WIDTH, viewport.Y / DESIGN_HEIGHT), 0.45, 1.15)
+
+	-- Height leads, because the HUD's long runs are vertical: the nav rail,
+	-- the collection list, the stacked wallet. Width only gets a vote when the
+	-- window is genuinely narrow — that is what the multiplier is for, so a
+	-- merely wide-ish window isn't treated as if it were cramped.
+	local byHeight = viewport.Y / DESIGN_HEIGHT
+	local byWidth = (viewport.X / DESIGN_WIDTH) * 1.5
+	hudScale = math.clamp(math.min(byHeight, byWidth), 0.5, 1.1)
+
+	for _, scale in panelScales do
+		scale.Scale = hudScale
+	end
 end
 
 fitHud()
 do
-	local camera = workspace.CurrentCamera
-	if camera then
-		camera:GetPropertyChangedSignal("ViewportSize"):Connect(fitHud)
+	local function watch(camera: Camera?)
+		if camera then
+			camera:GetPropertyChangedSignal("ViewportSize"):Connect(fitHud)
+			fitHud()
+		end
 	end
+	watch(workspace.CurrentCamera)
 	-- The camera is swapped out on respawn, and the new one needs the same
 	-- connection or the HUD stops resizing halfway through a session.
 	workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
-		local current = workspace.CurrentCamera
-		if current then
-			current:GetPropertyChangedSignal("ViewportSize"):Connect(fitHud)
-			fitHud()
-		end
+		watch(workspace.CurrentCamera)
 	end)
 end
 

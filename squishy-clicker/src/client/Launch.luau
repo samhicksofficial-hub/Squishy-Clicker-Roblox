@@ -313,13 +313,23 @@ function Launch.mount(gui: GuiObject, scene: any)
 	})
 
 	-- ---------- driving the meters ----------
+	-- The launcher's controls belong to the valley. At the toy shop they come
+	-- down entirely — the nav rail is how you get back to them — because the
+	-- big centred LAUNCH button otherwise lands straight on top of the steamer
+	-- bar as soon as the window is anything less than very wide.
+	local atValley = true
+
 	local function setStage(next: Stage)
 		stage = next
-		panel.Visible = next == "power" or next == "angle"
-		flightHud.Visible = next == "flying"
-		summary.root.Visible = next == "summary"
-		bestBanner.Visible = next == "idle" or next == "power" or next == "angle"
-		launchButton.button.Visible = next == "idle" or next == "power" or next == "angle"
+		local aiming = next == "idle" or next == "power" or next == "angle"
+		panel.Visible = atValley and (next == "power" or next == "angle")
+		flightHud.Visible = atValley and next == "flying"
+		summary.root.Visible = atValley and next == "summary"
+		bestBanner.Visible = atValley and aiming
+		launchButton.button.Visible = atValley and aiming
+		if not atValley then
+			notice.Visible = false
+		end
 
 		if next == "power" then
 			title.Text = "Charge it up!"
@@ -364,6 +374,18 @@ function Launch.mount(gui: GuiObject, scene: any)
 
 	summary.close.Activated:Connect(closeAiming)
 	againButton.button.Activated:Connect(closeAiming)
+
+	scene.onViewChanged(function(nowAtValley)
+		atValley = nowAtValley
+		-- Walking off mid-aim abandons the aim rather than leaving a half-set
+		-- charge waiting to be fired at whatever the meters happen to read
+		-- when the player wanders back.
+		if not atValley and (stage == "power" or stage == "angle") then
+			setStage("idle")
+		else
+			setStage(stage)
+		end
+	end)
 
 	local function currentSweep(): number
 		return sweep <= 1 and sweep or 2 - sweep
