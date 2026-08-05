@@ -34,25 +34,23 @@ local Config = {
 	PrestigeGrowth = 2,
 
 	-- ===== Squishy Launch (the cannon) =====
+	-- A DISTANCE game: one shot, one flight, and how far you get IS the score.
+	-- Two numbers decide the whole minigame's earning rate between them — how
+	-- far a good shot travels (the arc numbers) and what a stud is worth
+	-- (LaunchClicksPerStud). Tune those two before touching anything else.
+
 	-- The only thing stopping the cannon from out-earning the steamer, so it
 	-- is the number to raise if launching ever feels like the better loop.
 	LaunchCooldownSeconds = 15,
 
-	-- Clicks of steamer progress a dead-centre shot pays.
-	LaunchBullseyeBonus = 10,
+	-- What one stud of distance pays in steamer clicks. A well-aimed shot at
+	-- full power travels about 95 studs with the arc numbers below, so this is
+	-- roughly 11 clicks before pickups and the zone multiplier are added.
+	LaunchClicksPerStud = 0.12,
 
-	-- How far out the bullseye sits, and how wide each scoring ring is.
-	LaunchTargetDistance = 70,
-	LaunchRingWidth = 7,
-
-	-- What each ring pays as a fraction of the bullseye, centre outwards.
-	-- Miss past the last one and the shot is worth nothing.
-	LaunchRingPays = { 1.0, 0.6, 0.35, 0.15 },
-
-	-- Muzzle speed at full power and the gravity the shot falls under. Range
-	-- works out at speed^2 * sin(2 * angle) / gravity, so these two together
-	-- decide whether the target is even reachable — 90/90 puts maximum range
-	-- at 90 studs, comfortably past the 70-stud bullseye.
+	-- Muzzle speed at full power, and the gravity the shot arcs under. These
+	-- two set the height and the length of the ballistic half of the flight;
+	-- everything else scales off them.
 	LaunchSpeed = 90,
 	LaunchGravity = 90,
 
@@ -64,10 +62,58 @@ local Config = {
 	LaunchMinAngle = 15,
 	LaunchMaxAngle = 75,
 
-	-- Stars' SECOND job: every star adds this fraction to muzzle speed, so a
-	-- prestiged collection reaches further. Capped, or late players can't miss.
+	-- ----- The glide -----
+	-- At the top of the arc the squishy stops falling and GLIDES: it drifts
+	-- forward while sinking, and the ground covered doing that is most of a
+	-- long shot. Glide time grows with how high the apex was, and that is what
+	-- stops the angle dial having one obvious right answer — a flat shot
+	-- travels further before the apex, a steep one glides longer after it, and
+	-- the best angle sits between the two (around 48° with these numbers).
+	LaunchGlideSeconds = 0.6,
+	LaunchGlideSecondsPerStud = 0.04,
+
+	-- Fraction of forward speed kept while gliding. Below 1, or the ballistic
+	-- half of the flight stops mattering and every shot is a flat one.
+	LaunchGlideSpeedFactor = 0.55,
+
+	-- ----- What stars buy -----
+	-- Stars' SECOND job. Each adds a fraction to muzzle speed and to the
+	-- magnet, so a prestiged collection flies further AND sweeps up more on
+	-- the way. Both capped, or a late player cannot help but max every shot.
 	LaunchPowerPerStar = 0.01,
 	LaunchMaxStarPower = 0.3,
+	LaunchMagnetPerStar = 0.03,
+	LaunchMaxStarMagnet = 1,
+
+	-- ----- Mid-air pickups -----
+	-- Sweets floating down the range, laid out fresh after every shot. The
+	-- server places them, decides which ones the arc actually touched, and
+	-- pays for them; the client only ever draws them.
+	LaunchPickupCount = 12,
+	LaunchPickupValue = 3, -- clicks each
+	LaunchPickupGoldenValue = 12, -- the rare one worth bending a shot for
+	LaunchPickupGoldenChance = 0.12,
+
+	-- How near the arc has to pass to sweep one up, in studs, before stars.
+	LaunchPickupMagnet = 3,
+
+	-- Pickups are spread between these fractions of the player's own best
+	-- possible shot, so the field always sits where they can actually reach —
+	-- it stretches further down the range as their stars grow.
+	LaunchPickupNearFraction = 0.12,
+	LaunchPickupFarFraction = 1.05,
+
+	-- ----- Zones -----
+	-- Distance milestones down the range. Landing in one multiplies the WHOLE
+	-- payout, pickups included, so a longer shot is worth more than just its
+	-- extra studs. `from` is in game studs and must ascend.
+	LaunchZones = {
+		{ from = 0, name = "Shop Floor", multiplier = 1 },
+		{ from = 40, name = "Toy Aisle", multiplier = 1.15 },
+		{ from = 70, name = "The Big Window", multiplier = 1.3 },
+		{ from = 110, name = "Out the Door", multiplier = 1.5 },
+		{ from = 160, name = "Over the Rooftops", multiplier = 1.8 },
+	},
 
 	-- ===== King of the Steamer (the shared minigame) =====
 	-- Goal for a server of one, plus this much for every player beyond the

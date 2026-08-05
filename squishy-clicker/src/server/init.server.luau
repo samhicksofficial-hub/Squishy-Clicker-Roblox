@@ -57,6 +57,13 @@ local LaunchResult = Instance.new("RemoteEvent")
 LaunchResult.Name = "LaunchResult"
 LaunchResult.Parent = Remotes
 
+-- Where the mid-air pickups are for this player's NEXT shot. Sent on join and
+-- after every shot rather than folded into the ordinary sync, which fires on
+-- every single click and doesn't need a dozen extra tables riding along.
+local LaunchField = Instance.new("RemoteEvent")
+LaunchField.Name = "LaunchField"
+LaunchField.Parent = Remotes
+
 -- Client asks to add one click to the shared steamer. No payload at all.
 local ClickShared = Instance.new("RemoteEvent")
 ClickShared.Name = "ClickShared"
@@ -106,6 +113,10 @@ end
 -- One per-second bucket per rate-limited remote.
 type RateLimit = { bucket: number, count: number }
 
+-- One floating sweet on the cannon range. Positions are in GAME studs; the
+-- client scales them down to fit the stage.
+type Pickup = { distance: number, height: number, value: number }
+
 type PlayerData = {
 	counts: { [string]: number }, -- copies of each squishy currently held
 	stars: { [string]: number },  -- star level (0-5) per squishy
@@ -114,6 +125,8 @@ type PlayerData = {
 	unopened: number,             -- banked steamers waiting in the Unbox tray
 	clickerId: string?,           -- which owned squishy is the click toy
 	lastLaunch: number,           -- os.clock of the last cannon shot
+	bestDistance: number,         -- furthest cannon shot ever, in studs
+	launchField: { Pickup },      -- pickups waiting for their NEXT shot
 	limits: { [string]: RateLimit }, -- rate limiting, keyed by remote
 }
 
@@ -197,6 +210,127 @@ local function addProgress(data: PlayerData, amount: number)
 	end
 end
 
+-- ---------- Cannon ballistics ----------
+-- Every number the cannon minigame turns on is worked out here, on the server.
+-- The client is sent the finished shape of the flight and draws it; it never
+-- computes a distance, a pickup or a payout of its own.
+
+-- One flight, fully described. Distances and heights are in game studs.
+type Flight = {
+	distance: number, -- total ground covered, and the score
+	apexAt: number, -- how far along the top of the arc is
+	apexHeight: number, -- how high that top is
+	glideRange: number, -- ground covered gliding down from the apex
+	riseSeconds: number, -- time spent climbing, for pacing the animation
+	glideSeconds: number,
+}
+
+-- A shot is two phases: a normal ballistic climb to the apex, then a glide
+-- that sinks in a straight line to the floor. Splitting it there is what makes
+-- the angle dial a real choice — see the glide comments in Config.
+local function flightFor(power: number, angleFraction: number, starPower: number): Flight
+	local speed = Config.LaunchSpeed
+		* (Config.LaunchMinPowerFraction + (1 - Config.LaunchMinPowerFraction) * power)
+		* (1 + starPower)
+	local radians = math.rad(Config.LaunchMinAngle + (Config.LaunchMaxAngle - Config.LaunchMinAngle) * angleFraction)
+	local vx = speed * math.cos(radians)
+	local vy = speed * math.sin(radians)
+
+	local riseSeconds = vy / Config.LaunchGravity
+	local apexHeight = vy * riseSeconds * 0.5
+	local apexAt = vx * riseSeconds
+	local glideSeconds = Config.LaunchGlideSeconds + apexHeight * Config.LaunchGlideSecondsPerStud
+	local glideRange = vx * Config.LaunchGlideSpeedFactor * glideSeconds
+
+	return {
+		distance = apexAt + glideRange,
+		apexAt = apexAt,
+		apexHeight = apexHeight,
+		glideRange = glideRange,
+		riseSeconds = riseSeconds,
+		glideSeconds = glideSeconds,
+	}
+end
+
+-- How high the shot is when it has travelled `x`. The client redraws this same
+-- curve to animate; only this copy decides what was collected.
+local function heightAt(flight: Flight, x: number): number
+	if x <= 0 or flight.apexAt <= 0 then
+		return 0
+	end
+	if x <= flight.apexAt then
+		-- Parabola peaking at the apex and meeting the floor at the muzzle.
+		local offset = (x - flight.apexAt) / flight.apexAt
+		return flight.apexHeight * (1 - offset * offset)
+	end
+	if flight.glideRange <= 0 then
+		return 0
+	end
+	return math.max(flight.apexHeight * (1 - (x - flight.apexAt) / flight.glideRange), 0)
+end
+
+local function starPowerFor(data: PlayerData): number
+	return math.min(totalStars(data) * Config.LaunchPowerPerStar, Config.LaunchMaxStarPower)
+end
+
+-- The furthest this player could possibly throw right now. Found by sampling
+-- the angle dial rather than solving for it: the glide term makes the maximum
+-- messy to derive, and twenty samples of arithmetic costs nothing once a shot.
+local function bestPossibleDistance(starPower: number): number
+	local best = 0
+	for step = 0, 20 do
+		local candidate = flightFor(1, step / 20, starPower).distance
+		if candidate > best then
+			best = candidate
+		end
+	end
+	return best
+end
+
+-- Lay out the sweets for a shot. They spread across the player's OWN reachable
+-- range, so the field stretches further down the course as their stars grow
+-- and never sits somewhere they cannot get to.
+local function makeLaunchField(data: PlayerData): { Pickup }
+	local starPower = starPowerFor(data)
+	local reach = bestPossibleDistance(starPower)
+	local spread = Config.LaunchPickupFarFraction - Config.LaunchPickupNearFraction
+
+	local field: { Pickup } = {}
+	for index = 1, Config.LaunchPickupCount do
+		-- Evenly spaced slots with a jitter inside each, rather than twelve
+		-- free rolls — free rolls clump, and a clumped field is a dead field.
+		local slot = (index - 0.5) / Config.LaunchPickupCount
+		local at = reach * (Config.LaunchPickupNearFraction + spread * slot)
+		at += (rng:NextNumber() - 0.5) * reach * spread / Config.LaunchPickupCount
+
+		-- Height is read off a real arc rather than picked out of the air, so
+		-- every sweet sits on SOME flyable path — a different one each time,
+		-- which is what makes one angle right for this field and not the next.
+		local reference = flightFor(0.7 + rng:NextNumber() * 0.3, rng:NextNumber(), starPower)
+		local golden = rng:NextNumber() < Config.LaunchPickupGoldenChance
+
+		table.insert(field, {
+			distance = math.max(at, 1),
+			height = math.max(heightAt(reference, at), 1.5),
+			value = golden and Config.LaunchPickupGoldenValue or Config.LaunchPickupValue,
+		})
+	end
+	return field
+end
+
+-- The furthest zone this distance has reached. Config.LaunchZones ascends, so
+-- the last one still below the distance is the one landed in.
+local function zoneFor(distance: number)
+	local current = Config.LaunchZones[1]
+	for _, zone in Config.LaunchZones do
+		if distance < zone.from then
+			break
+		end
+		current = zone
+	end
+	return current
+end
+
 -- Copies needed for a squishy's NEXT star, given its rarity and current star.
 -- Base amount comes from the rarity (Common 10 ... Mythical 3), doubling per star.
 local function prestigeCost(squishyId: string, currentStar: number): number?
@@ -228,6 +362,7 @@ local function sync(player: Player)
 		-- Seconds until the cannon is usable again, so the UI can show the
 		-- wait rather than the client guessing at it.
 		launchReadyIn = math.max(Config.LaunchCooldownSeconds - (os.clock() - data.lastLaunch), 0),
+		bestDistance = data.bestDistance,
 	})
 end
 
@@ -255,6 +390,7 @@ local function loadData(player: Player): PlayerData
 		totalOpens: number?,
 		unopened: number?,
 		clickerId: string?,
+		bestDistance: number?,
 	}? =
 		nil
 
@@ -281,6 +417,10 @@ local function loadData(player: Player): PlayerData
 		-- would punish reconnecting, and rejoining to skip 15 seconds is not
 		-- an exploit worth defending against.
 		lastLaunch = 0,
+		-- Saves that predate the distance cannon simply have no record yet.
+		bestDistance = loaded and loaded.bestDistance or 0,
+		-- Laid out in onPlayerAdded, once the stars this reads are in place.
+		launchField = {},
 		limits = {},
 	}
 
@@ -310,6 +450,7 @@ local function saveData(player: Player)
 			totalOpens = data.totalOpens,
 			unopened = data.unopened,
 			clickerId = data.clickerId,
+			bestDistance = data.bestDistance,
 		})
 	end)
 	if not ok then
@@ -338,6 +479,10 @@ local function onPlayerAdded(player: Player)
 	stars.Name = "Stars"
 	stars.Value = totalStars(data)
 	stars.Parent = leaderstats
+
+	-- The range needs sweets on it before they ever open the cannon panel.
+	data.launchField = makeLaunchField(data)
+	LaunchField:FireClient(player, data.launchField)
 
 	sync(player)
 end
@@ -403,28 +548,58 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 	end
 	data.lastLaunch = now
 
-	-- Stars' second job: a prestiged collection throws further.
-	local starBonus = math.min(totalStars(data) * Config.LaunchPowerPerStar, Config.LaunchMaxStarPower)
-	local speed = Config.LaunchSpeed
-		* (Config.LaunchMinPowerFraction + (1 - Config.LaunchMinPowerFraction) * power)
-		* (1 + starBonus)
-	local radians = math.rad(Config.LaunchMinAngle + (Config.LaunchMaxAngle - Config.LaunchMinAngle) * angle)
-	local distance = speed * speed * math.sin(2 * radians) / Config.LaunchGravity
+	local flight = flightFor(power, angle, starPowerFor(data))
+	local distance = flight.distance
 
-	-- Score by how far off the bullseye it landed, in ring widths.
-	local miss = math.abs(distance - Config.LaunchTargetDistance)
-	local ring = math.floor(miss / Config.LaunchRingWidth) + 1
-	local pays = Config.LaunchRingPays[ring] or 0
-	local bonus = math.floor(Config.LaunchBullseyeBonus * pays + 0.5)
+	-- Sweep up every sweet the arc passed close enough to. The magnet is the
+	-- other half of what stars buy: a prestiged collection both flies further
+	-- and hoovers up more on the way past.
+	local magnet = Config.LaunchPickupMagnet
+		+ math.min(totalStars(data) * Config.LaunchMagnetPerStar, Config.LaunchMaxStarMagnet)
+
+	local collected: { number } = {}
+	local pickupBonus = 0
+	for index, pickup in data.launchField do
+		if pickup.distance <= distance and math.abs(heightAt(flight, pickup.distance) - pickup.height) <= magnet then
+			table.insert(collected, index)
+			pickupBonus += pickup.value
+		end
+	end
+
+	-- The zone multiplies the sweets too, so pushing for distance is worth
+	-- more than the extra studs on their own.
+	local zone = zoneFor(distance)
+	local bonus = math.floor((distance * Config.LaunchClicksPerStud + pickupBonus) * zone.multiplier + 0.5)
 	addProgress(data, bonus)
 
-	-- The client animates to THIS distance. It gets no say in it.
+	local record = distance > data.bestDistance
+	if record then
+		data.bestDistance = distance
+	end
+
+	-- The client animates THIS flight — the shape of the arc, which sweets
+	-- were taken and what it all paid. It gets no say in any of it.
 	LaunchResult:FireClient(player, {
 		angle = angle,
 		distance = distance,
-		ring = pays > 0 and ring or 0,
+		apexAt = flight.apexAt,
+		apexHeight = flight.apexHeight,
+		glideRange = flight.glideRange,
+		riseSeconds = flight.riseSeconds,
+		glideSeconds = flight.glideSeconds,
+		collected = collected,
+		pickupBonus = pickupBonus,
+		zone = zone.name,
+		multiplier = zone.multiplier,
 		bonus = bonus,
+		best = data.bestDistance,
+		record = record,
 	})
+
+	-- A fresh field for next time, so the angle that worked once isn't simply
+	-- the answer forever.
+	data.launchField = makeLaunchField(data)
+	LaunchField:FireClient(player, data.launchField)
 	sync(player)
 end)
 
@@ -552,9 +727,15 @@ if DebugAction then
 			data.totalOpens = 0
 			data.unopened = 0
 			data.clickerId = "red"
+			data.bestDistance = 0
 		else
 			return
 		end
+
+		-- Stars decide how far the field is spread, and half these actions move
+		-- them, so the range is relaid every time rather than left stale.
+		data.launchField = makeLaunchField(data)
+		LaunchField:FireClient(player, data.launchField)
 
 		updateLeaderstats(player)
 		sync(player)
