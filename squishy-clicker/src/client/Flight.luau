@@ -46,8 +46,11 @@ local CHASE_SIDE = 16
 -- along the barrel and slightly down, into the model's loading scoop. Tuned
 -- by eye against the imported Squishy Cannon — nudge these if the import's
 -- proportions change.
-local LOADED_BACK = 7
-local LOADED_DOWN = 2
+local LOADED_BACK = 6.5
+local LOADED_DOWN = 2.5
+-- Its size while mounted. Deliberately well under the in-flight 5×: at 4 the
+-- squishy swallowed the barrel it was supposed to be sitting in.
+local LOADED_SCALE = 2.4
 
 type Arc = { fromX: number, toX: number, peak: number, seconds: number, rolling: boolean }
 
@@ -827,12 +830,22 @@ RunService.RenderStepped:Connect(function(dt)
 			-- top of the cannon, bobbing gently, facing down the range — so
 			-- the thing about to be fired is visibly the thing you picked,
 			-- and firing it reads as exactly that.
-			local spot = (muzzle :: Vector3) - outward * LOADED_BACK
-				+ Vector3.new(0, -LOADED_DOWN + math.sin(os.clock() * 2) * 0.15, 0)
+			--
+			-- Stood on its own UNDERSIDE at the seat height, the same trick
+			-- as the cushion and the summons: centring it halfway buried
+			-- whichever squishy happened to be tall.
+			local applied = LOADED_SCALE * modelSpec.scale
+			local lift = -toy.lowestY * applied
+			local seat = (muzzle :: Vector3) - outward * LOADED_BACK
+			local spot = Vector3.new(
+				seat.X,
+				seat.Y - LOADED_DOWN + lift + math.sin(os.clock() * 2) * 0.12,
+				seat.Z
+			)
 			Models.apply(
 				toy.rig,
 				CFrame.lookAt(spot, spot + outward),
-				Vector3.one * 4 * modelSpec.scale
+				Vector3.one * applied
 			)
 		else
 			-- No plot adopted yet: nowhere to sit, so park it out of sight.

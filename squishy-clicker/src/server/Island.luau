@@ -638,12 +638,14 @@ end
 -- can be authored at any size; it is scaled to this so every plot matches.
 local CANNON_TARGET_SIZE = 13
 
--- Which way the import faces, as a yaw correction in degrees. A model can be
--- authored facing any of the four compass points, and the first guess (-90,
--- assuming the usual faces-minus-Z convention) had every muzzle aimed back at
--- its own station. If a re-import ever points the cannons sideways again,
--- turn this in steps of 90 until they face the range.
-local CANNON_YAW_DEGREES = 90
+-- Which way the import's MUZZLE points relative to its authored front, as a
+-- yaw correction on top of a lookAt down the radial. 0 = authored facing -Z
+-- (the usual convention), 180 = facing +Z, ±90 for the sides. The first
+-- placement guessed -Z and had every muzzle aimed back at its own station,
+-- which is how we know this model's muzzle is on its +Z: 180 here is the
+-- flip of a proven-backward state, not another guess. If a DIFFERENT model
+-- is ever imported, turn this in steps of 90 until it faces the range.
+local CANNON_YAW_DEGREES = 180
 
 local function buildCannon(frame: CFrame, folder: Folder)
 	local template = findCannonTemplate()
@@ -704,9 +706,16 @@ local function buildCannon(frame: CFrame, folder: Folder)
 
 	-- Place it in two steps: roughly on the pad first, then measured — the
 	-- bounding box is nudged so its BOTTOM sits exactly on the pad's top,
-	-- which works whatever the model's authored pivot happens to be. The yaw
-	-- turn maps the model's authored front onto the plot's outward (+X).
-	local target = frame * CFrame.new(2, 0, 0) * CFrame.Angles(0, math.rad(CANNON_YAW_DEGREES), 0)
+	-- which works whatever the model's authored pivot happens to be.
+	--
+	-- Orientation is built FROM THE RADIAL rather than from the plot frame's
+	-- axes: lookAt aims the model's authored front straight along the line
+	-- from the island's centre through this plot to the range, and the one
+	-- yaw constant above corrects for where this particular import keeps its
+	-- muzzle. There is no other rotation in the chain to be 90° off in.
+	local seat = frame:PointToWorldSpace(Vector3.new(2, 0, 0))
+	local outwardRadial = frame:VectorToWorldSpace(Vector3.xAxis)
+	local target = CFrame.lookAt(seat, seat + outwardRadial) * CFrame.Angles(0, math.rad(CANNON_YAW_DEGREES), 0)
 	cannon:PivotTo(target)
 
 	local boundsCFrame, boundsSize
