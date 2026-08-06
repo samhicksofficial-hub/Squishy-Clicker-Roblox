@@ -695,6 +695,18 @@ local function buildCannon(frame: CFrame, folder: Folder)
 
 	local cannon = template:Clone()
 
+	-- An import is GEOMETRY, nothing more. This one arrived carrying its own
+	-- CannonScript — a toolbox touch-and-fling behaviour written for R6 that
+	-- reached for character.Torso and errored on every modern avatar. The
+	-- game's launcher is the launcher; foreign scripts inside imported models
+	-- do not get to run at all, both for the error spam and as basic hygiene
+	-- (free-model scripts are the classic place obfuscated junk hides).
+	for _, descendant in cannon:GetDescendants() do
+		if descendant:IsA("LuaSourceContainer") then
+			descendant:Destroy()
+		end
+	end
+
 	-- Anchor every part: an unanchored import would fall through the pad the
 	-- moment it spawned, and a cannon is furniture, not physics.
 	if cannon:IsA("BasePart") then
