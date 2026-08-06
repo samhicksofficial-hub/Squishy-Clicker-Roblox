@@ -219,7 +219,7 @@ end
 -- A full panel: gradient header bar with an icon and title, a red X on the
 -- right, and a warm body underneath. Returns the pieces a caller needs — the
 -- root to show and hide, and the body to fill in.
-export type Panel = { root: Frame, body: Frame, close: TextButton, title: TextLabel }
+export type Panel = { root: Frame, body: Frame, close: TextButton, title: TextLabel, scrim: Frame }
 
 function UI.panel(props: {
 	parent: Instance,
@@ -234,6 +234,22 @@ function UI.panel(props: {
 	zIndex: number?,
 }): Panel
 	local z = props.zIndex or 20
+
+	-- The scrim: a full-screen dim behind every modal panel, so the world
+	-- reads as paused and — more importantly — clicks BESIDE the panel die
+	-- here instead of bleeding through to the wallet, the rail or the plot
+	-- prompts underneath. It mirrors the root's Visible automatically, so
+	-- callers keep toggling root.Visible and never have to know it exists.
+	local scrim = UI.make("Frame", {
+		Name = props.name .. "Scrim",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.fromRGB(20, 14, 10),
+		BackgroundTransparency = 0.45,
+		Active = true,
+		Visible = false,
+		ZIndex = z - 1,
+		Parent = props.parent,
+	}) :: Frame
 
 	local root = UI.make("Frame", {
 		Name = props.name,
@@ -313,7 +329,11 @@ function UI.panel(props: {
 		root.Visible = false
 	end)
 
-	return { root = root, body = body, close = close, title = title }
+	root:GetPropertyChangedSignal("Visible"):Connect(function()
+		scrim.Visible = root.Visible
+	end)
+
+	return { root = root, body = body, close = close, title = title, scrim = scrim }
 end
 
 -- A card inside a panel body: the Starter Pack / VIP Bundle blocks in the

@@ -326,7 +326,16 @@ local function layoutField()
 
 	for index, prize in pickupParts do
 		local entry = pickupField[index]
-		if entry and not pickupTaken[index] then
+		-- Skip the ones the radius clamp would pile onto the muzzle: worldAt
+		-- floors every radius at the muzzle's, so the near end of the field
+		-- compressed onto one spot and stacked its neon crates into a glowing
+		-- pillar over the cannon — the "beacon" in the sky. They still exist
+		-- to the server, which sweeps them in the first instant of a shot;
+		-- they are just not worth drawing on top of each other.
+		local drawable = entry ~= nil
+			and not pickupTaken[index]
+			and Config.rangeRadius(entry.distance) > muzzleRadius + 6
+		if entry and drawable then
 			prize.Color = PICKUP_LOOK[entry.kind] or PICKUP_LOOK.tnt
 			prize.Size = Vector3.one * (entry.vip and 8 or 5)
 			prize.Transparency = 0.1

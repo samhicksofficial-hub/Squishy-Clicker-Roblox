@@ -697,13 +697,14 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	})
 
 	-- ---------- the lobby feed ----------
-	-- Bottom left, above the progress bar: a running list of everyone's
-	-- launches. This is the whole social half of the lobby — you sit at the
-	-- deck between your own shots and watch the server's shots go past.
+	-- Bottom-left CORNER, beside the nav rail: x starts at 124 because the
+	-- rail spans 16..108, so the two can never share a pixel however short
+	-- the window gets — the old position floated the box higher, where it
+	-- sat level with the rail's bottom buttons and crowded them.
 	local feed = UI.make("Frame", {
 		Name = "LaunchFeed",
 		Size = UDim2.new(0, 250, 0, 26 + Config.LobbyFeedSize * 22),
-		Position = UDim2.new(0, 124, 1, -170),
+		Position = UDim2.new(0, 124, 1, -16),
 		AnchorPoint = Vector2.new(0, 1),
 		BackgroundColor3 = C.body,
 		BackgroundTransparency = 0.25,

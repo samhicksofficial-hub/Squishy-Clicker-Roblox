@@ -42,13 +42,16 @@ local SetClicker = Remotes:WaitForChild("SetClicker") :: RemoteEvent
 local SetActive = Remotes:WaitForChild("SetActive") :: RemoteEvent
 
 -- ---------- palette ----------
--- Text is white with a dark outline everywhere, matching UI.luau. The HUD
--- used to be dark-brown-on-cream, which was fine over a pale panel and
--- unreadable the moment it sat over the island.
+-- Text is white with a dark outline everywhere it floats over the WORLD,
+-- matching UI.luau. But `text`/`dim` on a light card is white-on-white — the
+-- collection rows were only legible through their outlines — so anything
+-- sitting on a pale panel uses `ink`/`inkSoft` with the stroke turned off.
 local COLOR = {
 	panel = Color3.fromRGB(255, 255, 255),
 	text = Color3.fromRGB(255, 255, 255),
 	dim = Color3.fromRGB(244, 232, 214),
+	ink = Color3.fromRGB(74, 52, 38),
+	inkSoft = Color3.fromRGB(150, 130, 118),
 	mint = Color3.fromRGB(126, 224, 192),
 	locked = Color3.fromRGB(228, 222, 216),
 	gold = Color3.fromRGB(255, 199, 92),
@@ -450,11 +453,13 @@ local costLabel = make("TextLabel", {
 })
 
 -- ---------- inventory / collection (right side) ----------
--- Sized off the bottom of the wallet rather than centred, so the two never
--- share a pixel: the wallet is always up, and this is only up at the squisher.
+-- Starts BELOW the whole right column — wallet, Rebirth, Shop, Rain TNT end
+-- at y 330 — so the two can never share a pixel. They used to: the panel
+-- began at 170 and slid under the buttons, which then floated on top of the
+-- list like they owned it.
 local panel = make("Frame", {
-	Size = UDim2.new(0, 320, 1, -210),
-	Position = UDim2.new(1, -20, 0, 170),
+	Size = UDim2.new(0, 300, 1, -360),
+	Position = UDim2.new(1, -18, 0, 344),
 	AnchorPoint = Vector2.new(1, 0),
 	BackgroundColor3 = COLOR.panel,
 	BackgroundTransparency = 0.08,
@@ -469,7 +474,8 @@ make("TextLabel", {
 	BackgroundTransparency = 1,
 	Font = Enum.Font.FredokaOne,
 	Text = "My Squishies",
-	TextColor3 = COLOR.text,
+	TextColor3 = COLOR.ink,
+	TextStrokeTransparency = 1,
 	TextSize = 24,
 	Parent = panel,
 })
@@ -480,8 +486,9 @@ make("TextLabel", {
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamMedium,
 	Text = "tap a face to make it your squisher",
-	TextColor3 = COLOR.dim,
-	TextSize = 12,
+	TextColor3 = COLOR.inkSoft,
+	TextStrokeTransparency = 1,
+	TextSize = 13,
 	Parent = panel,
 })
 
@@ -578,8 +585,9 @@ for index, squishy in Squishies.list do
 		ClipsDescendants = true,
 		Font = Enum.Font.FredokaOne,
 		Text = "?",
-		TextColor3 = COLOR.text,
-		TextSize = 18,
+		TextColor3 = COLOR.ink,
+		TextStrokeTransparency = 1,
+		TextSize = 20,
 		Parent = row,
 	})
 	make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = icon })
@@ -592,64 +600,74 @@ for index, squishy in Squishies.list do
 		Parent = icon,
 	})
 
+	-- Dark ink with NO stroke throughout the row: it sits on a light card,
+	-- where the HUD's white-with-outline scheme is exactly wrong.
 	make("TextLabel", {
 		Size = UDim2.new(1, -170, 0, 22),
-		Position = UDim2.new(0, 76, 0, 8),
+		Position = UDim2.new(0, 76, 0, 6),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		Text = squishy.name,
-		TextColor3 = COLOR.text,
-		TextSize = 15,
+		TextColor3 = COLOR.ink,
+		TextStrokeTransparency = 1,
+		TextSize = 16,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = row,
 	})
 
 	make("TextLabel", {
-		Size = UDim2.new(1, -170, 0, 16),
-		Position = UDim2.new(0, 76, 0, 30),
+		Size = UDim2.new(1, -170, 0, 17),
+		Position = UDim2.new(0, 76, 0, 29),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		Text = squishy.rarity,
-		TextColor3 = rarity and rarity.color or COLOR.dim,
-		TextSize = 12,
+		TextColor3 = rarity and rarity.color or COLOR.inkSoft,
+		TextStrokeTransparency = 1,
+		TextSize = 13,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = row,
 	})
 
 	local starLabel = make("TextLabel", {
-		Size = UDim2.new(1, -170, 0, 16),
-		Position = UDim2.new(0, 76, 0, 48),
+		Size = UDim2.new(1, -170, 0, 17),
+		Position = UDim2.new(0, 76, 0, 46),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		Text = starString(0),
 		TextColor3 = COLOR.gold,
-		TextSize = 14,
+		TextStrokeTransparency = 1,
+		TextSize = 15,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = row,
 	})
 
 	local countLabel = make("TextLabel", {
-		Size = UDim2.new(1, -170, 0, 16),
-		Position = UDim2.new(0, 76, 0, 64),
+		Size = UDim2.new(1, -170, 0, 17),
+		Position = UDim2.new(0, 76, 0, 63),
 		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamMedium,
+		Font = Enum.Font.GothamBold,
 		Text = "x0",
-		TextColor3 = COLOR.dim,
-		TextSize = 12,
+		TextColor3 = COLOR.inkSoft,
+		TextStrokeTransparency = 1,
+		TextSize = 13,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = row,
 	})
 
+	-- Prestige on top, Summon underneath, with clear air between: they used
+	-- to be a centred 60-tall button and a bottom-anchored chip whose spans
+	-- overlapped by sixteen pixels, which is why the right edge of every row
+	-- looked mushed together.
 	local prestige = make("TextButton", {
-		Size = UDim2.new(0, 84, 0, 60),
-		Position = UDim2.new(1, -92, 0.5, 0),
-		AnchorPoint = Vector2.new(0, 0.5),
+		Size = UDim2.new(0, 84, 0, 46),
+		Position = UDim2.new(1, -92, 0, 7),
 		BackgroundColor3 = COLOR.locked,
 		AutoButtonColor = false,
 		Font = Enum.Font.FredokaOne,
 		Text = "",
-		TextColor3 = COLOR.text,
-		TextSize = 13,
+		TextColor3 = COLOR.ink,
+		TextStrokeTransparency = 1,
+		TextSize = 14,
 		TextWrapped = true,
 		Parent = row,
 	})
@@ -658,15 +676,16 @@ for index, squishy in Squishies.list do
 	-- Summon: the squishies ARE the pets. Up to Config.MaxActiveSquishies walk
 	-- with you and buff the cannon, and this is where you choose which.
 	local summon = make("TextButton", {
-		Size = UDim2.new(0, 84, 0, 18),
-		Position = UDim2.new(1, -92, 1, -10),
+		Size = UDim2.new(0, 84, 0, 20),
+		Position = UDim2.new(1, -92, 1, -8),
 		AnchorPoint = Vector2.new(0, 1),
 		BackgroundColor3 = COLOR.mint,
 		AutoButtonColor = false,
 		Font = Enum.Font.GothamBold,
 		Text = "Summon",
-		TextColor3 = COLOR.text,
-		TextSize = 11,
+		TextColor3 = COLOR.ink,
+		TextStrokeTransparency = 1,
+		TextSize = 12,
 		Parent = row,
 	})
 	corner(8, summon)
