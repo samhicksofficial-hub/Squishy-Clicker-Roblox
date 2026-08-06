@@ -63,11 +63,41 @@ local Config = {
 	-- fraction of muzzle speed upwards, rather than starting from nothing.
 	LaunchMinPowerFraction = 0.4,
 
-	-- The angle dial sweeps between these, in degrees. 45 is the best angle
-	-- for a pure arc, but bounces reward flatter shots, so the sweet spot
-	-- sits a little under it.
+	-- The angle span the launch fraction maps across, in degrees. 45 is the
+	-- best angle for a pure arc, but bounces reward flatter shots, so the
+	-- sweet spot sits a little under it.
 	LaunchMinAngle = 15,
 	LaunchMaxAngle = 75,
+
+	-- ----- The precision meter -----
+	-- Aiming is a timing game now: a needle sweeps a red-yellow-green bar and
+	-- every tap locks in how close to the green centre it was. The AVERAGE of
+	-- the taps is the power sent to the server, so one lucky tap cannot carry
+	-- a shot and one slip cannot sink it.
+	LaunchTapsRequired = 3,
+
+	-- Full needle sweeps per second. Faster is harder: the green window
+	-- passes under the needle more often but for less time.
+	LaunchNeedleHz = 0.55,
+
+	-- The launch elevation, as the same 0-1 fraction of the angle span the
+	-- old dial sent. Fixed since the meter took over aiming: the skill moved
+	-- into tap timing, and 0.55 (about 48 degrees) is the sweet spot the old
+	-- dial was hiding anyway. The server still validates it like any hostile
+	-- payload — this is a default the client sends, not a rule it enforces.
+	LaunchFixedAngle = 0.55,
+
+	-- ----- Flight feel (client-side FX tuning) -----
+	-- The chase camera's field of view: base at rest, plus this much stretch
+	-- at full launch speed. It snaps back toward base on every bounce, which
+	-- is most of what makes an impact feel like one.
+	ChaseFovBase = 70,
+	ChaseFovBoost = 12,
+
+	-- The paint splat left where the squishy hits: its size and how long it
+	-- takes to fade off the grass.
+	LaunchSplatRadius = 7,
+	LaunchSplatFadeSeconds = 2.4,
 
 	-- ----- Bouncing -----
 	-- Hitting the ground is not the end of a shot: the squishy skips along

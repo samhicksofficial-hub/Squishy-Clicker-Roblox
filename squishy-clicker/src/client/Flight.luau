@@ -23,8 +23,10 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local Format = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Format"))
 local Squishies = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Squishies"))
 local Models = require(script.Parent:WaitForChild("Models"))
 
@@ -107,7 +109,19 @@ local shot = {
 	speed = 0,
 	bounced = 0,
 	holdUntil = 0,
+	-- For the chase camera's FOV stretch: speed reads against this.
+	launchSpeed = 1,
+	-- What the landing popup announces. Carried on the shot rather than read
+	-- back from the summary, so the popup and the flight can never disagree.
+	earnedCoins = 0,
 }
+
+-- Impact bookkeeping, outside the shot table because it belongs to the FX
+-- layer: which bounce was last given its splat, whether the landing has had
+-- its send-off, and the FOV snap-back that decays after each impact.
+local lastBounceSeen = 0
+local landingDone = true
+local fovKick = 0
 
 -- ---------- pickups ----------
 local PICKUP_LOOK = {
@@ -368,11 +382,102 @@ function Flight.setField(field: { PickupEntry })
 	layoutField()
 end
 
+-- ---------- impact FX ----------
+
+-- A paint splat where the squishy hit, tinted its own colour, spreading and
+-- fading off the grass. Created per impact rather than pooled: a flight makes
+-- at most a dozen, and each destroys itself.
+local function splat(at: Vector3, radius: number)
+	local disc = Instance.new("Part")
+	disc.Shape = Enum.PartType.Cylinder
+	disc.Size = Vector3.new(0.3, radius, radius)
+	disc.CFrame = CFrame.new(at + Vector3.new(0, 0.4, 0)) * CFrame.Angles(0, 0, math.pi / 2)
+	disc.Color = modelSpec.color
+	disc.Material = Enum.Material.SmoothPlastic
+	disc.Anchored = true
+	disc.CanCollide = false
+	disc.CanQuery = false
+	disc.CanTouch = false
+	disc.Transparency = 0.2
+	disc.Parent = stage
+
+	TweenService:Create(disc, TweenInfo.new(Config.LaunchSplatFadeSeconds, Enum.EasingStyle.Quad), {
+		Size = Vector3.new(0.3, radius * 1.6, radius * 1.6),
+		Transparency = 1,
+	}):Play()
+	task.delay(Config.LaunchSplatFadeSeconds + 0.1, function()
+		disc:Destroy()
+	end)
+end
+
+-- The landing announcement: "+X Studs" and "+$Y" popping up out of the point
+-- of rest, scaling in with a bounce and floating away. World-space rather
+-- than HUD, so it happens WHERE the shot ended — the summary card already
+-- covers the screen-space version.
+local function payoutPopup(at: Vector3, distance: number, coins: number)
+	local anchor = Instance.new("Part")
+	anchor.Size = Vector3.one
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Position = at + Vector3.new(0, 6, 0)
+	anchor.Parent = stage
+
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.new(0, 30, 0, 12) -- scales up to full in the pop
+	gui.MaxDistance = 2500
+	gui.Parent = anchor
+
+	local function popLine(y: number, text: string, color: Color3, size: number): TextLabel
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, 0, 0, size + 8)
+		label.Position = UDim2.new(0, 0, 0, y)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.FredokaOne
+		label.Text = text
+		label.TextColor3 = color
+		label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
+		label.TextStrokeTransparency = 0
+		label.TextScaled = true
+		label.Parent = gui
+		return label
+	end
+
+	local lines = { popLine(0, ("+%s Studs"):format(Format.abbreviate(math.floor(distance))), Color3.fromRGB(255, 255, 255), 40) }
+	if coins > 0 then
+		table.insert(lines, popLine(52, ("+$%s"):format(Format.abbreviate(coins)), Color3.fromRGB(146, 240, 108), 32))
+	end
+
+	-- Scale-up pop, then a slow float upward, then fade — three tweens that
+	-- overlap rather than queue, which is what makes it feel like one motion.
+	TweenService:Create(gui, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Size = UDim2.new(0, 260, 0, 104),
+	}):Play()
+	TweenService:Create(anchor, TweenInfo.new(1.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Position = anchor.Position + Vector3.new(0, 12, 0),
+	}):Play()
+	task.delay(1.1, function()
+		for _, label in lines do
+			TweenService:Create(label, TweenInfo.new(0.5), {
+				TextTransparency = 1,
+				TextStrokeTransparency = 1,
+			}):Play()
+		end
+	end)
+	task.delay(1.8, function()
+		anchor:Destroy()
+	end)
+end
+
 function Flight.play(plan: {
 	distance: number,
 	arcs: { Arc },
 	seconds: number,
 	peakHeight: number,
+	launchSpeed: number?,
+	coins: number?,
 	collected: { number },
 }): number
 	if not muzzle then
@@ -404,6 +509,11 @@ function Flight.play(plan: {
 	shot.progress = 0
 	shot.active = true
 	shot.holdUntil = os.clock() + shot.seconds + 1.4
+	shot.launchSpeed = math.max(plan.launchSpeed or 1, 1)
+	shot.earnedCoins = plan.coins or 0
+	lastBounceSeen = 0
+	landingDone = false
+	fovKick = 0
 
 	pickupCollecting = {}
 	for _, index in plan.collected do
@@ -538,6 +648,22 @@ RunService.RenderStepped:Connect(function(dt)
 
 	local at = worldAt(shot.flown, shot.height)
 
+	-- Impact FX. A splat per skip and a snap of the camera's FOV; a bigger
+	-- splat plus the payout popup once, at the point of rest. landingDone
+	-- starts true, so none of this can fire before the first real flight.
+	if flying and shot.bounced > lastBounceSeen then
+		lastBounceSeen = shot.bounced
+		fovKick = 1
+		splat(worldAt(shot.flown, 0), Config.LaunchSplatRadius * 0.7)
+	elseif not flying and not landingDone then
+		landingDone = true
+		fovKick = 1
+		local ground = worldAt(shot.distance, 0)
+		splat(ground, Config.LaunchSplatRadius)
+		payoutPopup(ground, shot.distance, shot.earnedCoins)
+	end
+	fovKick = math.max(fovKick - dt * 3, 0)
+
 	if toy then
 		-- Hidden between shots: the squishy belongs on the cushion, not
 		-- hovering over the plain waiting for the next launch.
@@ -638,10 +764,19 @@ RunService.RenderStepped:Connect(function(dt)
 		local side = Vector3.new(-outward.Z, 0, outward.X)
 		local eye = at - outward * CHASE_BACK + Vector3.new(0, CHASE_UP, 0) + side * CHASE_SIDE
 		camera.CFrame = CFrame.lookAt(eye, at + outward * 20)
+		-- FOV stretches with speed — measured against this shot's own launch
+		-- speed, so a level-1 arc and a level-80 arc both read as fast at
+		-- their own fastest — and every impact snaps it back toward base,
+		-- which is most of what makes a bounce feel like hitting something.
+		local speedFactor = math.clamp(shot.speed / shot.launchSpeed, 0, 1)
+		camera.FieldOfView = Config.ChaseFovBase + Config.ChaseFovBoost * speedFactor * (1 - fovKick)
 	elseif camera and camera.CameraType == Enum.CameraType.Scriptable and shot.holdUntil > 0 then
-		-- Once, on the way out, rather than every frame forever.
+		-- Once, on the way out, rather than every frame forever. The FOV goes
+		-- back with the camera: leaving it stretched would hand the character
+		-- a fisheye and nobody would know which system to blame.
 		shot.holdUntil = 0
 		camera.CameraType = Enum.CameraType.Custom
+		camera.FieldOfView = Config.ChaseFovBase
 		local character = player.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 		if humanoid then

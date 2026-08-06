@@ -2,34 +2,40 @@
 -- ============================================================
 --  SQUISHY LAUNCH  —  the main game's controls.
 --
---  A big LAUNCH button at the bottom of the screen. Tap it to
---  start a sweeping CHARGE meter, tap again to lock the charge,
---  once more for the angle. Then the shot goes out as nothing but
---  {power, angle}, two plain 0-1 numbers.
+--  Aiming is a PRECISION TIMING game: a needle sweeps back and
+--  forth across a red-yellow-green bar, and every tap locks in
+--  how close to the green centre it was caught. After the
+--  configured number of taps the shot fires with the AVERAGE of
+--  those accuracies as its power — one lucky tap cannot carry a
+--  shot, one slip cannot sink it.
 --
---  The squishy is fired, skips down the valley, sweeps up TNT,
+--  Then the shot goes out as nothing but {power, angle}, two
+--  plain 0-1 numbers. The angle is a Config constant now that
+--  the meter owns the skill; the server validates it like any
+--  hostile payload regardless.
+--
+--  The squishy is fired, skips across the plain, sweeps up TNT,
 --  cash and gems on the way and rolls to a stop. How far it got
 --  is the score, and everything the run earned is read back on a
 --  summary card at the end.
 --
 --  The client never says how far it went, what it collected or
 --  what it won. The server simulates the whole flight and sends
---  back its shape — every hop, its peak, its duration — and this
---  draws that. See the comment on the server's ballistics section
---  for why the simulation is arithmetic and not Roblox physics.
+--  back its shape — every hop, its peak, its duration — and
+--  Flight.luau draws that.
 -- ============================================================
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local Format = require(Shared:WaitForChild("Format"))
 local UI = require(script.Parent:WaitForChild("UI"))
--- The shot is drawn in the real world now, out from the player's own plot,
--- rather than on the stage above the map. Scene still owns the steamer and the
--- squisher close-ups; it no longer owns the flight.
+-- The shot is drawn in the real world, out from the player's own plot. Scene
+-- still owns the steamer and the squisher close-ups; it does not own the flight.
 local Flight = require(script.Parent:WaitForChild("Flight"))
 
 local Launch = {}
@@ -46,8 +52,8 @@ function Launch.open() end
 
 local C = UI.color
 
--- Stage of the shot: "idle", "power", "angle", "flying", "summary".
-type Stage = "idle" | "power" | "angle" | "flying" | "summary"
+-- Stage of the shot: "idle", "aim" (the meter is up), "flying", "summary".
+type Stage = "idle" | "aim" | "flying" | "summary"
 
 -- How long to wait for the server's verdict before giving the screen back.
 -- Comfortably longer than any round trip, and shorter than a player's patience.
@@ -60,13 +66,16 @@ function Launch.mount(gui: GuiObject, scene: any)
 	local fieldRemote = remotes:WaitForChild("LaunchField") :: RemoteEvent
 
 	local stage: Stage = "idle"
-	local sweep = 0 -- the live 0-1 position of whichever meter is moving
-	local chosenPower = 0
 	local readyIn = 0 -- seconds left on the cooldown, straight from the server
 	local best = 0 -- furthest ever flown, straight from the server
 	-- Bumped on every shot AND every reply, so a late watchdog can tell
 	-- whether the shot it was armed for is still the one in the air.
 	local shotToken = 0
+
+	-- The meter's state: where the needle is in its sweep, and the accuracy
+	-- locked in by each tap so far.
+	local needlePhase = 0
+	local tapsLocked: { number } = {}
 
 	-- The server lays out the NEXT shot's pickups the instant it scores this
 	-- one, which lands here while the squishy is still in the air. Applying it
@@ -107,16 +116,16 @@ function Launch.mount(gui: GuiObject, scene: any)
 		Parent = bestBanner,
 	})
 
-	-- ---------- the charge panel ----------
-	-- Bottom centre, right above the launch button, so the meter and the
-	-- thumb that stops it are in the same place.
+	-- ---------- the precision meter ----------
+	-- Bottom centre, where the old charge panel stood. The panel is display
+	-- only: while it is up, INPUT belongs to the full-screen tap catcher
+	-- below, because the instruction is "tap anywhere" and it has to mean it.
 	local panel = UI.make("Frame", {
-		Name = "ChargePanel",
-		Size = UDim2.new(0, 420, 0, 132),
-		Position = UDim2.new(0.5, 0, 1, -108),
+		Name = "PrecisionPanel",
+		Size = UDim2.new(0, 440, 0, 148),
+		Position = UDim2.new(0.5, 0, 1, -104),
 		AnchorPoint = Vector2.new(0.5, 1),
 		BackgroundColor3 = C.body,
-		Active = true, -- swallow taps, or aiming also squishes the squisher
 		Visible = false,
 		ZIndex = 8,
 		Parent = gui,
@@ -125,53 +134,130 @@ function Launch.mount(gui: GuiObject, scene: any)
 	UI.gradient(panel, C.body, C.bodyDark)
 	UI.stroke(panel, 4)
 
+	-- Pulsed on every locked tap: the whole panel breathes once, which is a
+	-- cheaper and louder acknowledgement than any label change.
+	local panelScale = UI.make("UIScale", { Scale = 1, Parent = panel }) :: UIScale
+
 	local title = UI.label({
 		Size = UDim2.new(1, -20, 0, 30),
-		Position = UDim2.new(0, 10, 0, 6),
-		Text = "Charge it up!",
-		TextSize = 24,
+		Position = UDim2.new(0, 10, 0, 8),
+		Text = "",
+		TextSize = 21,
 		ZIndex = 9,
 		Parent = panel,
 	})
 
-	-- Two meters. The charge one FILLS, because "how full is it" is the thing
-	-- the player is timing; the angle one slides a marker, because there the
-	-- question is "where is it pointing".
-	local function meter(y: number, top: Color3, bottom: Color3, filling: boolean, caption: string): (Frame, Frame)
-		local track = UI.make("Frame", {
-			Size = UDim2.new(1, -20, 0, 30),
-			Position = UDim2.new(0, 10, 0, y),
-			BackgroundColor3 = Color3.fromRGB(96, 58, 26),
-			ClipsDescendants = true,
-			ZIndex = 9,
-			Parent = panel,
-		})
-		UI.corner(12, track)
-		UI.stroke(track)
+	-- The bar: red edges through yellow to a bright green dead centre, as one
+	-- gradient rather than painted segments, so the colour under the needle is
+	-- exactly the accuracy it would score.
+	local track = UI.make("Frame", {
+		Size = UDim2.new(1, -40, 0, 34),
+		Position = UDim2.new(0, 20, 0, 52),
+		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+		ZIndex = 9,
+		Parent = panel,
+	})
+	UI.corner(12, track)
+	UI.stroke(track)
+	UI.make("UIGradient", {
+		Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(226, 62, 62)),
+			ColorSequenceKeypoint.new(0.26, Color3.fromRGB(248, 206, 68)),
+			ColorSequenceKeypoint.new(0.5, Color3.fromRGB(96, 240, 72)),
+			ColorSequenceKeypoint.new(0.74, Color3.fromRGB(248, 206, 68)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(226, 62, 62)),
+		}),
+		Parent = track,
+	})
 
-		local bar = UI.make("Frame", {
-			Size = filling and UDim2.new(0, 0, 1, 0) or UDim2.new(0, 16, 1, -8),
-			Position = filling and UDim2.fromScale(0, 0) or UDim2.new(0, 4, 0, 4),
-			BackgroundColor3 = top,
-			BorderSizePixel = 0,
-			ZIndex = 10,
-			Parent = track,
-		})
-		UI.corner(filling and 12 or 8, bar)
-		UI.gradient(bar, top, bottom)
+	-- The needle: a white line through the bar with a triangular pointer
+	-- riding above it. Positioned by scale, so the same 0-1 needle value
+	-- works at any panel width.
+	local needleLine = UI.make("Frame", {
+		Size = UDim2.new(0, 4, 1, 8),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+		BorderSizePixel = 0,
+		ZIndex = 11,
+		Parent = track,
+	})
+	UI.stroke(needleLine, 2)
 
-		UI.label({
-			Size = UDim2.fromScale(1, 1),
-			Text = caption,
-			TextSize = 15,
-			ZIndex = 12,
-			Parent = track,
-		})
-		return track, bar
-	end
+	local needleArrow = UI.label({
+		Size = UDim2.new(0, 30, 0, 24),
+		Position = UDim2.new(0.5, 0, 0, -4),
+		AnchorPoint = Vector2.new(0.5, 1),
+		Text = "▼",
+		TextSize = 22,
+		StrokeThickness = 3,
+		ZIndex = 11,
+		Parent = track,
+	})
 
-	local _, powerBar = meter(42, C.orange, C.orangeDeep, true, "CHARGE")
-	local _, angleBar = meter(80, C.blue, C.blueDeep, false, "ANGLE")
+	-- Live accuracy under the bar, coloured to match where the needle is —
+	-- the number and the colour agree by construction.
+	local precisionLabel = UI.label({
+		Size = UDim2.new(0, 120, 0, 30),
+		Position = UDim2.new(0.5, 0, 0, 96),
+		AnchorPoint = Vector2.new(0.5, 0),
+		Text = "0%",
+		TextSize = 26,
+		StrokeThickness = 3,
+		ZIndex = 9,
+		Parent = panel,
+	})
+
+	-- What each tap scored, filled in left to right, so the average being
+	-- sent is legible rather than a mystery.
+	local locksLabel = UI.label({
+		Size = UDim2.new(0, 180, 0, 26),
+		Position = UDim2.new(0, 20, 0, 98),
+		Text = "",
+		TextSize = 16,
+		TextColor3 = Color3.fromRGB(252, 224, 140),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 9,
+		Parent = panel,
+	})
+
+	-- ---------- the tap catcher ----------
+	-- Full screen, above everything, only while aiming. Every press lands
+	-- here and locks a tap — which is what "tap anywhere" costs: while the
+	-- meter is up, nothing else on screen is pressable except Cancel.
+	local tapCatcher = UI.make("TextButton", {
+		Name = "TapCatcher",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Text = "",
+		AutoButtonColor = false,
+		Visible = false,
+		ZIndex = 50,
+		Parent = gui,
+	}) :: TextButton
+
+	-- The one control that outranks the catcher, so aiming can be walked out
+	-- of without walking away from the cannon.
+	local cancelButton = UI.button({
+		parent = gui,
+		size = UDim2.new(0, 44, 0, 40),
+		position = UDim2.new(0.5, 244, 1, -212),
+		anchor = Vector2.new(0.5, 1),
+		text = "X",
+		textSize = 22,
+		top = C.red,
+		bottom = C.redDeep,
+		zIndex = 60,
+		radius = 10,
+	})
+	cancelButton.button.Visible = false
+
+	-- Tick per locked tap, pitch rising with the count, so three taps make a
+	-- little ascending phrase.
+	local tapSound = Instance.new("Sound")
+	tapSound.SoundId = "rbxasset://sounds/electronicpingshort.wav"
+	tapSound.Volume = 0.3
+	tapSound.Parent = SoundService
 
 	-- ---------- the notice line ----------
 	-- Sits just above the launch button and says why a shot did not happen.
@@ -321,8 +407,8 @@ function Launch.mount(gui: GuiObject, scene: any)
 		zIndex = 33,
 	})
 
-	-- ---------- driving the meters ----------
-	-- The launcher's controls belong to the valley. At the toy shop they come
+	-- ---------- stages ----------
+	-- The launcher's controls belong to the island. At the toy shop they come
 	-- down entirely — the nav rail is how you get back to them — because the
 	-- big centred LAUNCH button otherwise lands straight on top of the steamer
 	-- bar as soon as the window is anything less than very wide.
@@ -331,28 +417,27 @@ function Launch.mount(gui: GuiObject, scene: any)
 	-- walk away and the controls go with you.
 	local nearCannon = false
 
+	local function remainingText(): string
+		local left = Config.LaunchTapsRequired - #tapsLocked
+		return ("Click/Tap anywhere %d more time%s to Launch"):format(left, left == 1 and "" or "s")
+	end
+
 	local function setStage(next: Stage)
 		stage = next
-		local aiming = next == "idle" or next == "power" or next == "angle"
-		-- Mid-shot the player is not stood anywhere in particular — the camera
-		-- is off down the valley — so the flight HUD and the summary ignore
-		-- nearCannon and only the aiming controls respect it.
-		local controls = aiming and nearCannon
-		panel.Visible = atValley and controls and (next == "power" or next == "angle")
+		local controls = atValley and nearCannon
+		panel.Visible = controls and next == "aim"
+		tapCatcher.Visible = panel.Visible
+		cancelButton.button.Visible = panel.Visible
 		flightHud.Visible = atValley and next == "flying"
 		summary.root.Visible = atValley and next == "summary"
-		bestBanner.Visible = atValley and controls
-		launchButton.button.Visible = atValley and controls
+		bestBanner.Visible = controls and (next == "idle" or next == "aim")
+		launchButton.button.Visible = controls and next == "idle"
 		if not atValley then
 			notice.Visible = false
 		end
 
-		if next == "power" then
-			title.Text = "Charge it up!"
-			launchButton.button.Text = "LOCK CHARGE"
-		elseif next == "angle" then
-			title.Text = "Now the angle!"
-			launchButton.button.Text = "🔥 FIRE!"
+		if next == "aim" then
+			title.Text = remainingText()
 		elseif next == "idle" then
 			launchButton.button.Text = "🚀 LAUNCH!"
 		end
@@ -390,66 +475,107 @@ function Launch.mount(gui: GuiObject, scene: any)
 
 	summary.close.Activated:Connect(closeAiming)
 	againButton.button.Activated:Connect(closeAiming)
+	cancelButton.button.Activated:Connect(function()
+		if stage == "aim" then
+			closeAiming()
+		end
+	end)
 
 	scene.onViewChanged(function(nowAtValley)
 		atValley = nowAtValley
-		-- Walking off mid-aim abandons the aim rather than leaving a half-set
-		-- charge waiting to be fired at whatever the meters happen to read
-		-- when the player wanders back.
-		if not atValley and (stage == "power" or stage == "angle") then
+		-- Walking off mid-aim abandons the aim rather than leaving half the
+		-- taps locked and waiting for whoever wanders back.
+		if not atValley and stage == "aim" then
 			setStage("idle")
 		else
 			setStage(stage)
 		end
 	end)
 
-	local function currentSweep(): number
-		return sweep <= 1 and sweep or 2 - sweep
+	-- ---------- the meter ----------
+
+	local function beginAiming()
+		tapsLocked = {}
+		needlePhase = 0
+		locksLabel.Text = ""
+		scene.setView("main")
+		setStage("aim")
 	end
 
-	launchButton.button.Activated:Connect(function()
-		if stage == "idle" then
-			if readyIn > 0 then
-				return
-			end
-			chosenPower = 0
-			sweep = 0
-			powerBar.Size = UDim2.new(0, 0, 1, 0)
-			angleBar.Position = UDim2.new(0, 4, 0, 4)
-			scene.setView("main")
-			setStage("power")
-		elseif stage == "power" then
-			chosenPower = currentSweep()
-			powerBar.Size = UDim2.fromScale(chosenPower, 1)
-			sweep = 0
-			setStage("angle")
-		elseif stage == "angle" then
-			local chosenAngle = currentSweep()
-			setStage("flying")
-			distanceLabel.Text = "0"
-			vitalsLabel.Text = ""
-			-- Two numbers, nothing else. The server does the rest.
-			shotRemote:FireServer(chosenPower, chosenAngle)
+	local function fireShot()
+		-- The AVERAGE of the locked taps is the power. The angle is a Config
+		-- constant — the meter owns the skill now — and the server validates
+		-- both like any hostile payload regardless.
+		local sum = 0
+		for _, locked in tapsLocked do
+			sum += locked
+		end
+		local power = sum / math.max(#tapsLocked, 1)
 
-			-- WATCHDOG. Entering "flying" hides the launch button and hands the
-			-- screen to the flight HUD, and it has to happen now rather than on
-			-- the reply — otherwise the meters keep sweeping under the player's
-			-- thumb while the round trip completes. The cost is that a reply
-			-- which never arrives leaves the UI dead: HUD stuck at zero, no
-			-- button, no way back. The server answers every refusal it can, but
-			-- a dropped packet or a rate-limit drop answers nothing, so this
-			-- catches whatever falls through.
-			shotToken += 1
-			local token = shotToken
-			task.delay(LAUNCH_TIMEOUT, function()
-				if stage == "flying" and token == shotToken then
-					abandonShot("No answer from the cannon — try again.")
-				end
-			end)
+		setStage("flying")
+		distanceLabel.Text = "0"
+		vitalsLabel.Text = ""
+		shotRemote:FireServer(power, Config.LaunchFixedAngle)
+
+		-- WATCHDOG. Entering "flying" hides the controls and hands the screen
+		-- to the flight HUD, and it has to happen now rather than on the
+		-- reply. The cost is that a reply which never arrives leaves the UI
+		-- dead — so this catches whatever falls through. The server answers
+		-- every refusal it can; a dropped packet answers nothing.
+		shotToken += 1
+		local token = shotToken
+		task.delay(LAUNCH_TIMEOUT, function()
+			if stage == "flying" and token == shotToken then
+				abandonShot("No answer from the cannon — try again.")
+			end
+		end)
+	end
+
+	local function lockTap()
+		if stage ~= "aim" then
+			return
+		end
+
+		-- Accuracy is distance from the green centre: 1 dead-on, 0 at either
+		-- red edge. Read at the instant of the press, not on the next frame.
+		local position = 0.5 + 0.5 * math.sin(needlePhase)
+		local precision = 1 - math.abs(position - 0.5) * 2
+		table.insert(tapsLocked, precision)
+
+		-- Feedback: the panel breathes once, and the tick pitches up with
+		-- each tap so a full set makes a little ascending phrase.
+		panelScale.Scale = 1.06
+		TweenService:Create(panelScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+			Scale = 1,
+		}):Play()
+		tapSound.PlaybackSpeed = 0.9 + #tapsLocked * 0.18 + precision * 0.25
+		tapSound:Play()
+
+		local locked = {}
+		for _, value in tapsLocked do
+			table.insert(locked, ("%d%%"):format(math.floor(value * 100 + 0.5)))
+		end
+		locksLabel.Text = table.concat(locked, "  ·  ")
+
+		if #tapsLocked >= Config.LaunchTapsRequired then
+			fireShot()
+		else
+			title.Text = remainingText()
+		end
+	end
+
+	-- MouseButton1Down rather than Activated: a timing game has to read the
+	-- press, not the release, or fast taps score the wrong needle position.
+	-- (Touch taps fire this too.)
+	tapCatcher.MouseButton1Down:Connect(lockTap)
+
+	launchButton.button.Activated:Connect(function()
+		if stage == "idle" and readyIn <= 0 then
+			beginAiming()
 		end
 	end)
 
-	-- The sweep runs on the render step so the meters move smoothly; they are
+	-- The sweep runs on the render step so the needle moves smoothly; it is
 	-- only ever a display, and the value is read at the instant of the tap.
 	RunService.RenderStepped:Connect(function(dt)
 		if stage == "flying" then
@@ -465,28 +591,22 @@ function Launch.mount(gui: GuiObject, scene: any)
 			)
 			return
 		end
-		if stage ~= "power" and stage ~= "angle" then
+		if stage ~= "aim" then
 			return
 		end
 
-		-- Ping-pong 0-1: a triangle wave is easier to read and to time than a
-		-- sine, which crawls at both ends.
-		sweep = (sweep + dt * 0.85) % 2
-		local value = sweep <= 1 and sweep or 2 - sweep
+		-- A sine sweep: smooth turnarounds at the edges, fastest through the
+		-- green centre — which is exactly what makes the centre hard.
+		needlePhase += dt * math.pi * 2 * Config.LaunchNeedleHz
+		local position = 0.5 + 0.5 * math.sin(needlePhase)
+		local precision = 1 - math.abs(position - 0.5) * 2
 
-		if stage == "power" then
-			powerBar.Size = UDim2.fromScale(value, 1)
-			title.Text = ("Charge  %d%%"):format(math.floor(value * 100 + 0.5))
-		else
-			-- The angle readout in the title is the aim preview now. The old
-			-- scene.setCannonAim tilted a barrel on the diorama six thousand
-			-- studs up, which nobody aiming at their own plot could see.
-			angleBar.Position = UDim2.new(value, -value * 20 + 4, 0, 4)
-			title.Text = ("Charge %d%%   ·   Angle %d°"):format(
-				math.floor(chosenPower * 100 + 0.5),
-				math.floor(Config.LaunchMinAngle + (Config.LaunchMaxAngle - Config.LaunchMinAngle) * value + 0.5)
-			)
-		end
+		needleLine.Position = UDim2.new(position, 0, 0.5, 0)
+		needleArrow.Position = UDim2.new(position, 0, 0, -4)
+		precisionLabel.Text = ("%d%%"):format(math.floor(precision * 100 + 0.5))
+		-- Hue runs red to green with the accuracy, so the number and the bar
+		-- under the needle always agree.
+		precisionLabel.TextColor3 = Color3.fromHSV(precision * 0.33, 0.72, 1)
 	end)
 
 	-- ---------- the server's verdict ----------
@@ -571,28 +691,23 @@ function Launch.mount(gui: GuiObject, scene: any)
 			return
 		end
 		nearCannon = near
-		-- Walking off mid-aim abandons the aim rather than leaving a half-set
-		-- charge waiting to be fired at whatever the meters read when the
-		-- player wanders back. A shot already in the air is left alone.
-		if not near and (stage == "power" or stage == "angle") then
+		-- Walking off mid-aim abandons the aim rather than leaving half the
+		-- taps locked. A shot already in the air is left alone.
+		if not near and stage == "aim" then
 			setStage("idle")
 		else
 			setStage(stage)
 		end
 	end
 
-	-- The prompt's own activation: skip straight past "idle" into the charge
-	-- meter, so pressing E at the cannon starts aiming rather than only
-	-- revealing a button that then has to be pressed as well.
+	-- The prompt's own activation: skip straight past "idle" into the meter,
+	-- so pressing E at the cannon starts aiming rather than only revealing a
+	-- button that then has to be pressed as well.
 	function Launch.open()
 		if not nearCannon or stage ~= "idle" or readyIn > 0 then
 			return
 		end
-		chosenPower = 0
-		sweep = 0
-		powerBar.Size = UDim2.new(0, 0, 1, 0)
-		angleBar.Position = UDim2.new(0, 4, 0, 4)
-		setStage("power")
+		beginAiming()
 	end
 
 	task.spawn(function()
