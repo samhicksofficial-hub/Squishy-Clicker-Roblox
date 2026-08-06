@@ -650,11 +650,11 @@ local CANNON_TARGET_SIZE = 13
 -- write the number the Output prints into this constant.
 local CANNON_YAW_DEGREES = 0
 
--- And the same for PITCH: with the yaw settled the muzzle pointed at the
--- sky, so the model is authored nose-up and gets tipped 90° forward onto
--- the radial. If a re-import ever leaves the muzzle in the ground instead,
--- flip the sign.
-local CANNON_PITCH_DEGREES = -90
+-- And the same for PITCH. The FIRST import was authored nose-up and needed
+-- -90 to tip it onto the radial; the current one is authored upright, so
+-- the leftover -90 was exactly what knocked it onto its side. Zero for a
+-- sensibly-authored model; only touch this if an import arrives tilted.
+local CANNON_PITCH_DEGREES = 0
 
 -- Every placed cannon's placement closure, plus the live debug offset, so
 -- Rotate Cannons can re-aim the whole island at once.

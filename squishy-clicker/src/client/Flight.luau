@@ -42,15 +42,6 @@ local CHASE_BACK = 26
 local CHASE_UP = 14
 local CHASE_SIDE = 16
 
--- Where the loaded squishy nests on the cannon, relative to the muzzle: back
--- along the barrel and slightly down, into the model's loading scoop. Tuned
--- by eye against the imported Squishy Cannon — nudge these if the import's
--- proportions change.
-local LOADED_BACK = 6.5
-local LOADED_DOWN = 2.5
--- Its size while mounted. Deliberately well under the in-flight 5×: at 4 the
--- squishy swallowed the barrel it was supposed to be sitting in.
-local LOADED_SCALE = 2.4
 
 type Arc = { fromX: number, toX: number, peak: number, seconds: number, rolling: boolean }
 
@@ -825,30 +816,12 @@ RunService.RenderStepped:Connect(function(dt)
 				CFrame.new(at) * CFrame.fromAxisAngle(side, -shot.progress * math.pi * 9),
 				Vector3.one * 5 * modelSpec.scale
 			)
-		elseif muzzle then
-			-- LOADED between shots: the equipped squishy sits in the scoop on
-			-- top of the cannon, bobbing gently, facing down the range — so
-			-- the thing about to be fired is visibly the thing you picked,
-			-- and firing it reads as exactly that.
-			--
-			-- Stood on its own UNDERSIDE at the seat height, the same trick
-			-- as the cushion and the summons: centring it halfway buried
-			-- whichever squishy happened to be tall.
-			local applied = LOADED_SCALE * modelSpec.scale
-			local lift = -toy.lowestY * applied
-			local seat = (muzzle :: Vector3) - outward * LOADED_BACK
-			local spot = Vector3.new(
-				seat.X,
-				seat.Y - LOADED_DOWN + lift + math.sin(os.clock() * 2) * 0.12,
-				seat.Z
-			)
-			Models.apply(
-				toy.rig,
-				CFrame.lookAt(spot, spot + outward),
-				Vector3.one * applied
-			)
 		else
-			-- No plot adopted yet: nowhere to sit, so park it out of sight.
+			-- Parked between shots. The squishy briefly sat loaded on the
+			-- cannon here, but on the real model it read as a pet standing on
+			-- the barrel rather than as ammunition — cut on request. The
+			-- squishy lives on the cushion and in the collection; the cannon
+			-- carries it only mid-flight.
 			Models.apply(toy.rig, CFrame.new(0, -500, 0), Vector3.one * 0.001)
 		end
 	end
