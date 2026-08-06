@@ -1,340 +1,223 @@
 --!strict
 -- ============================================================
---  KING OF THE STEAMER  —  the shared minigame's panel.
+--  KING OF THE STEAMER  —  the shared event's presence in the
+--  world.
 --
---  A giant steamer everyone in the server clicks together. This
---  draws whatever the server broadcasts and sends bare "I
+--  The event happens ON the plaza, so its clock lives there too:
+--  a sign floating over the middle of the island, readable from
+--  every plot — counting down between rounds, counting clicks
+--  during them. The old 2D panel sat on the steamer close-up,
+--  which is the one page the event never happens on.
+--
+--  The only screen UI left is the HELP PUSH button while a round
+--  is live (bottom centre — the launch button's spot, which is
+--  free because launch controls only exist at your own cannon and
+--  the round is at the plaza), and the winner banner.
+--
+--  This draws whatever the server broadcasts and sends bare "I
 --  clicked" requests back; it never counts, never decides who
---  won, and never says what anyone should get.
---
---  The steamer is drawn in a ViewportFrame using the same model
---  the main stage uses, so the panel shows the real thing rather
---  than a picture of it.
+--  won, and never says what anyone should get. Standing on the
+--  plaza is re-checked by the server on every click — the greyed
+--  button here is a courtesy, not the rule.
 -- ============================================================
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
-local Models = require(script.Parent:WaitForChild("Models"))
+local UI = require(script.Parent:WaitForChild("UI"))
 
 local King = {}
 
-local COLOR = {
-	panel = Color3.fromRGB(255, 255, 255),
-	text = Color3.fromRGB(74, 52, 38),
-	dim = Color3.fromRGB(150, 130, 118),
-	track = Color3.fromRGB(238, 224, 212),
-	fill = Color3.fromRGB(240, 140, 90),
-	go = Color3.fromRGB(126, 224, 192),
-	locked = Color3.fromRGB(228, 222, 216),
-	gold = Color3.fromRGB(255, 199, 92),
-	crown = Color3.fromRGB(226, 96, 96),
-}
+local player = Players.LocalPlayer
+local C = UI.color
 
-local function make(className: string, props: { [string]: any }): any
-	local inst = Instance.new(className)
-	for key, value in props do
-		(inst :: any)[key] = value
-	end
-	return inst
-end
+-- Where the sign floats: over the plaza's centre, high enough to read from
+-- the plots and low enough to sit under the flight paths.
+local SIGN_POSITION = Vector3.new(0, 26, 0)
 
-local function corner(radius: number, parent: Instance)
-	make("UICorner", { CornerRadius = UDim.new(0, radius), Parent = parent })
-end
-
-function King.mount(gui: GuiObject, scene: any)
+function King.mount(gui: GuiObject)
 	local remotes = ReplicatedStorage:WaitForChild("Remotes")
 	local clickRemote = remotes:WaitForChild("ClickShared") :: RemoteEvent
 	local updateRemote = remotes:WaitForChild("KingUpdate") :: RemoteEvent
 	local finishedRemote = remotes:WaitForChild("KingFinished") :: RemoteEvent
 
-	-- ---------- panel ----------
-	local panel = make("Frame", {
-		Name = "KingPanel",
-		Size = UDim2.new(0, 240, 0, 290),
-		-- Left of centre, under the header. It shares the toy shop's screen
-		-- with the collection panel on the right and the steamer bar below,
-		-- and has to stay clear of both.
-		Position = UDim2.new(0, 124, 0, 96),
-		AnchorPoint = Vector2.new(0, 0),
-		BackgroundColor3 = COLOR.panel,
-		BackgroundTransparency = 0.08,
-		Active = true, -- its own taps, not the squisher's
-		ZIndex = 4,
-		Parent = gui,
-	})
-	corner(18, panel)
+	-- ---------- the floating sign ----------
+	local anchor = Instance.new("Part")
+	anchor.Name = "KingSign"
+	anchor.Size = Vector3.one
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Position = SIGN_POSITION
+	anchor.Parent = workspace
 
-	make("TextLabel", {
-		Size = UDim2.new(1, -16, 0, 26),
-		Position = UDim2.new(0, 8, 0, 8),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.FredokaOne,
-		Text = "👑 King of the Steamer",
-		TextColor3 = COLOR.text,
-		TextSize = 17,
-		ZIndex = 5,
-		Parent = panel,
-	})
+	local billboard = Instance.new("BillboardGui")
+	billboard.Size = UDim2.new(0, 380, 0, 128)
+	-- Far enough to read from the plot ring; the diorama six thousand studs
+	-- up never sees it, so the sign hides itself on the close-up pages.
+	billboard.MaxDistance = 700
+	billboard.Parent = anchor
 
-	-- The giant steamer itself, rendered from the real model.
-	local viewport = make("ViewportFrame", {
-		Size = UDim2.new(1, -16, 0, 92),
-		Position = UDim2.new(0, 8, 0, 36),
-		BackgroundTransparency = 1,
-		Ambient = Color3.fromRGB(170, 165, 160),
-		LightColor = Color3.fromRGB(255, 250, 244),
-		LightDirection = Vector3.new(-0.5, -1, -0.6),
-		ZIndex = 5,
-		Parent = panel,
-	})
-
-	local viewStage = make("Folder", { Name = "Steamer", Parent = viewport })
-	local baseRig = Models.buildSteamerBase(viewStage)
-	local lidRig = Models.buildSteamerLid(viewStage)
-	Models.apply(baseRig, CFrame.new(0, -2.4, 0), Vector3.one)
-	Models.apply(lidRig, CFrame.new(0, -0.25, 0), Vector3.one)
-
-	local viewCamera = Instance.new("Camera")
-	viewCamera.FieldOfView = 30
-	viewCamera.CFrame = CFrame.lookAt(Vector3.new(0, 1.6, 15), Vector3.new(0, 0.2, 0))
-	viewCamera.Parent = viewport
-	viewport.CurrentCamera = viewCamera
-
-	-- ---------- progress ----------
-	local track = make("Frame", {
-		Size = UDim2.new(1, -16, 0, 24),
-		Position = UDim2.new(0, 8, 0, 136),
-		BackgroundColor3 = COLOR.track,
-		ZIndex = 5,
-		Parent = panel,
-	})
-	corner(12, track)
-
-	local fill = make("Frame", {
-		Size = UDim2.new(0, 0, 1, 0),
-		BackgroundColor3 = COLOR.fill,
-		BorderSizePixel = 0,
-		ZIndex = 5,
-		Parent = track,
-	})
-	corner(12, fill)
-
-	local progressLabel = make("TextLabel", {
-		Size = UDim2.new(1, 0, 1, 0),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamBold,
-		Text = "0 / 60",
-		TextColor3 = COLOR.text,
-		TextSize = 13,
-		ZIndex = 6,
-		Parent = track,
-	})
-
-	local helpButton = make("TextButton", {
-		Size = UDim2.new(1, -16, 0, 40),
-		Position = UDim2.new(0, 8, 0, 168),
-		BackgroundColor3 = COLOR.go,
-		AutoButtonColor = true,
-		Font = Enum.Font.FredokaOne,
-		Text = "HELP PUSH!",
-		TextColor3 = COLOR.text,
-		TextSize = 18,
-		ZIndex = 5,
-		Parent = panel,
-	})
-	corner(12, helpButton)
-
-	make("TextLabel", {
-		Size = UDim2.new(1, -16, 0, 16),
-		Position = UDim2.new(0, 8, 0, 212),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamBold,
-		Text = "Top helpers",
-		TextColor3 = COLOR.dim,
-		TextSize = 11,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 5,
-		Parent = panel,
-	})
-
-	local standingsList = make("Frame", {
-		Size = UDim2.new(1, -16, 0, 70),
-		Position = UDim2.new(0, 8, 0, 230),
-		BackgroundTransparency = 1,
-		ZIndex = 5,
-		Parent = panel,
-	})
-	make("UIListLayout", {
-		Padding = UDim.new(0, 2),
-		SortOrder = Enum.SortOrder.LayoutOrder,
-		Parent = standingsList,
-	})
-
-	-- Rows are reused rather than rebuilt: this redraws five times a second.
-	local rows: { TextLabel } = {}
-	for index = 1, 5 do
-		rows[index] = make("TextLabel", {
-			Size = UDim2.new(1, 0, 0, 13),
-			BackgroundTransparency = 1,
-			Font = Enum.Font.GothamMedium,
-			Text = "",
-			TextColor3 = COLOR.text,
-			TextSize = 11,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			LayoutOrder = index,
-			Visible = false,
-			ZIndex = 6,
-			Parent = standingsList,
-		})
+	local function signLine(y: number, height: number, color: Color3): TextLabel
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, 0, 0, height)
+		label.Position = UDim2.new(0, 0, 0, y)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.FredokaOne
+		label.Text = ""
+		label.TextColor3 = color
+		label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
+		label.TextStrokeTransparency = 0
+		label.TextScaled = true
+		label.Parent = billboard
+		return label
 	end
 
-	helpButton.Activated:Connect(function()
+	local titleLabel = signLine(0, 32, Color3.fromRGB(255, 214, 120))
+	titleLabel.Text = "👑 King of the Steamer"
+	local statusLabel = signLine(36, 52, Color3.fromRGB(255, 255, 255))
+	local subLabel = signLine(94, 26, Color3.fromRGB(220, 240, 255))
+
+	-- ---------- the push button ----------
+	local push = UI.button({
+		parent = gui,
+		size = UDim2.new(0, 300, 0, 72),
+		position = UDim2.new(0.5, 0, 1, -18),
+		anchor = Vector2.new(0.5, 1),
+		text = "👑 HELP PUSH!",
+		textSize = 30,
+		top = C.orange,
+		bottom = C.orangeDeep,
+		zIndex = 8,
+		radius = 18,
+	})
+	push.button.Visible = false
+	push.button.Activated:Connect(function()
 		clickRemote:FireServer()
 	end)
 
-	-- ---------- am I actually at the event ----------
-	-- The server is the one that decides, and it re-checks every click. This
-	-- copy exists so the button can grey itself out the moment you walk off
-	-- the plaza rather than silently dropping taps.
-	local Players = game:GetService("Players")
-	local RunService = game:GetService("RunService")
-	local localPlayer = Players.LocalPlayer
-
+	-- ---------- state ----------
+	-- The server's clocks win whenever a broadcast lands; between broadcasts
+	-- they tick locally so the countdown moves smoothly.
 	local plazaRadius = 58
 	local onPlaza = false
 	local roundActive = false
 	local startsIn = 0
 	local endsIn = 0
+	local clicks, goal = 0, 60
+	local topLine = ""
 
-	local function refreshButton()
+	local function redraw()
 		if roundActive then
-			helpButton.Text = onPlaza and ("HELP PUSH!  %ds"):format(math.ceil(endsIn)) or "GO TO THE PLAZA!"
-			helpButton.BackgroundColor3 = onPlaza and COLOR.go or COLOR.gold
-			helpButton.AutoButtonColor = onPlaza
+			statusLabel.Text = ("%d / %d   ·   %ds left"):format(clicks, goal, math.ceil(endsIn))
+			subLabel.Text = topLine ~= "" and ("👑 %s"):format(topLine) or "PUSH! Everyone who helps gets a squishy!"
+			push.button.Visible = true
+			push.button.Text = onPlaza and "👑 HELP PUSH!" or "GO TO THE PLAZA!"
+			UI.setButtonEnabled(push, onPlaza, C.orange, C.orangeDeep)
 		else
-			-- Minutes when it is far off, seconds when it is close, because
-			-- "starts in 247s" is a number nobody converts in their head.
-			local wait = math.ceil(startsIn)
-			helpButton.Text = wait >= 60 and ("Starts in %dm %02ds"):format(wait // 60, wait % 60)
-				or ("Starts in %ds"):format(wait)
-			helpButton.BackgroundColor3 = COLOR.locked
-			helpButton.AutoButtonColor = false
+			local wait = math.max(math.ceil(startsIn), 0)
+			statusLabel.Text = if wait >= 60
+				then ("Starts in %dm %02ds"):format(wait // 60, wait % 60)
+				else ("Starts in %ds"):format(wait)
+			subLabel.Text = "Be on the plaza when it opens — best helper wins the rarest roll"
+			push.button.Visible = false
 		end
 	end
 
 	RunService.Heartbeat:Connect(function(dt)
-		-- Ticked locally between broadcasts, so the clock counts down smoothly
-		-- instead of stepping five times a second.
 		if roundActive then
 			endsIn = math.max(endsIn - dt, 0)
 		else
 			startsIn = math.max(startsIn - dt, 0)
 		end
 
-		local character = localPlayer.Character
+		local character = player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-		local nowOnPlaza = false
+		onPlaza = false
 		if root then
-			local flat = Vector3.new(root.Position.X, 0, root.Position.Z)
-			nowOnPlaza = flat.Magnitude <= plazaRadius
+			onPlaza = Vector3.new(root.Position.X, 0, root.Position.Z).Magnitude <= plazaRadius
 		end
-		if nowOnPlaza ~= onPlaza then
-			onPlaza = nowOnPlaza
-		end
-		refreshButton()
+
+		-- A slow bob, so the sign reads as part of the world rather than as a
+		-- HUD element that wandered into it.
+		anchor.Position = SIGN_POSITION + Vector3.new(0, math.sin(os.clock() * 1.2) * 0.6, 0)
+		redraw()
 	end)
 
-	-- The shared steamer belongs to the toy shop, not the valley: it is the
-	-- clicker half's minigame, and leaving it up over the launcher was half of
-	-- why that screen looked crowded.
-	scene.onViewChanged(function(atValley)
-		panel.Visible = not atValley
-	end)
-
-	-- ---------- the server's picture of the round ----------
 	updateRemote.OnClientEvent:Connect(function(snapshot)
 		if typeof(snapshot) ~= "table" then
 			return
 		end
-
-		local clicks = snapshot.clicks or 0
-		local goal = math.max(snapshot.goal or 1, 1)
-		local active = snapshot.active ~= false
-
-		-- The server's clocks win over the locally-ticked ones every time a
-		-- broadcast lands, so drift can never accumulate.
-		roundActive = active
+		roundActive = snapshot.active ~= false
 		startsIn = snapshot.startsIn or 0
 		endsIn = snapshot.endsIn or 0
+		clicks = snapshot.clicks or 0
+		goal = math.max(snapshot.goal or 1, 1)
 		plazaRadius = snapshot.plazaRadius or plazaRadius
 
-		progressLabel.Text = ("%d / %d"):format(clicks, goal)
-		TweenService:Create(
-			fill,
-			TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ Size = UDim2.new(math.clamp(clicks / goal, 0, 1), 0, 1, 0) }
-		):Play()
-
-		refreshButton()
-
-		local standings = snapshot.standings or {}
-		for index, row in rows do
-			local entry = standings[index]
-			row.Visible = entry ~= nil
-			if entry then
-				row.Text = ("%d. %s — %d"):format(index, entry.name, entry.clicks)
-				row.TextColor3 = index == 1 and COLOR.crown or COLOR.text
-			end
+		topLine = ""
+		local standings = snapshot.standings
+		if typeof(standings) == "table" and standings[1] then
+			topLine = ("%s — %d"):format(standings[1].name, standings[1].clicks)
 		end
+		redraw()
 	end)
 
-	-- ---------- the winner announcement ----------
+	-- ---------- announcements ----------
+	-- The same remote carries the countdown callouts and the result, so there
+	-- is one place a banner appears rather than two fighting for the spot.
 	finishedRemote.OnClientEvent:Connect(function(result)
 		if typeof(result) ~= "table" then
 			return
 		end
 
-		-- The same remote carries the countdown callouts and the result, so
-		-- there is one place a banner appears rather than two that could
-		-- overlap each other on screen.
 		local message
 		if result.countdown then
 			local seconds = result.countdown
-			message = seconds >= 60 and ("👑 King of the Steamer starts in %dm — get to the plaza!"):format(seconds // 60)
-				or ("👑 King of the Steamer starts in %ds — get to the plaza!"):format(seconds)
+			message = if seconds >= 60
+				then ("👑 King of the Steamer starts in %dm — get to the plaza!"):format(seconds // 60)
+				else ("👑 King of the Steamer starts in %ds — get to the plaza!"):format(seconds)
 		elseif result.winner ~= "" then
 			message = ("👑 %s topped the steamer — got %s!"):format(result.winner, result.prize)
 		else
 			message = "👑 The steamer closed. Next round soon!"
 		end
 
-		local banner = make("TextLabel", {
+		local banner = UI.make("Frame", {
 			Size = UDim2.new(0, 480, 0, 58),
 			Position = UDim2.new(0.5, 0, 0, 96),
 			AnchorPoint = Vector2.new(0.5, 0),
-			BackgroundColor3 = result.countdown and COLOR.crown or COLOR.gold,
-			Font = Enum.Font.FredokaOne,
-			Text = message,
-			TextColor3 = Color3.fromRGB(255, 255, 255),
-			TextStrokeColor3 = Color3.fromRGB(52, 38, 30),
-			TextStrokeTransparency = 0.1,
-			TextSize = 20,
-			TextScaled = false,
+			BackgroundColor3 = result.countdown and C.pink or C.orange,
 			ZIndex = 25,
 			Parent = gui,
 		})
-		corner(16, banner)
+		UI.corner(16, banner)
+		UI.stroke(banner)
 
-		banner.TextTransparency = 1
+		UI.label({
+			Size = UDim2.fromScale(1, 1),
+			Text = message,
+			TextSize = 20,
+			ZIndex = 26,
+			Parent = banner,
+		})
+
 		banner.BackgroundTransparency = 1
-		TweenService
-			:Create(banner, TweenInfo.new(0.3), { TextTransparency = 0, BackgroundTransparency = 0.05 })
-			:Play()
-
+		TweenService:Create(banner, TweenInfo.new(0.3), { BackgroundTransparency = 0 }):Play()
 		task.delay(4, function()
-			TweenService:Create(banner, TweenInfo.new(0.4), { TextTransparency = 1, BackgroundTransparency = 1 }):Play()
+			TweenService:Create(banner, TweenInfo.new(0.4), { BackgroundTransparency = 1 }):Play()
+			for _, child in banner:GetDescendants() do
+				if child:IsA("TextLabel") then
+					TweenService:Create(child, TweenInfo.new(0.4), { TextTransparency = 1, TextStrokeTransparency = 1 })
+						:Play()
+				elseif child:IsA("UIStroke") then
+					TweenService:Create(child, TweenInfo.new(0.4), { Transparency = 1 }):Play()
+				end
+			end
 			task.delay(0.5, function()
 				banner:Destroy()
 			end)

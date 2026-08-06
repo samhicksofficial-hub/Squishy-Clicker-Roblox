@@ -121,10 +121,14 @@ function UI.label(props: { [string]: any }): TextLabel
 	return label
 end
 
--- A chunky pressable button: gradient fill, dark border, outlined label.
+-- A chunky pressable button: FLAT fill, dark border, outlined label. Flat on
+-- purpose — buttons used to carry the same top-to-bottom gradient as the
+-- panels, and at button size the two stops read as a tint band across every
+-- one rather than as moulding. `bottom` is still accepted so call sites
+-- didn't all change; the fill is the top colour alone.
 -- `enabled` is handled by UI.setButtonEnabled rather than at build time, so a
 -- button can grey out and come back without being rebuilt.
-export type Button = { button: TextButton, fill: UIGradient, stroke: UIStroke }
+export type Button = { button: TextButton, stroke: UIStroke }
 
 function UI.button(props: {
 	parent: Instance,
@@ -153,11 +157,6 @@ function UI.button(props: {
 	}) :: TextButton
 
 	UI.corner(props.radius or 12, button)
-	local gradient = UI.make("UIGradient", {
-		Color = ColorSequence.new(props.top, props.bottom),
-		Rotation = 90,
-		Parent = button,
-	}) :: UIGradient
 	local stroke = UI.make("UIStroke", {
 		Thickness = STROKE,
 		Color = UI.color.ink,
@@ -172,16 +171,14 @@ function UI.button(props: {
 		Parent = button,
 	})
 
-	return { button = button, fill = gradient, stroke = stroke }
+	return { button = button, stroke = stroke }
 end
 
 -- Grey a button out without rebuilding it. Keeping the greyed colours here
--- means "disabled" looks the same everywhere by construction.
-function UI.setButtonEnabled(entry: Button, enabled: boolean, top: Color3, bottom: Color3)
-	entry.fill.Color = ColorSequence.new(
-		enabled and top or UI.color.grey,
-		enabled and bottom or UI.color.greyDeep
-	)
+-- means "disabled" looks the same everywhere by construction. `bottom` is
+-- unused since buttons went flat, kept so call sites didn't all change.
+function UI.setButtonEnabled(entry: Button, enabled: boolean, top: Color3, _bottom: Color3)
+	entry.button.BackgroundColor3 = enabled and top or UI.color.grey
 	entry.button.AutoButtonColor = enabled
 	entry.button.TextTransparency = enabled and 0 or 0.25
 end
