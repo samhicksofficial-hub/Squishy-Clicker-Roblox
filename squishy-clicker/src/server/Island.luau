@@ -941,11 +941,16 @@ local function buildPlot(index: number): Plot
 	prompt.Enabled = false -- until somebody owns this plot
 	prompt.Parent = station
 
-	local sign = signPost(centre + Vector3.new(0, GROUND_Y + 1.6, 0) - outward * (half - 3), "Empty Plot", Color3.fromRGB(
-		230,
-		226,
-		220
-	), folder)
+	-- The name post stands in the plot's inward CORNER, tucked against the
+	-- fence — it used to stand mid-plot on the centre line, which put a bare
+	-- post in the middle of the station area once the capsule moved in.
+	local sideWorld = frame:VectorToWorldSpace(Vector3.zAxis)
+	local sign = signPost(
+		centre + Vector3.new(0, GROUND_Y + 1.6, 0) - outward * (half - 3) + sideWorld * (half - 3),
+		"Empty Plot",
+		Color3.fromRGB(230, 226, 220),
+		folder
+	)
 
 	return {
 		index = index,
