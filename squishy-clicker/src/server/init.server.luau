@@ -11,6 +11,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local DataStoreService = game:GetService("DataStoreService")
 local RunService = game:GetService("RunService")
 
+-- The walkable world. Built once, here, because a floor you stand on has to
+-- replicate — see the header of Island.luau for why the launch valley is the
+-- opposite case and stays on the client.
+local Island = require(script:WaitForChild("Island"))
+
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 -- Direct require: Squishies lives at Shared/Squishies. If this ever hangs
@@ -828,6 +833,16 @@ local function onPlayerAdded(player: Player)
 		return -- already initialized (guards against double-init)
 	end
 
+	-- A plot of their own on the island. Claimed before the save loads, so a
+	-- slow DataStore never leaves somebody standing on the plaza with nowhere
+	-- to launch from. A full island hands back nil and the player simply has
+	-- no cannon of their own, which is survivable — the server can hold more
+	-- players than there are plots.
+	local plot = Island.claim(player)
+	if not plot then
+		warn(("[SquishyClicker] No free plot for %s — the island is full."):format(player.Name))
+	end
+
 	local data = loadData(player)
 	dataByPlayer[player] = data
 
@@ -852,6 +867,10 @@ local function onPlayerAdded(player: Player)
 	sync(player)
 end
 
+-- Before any player is served, so the first joiner has an island to stand on
+-- and a plot to be handed.
+Island.build()
+
 Players.PlayerAdded:Connect(onPlayerAdded)
 
 -- CRITICAL: players can join BEFORE the line above runs (especially in
@@ -864,6 +883,9 @@ end
 Players.PlayerRemoving:Connect(function(player)
 	saveData(player)
 	dataByPlayer[player] = nil
+	-- Freed immediately rather than on a timer: the next person to join should
+	-- get a plot, not be told the island is full by a ghost.
+	Island.release(player)
 end)
 
 -- ---------- Clicking the steamer ----------

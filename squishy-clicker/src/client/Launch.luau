@@ -34,6 +34,11 @@ local Launch = {}
 -- before the UI is up can't fail on a missing function.
 function Launch.setReadyIn(_seconds: number) end
 function Launch.setBest(_distance: number) end
+-- Called by the plot's ProximityPrompt. The launcher's controls belong to the
+-- cannon, so they only exist while the player is stood at it — that is what
+-- makes the plot somewhere to go rather than scenery.
+function Launch.setNearCannon(_near: boolean) end
+function Launch.open() end
 
 local C = UI.color
 
@@ -318,15 +323,22 @@ function Launch.mount(gui: GuiObject, scene: any)
 	-- big centred LAUNCH button otherwise lands straight on top of the steamer
 	-- bar as soon as the window is anything less than very wide.
 	local atValley = true
+	-- Stood at your own cannon. Everything the launcher offers hangs off this:
+	-- walk away and the controls go with you.
+	local nearCannon = false
 
 	local function setStage(next: Stage)
 		stage = next
 		local aiming = next == "idle" or next == "power" or next == "angle"
-		panel.Visible = atValley and (next == "power" or next == "angle")
+		-- Mid-shot the player is not stood anywhere in particular — the camera
+		-- is off down the valley — so the flight HUD and the summary ignore
+		-- nearCannon and only the aiming controls respect it.
+		local controls = aiming and nearCannon
+		panel.Visible = atValley and controls and (next == "power" or next == "angle")
 		flightHud.Visible = atValley and next == "flying"
 		summary.root.Visible = atValley and next == "summary"
-		bestBanner.Visible = atValley and aiming
-		launchButton.button.Visible = atValley and aiming
+		bestBanner.Visible = atValley and controls
+		launchButton.button.Visible = atValley and controls
 		if not atValley then
 			notice.Visible = false
 		end
@@ -546,6 +558,35 @@ function Launch.mount(gui: GuiObject, scene: any)
 	function Launch.setBest(distance: number)
 		best = math.max(distance, 0)
 		bestLabel.Text = ("🏆 Best  %s Studs"):format(Format.abbreviate(math.floor(best)))
+	end
+
+	function Launch.setNearCannon(near: boolean)
+		if near == nearCannon then
+			return
+		end
+		nearCannon = near
+		-- Walking off mid-aim abandons the aim rather than leaving a half-set
+		-- charge waiting to be fired at whatever the meters read when the
+		-- player wanders back. A shot already in the air is left alone.
+		if not near and (stage == "power" or stage == "angle") then
+			setStage("idle")
+		else
+			setStage(stage)
+		end
+	end
+
+	-- The prompt's own activation: skip straight past "idle" into the charge
+	-- meter, so pressing E at the cannon starts aiming rather than only
+	-- revealing a button that then has to be pressed as well.
+	function Launch.open()
+		if not nearCannon or stage ~= "idle" or readyIn > 0 then
+			return
+		end
+		chosenPower = 0
+		sweep = 0
+		powerBar.Size = UDim2.new(0, 0, 1, 0)
+		angleBar.Position = UDim2.new(0, 4, 0, 4)
+		setStage("power")
 	end
 
 	task.spawn(function()

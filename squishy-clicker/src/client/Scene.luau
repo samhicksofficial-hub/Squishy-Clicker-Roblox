@@ -169,6 +169,11 @@ local rayGlow = spring(40, 9)
 local viewRange = spring(26, 9)
 viewRange.value = 1
 viewRange.target = 1
+
+-- True while this file is allowed to drive the camera. Off by default: the
+-- player is stood on the island and the character camera owns the view until
+-- they open a close-up or fire a shot.
+local sceneDrivesCamera = false
 -- 0 = facing the squisher, 1 = turned 90° left to the steamer nook. Springy
 -- so the turn eases out with a hint of overshoot instead of lerping flatly.
 local viewYaw = spring(30, 10)
@@ -187,8 +192,11 @@ local revealToken = 0
 -- thousand parts generated at runtime, and a flat folder of them is unusable
 -- in the Explorer when something needs finding.
 
+-- Named apart from the server's Workspace.Map on purpose: that one is the
+-- island players walk on, this one is the per-player animation rig sitting
+-- 500 studs above it. Two folders called Map would be a genuine trap.
 local stage = Instance.new("Folder")
-stage.Name = "Map"
+stage.Name = "LaunchStage"
 stage.Parent = workspace
 
 local function group(name: string): Folder
@@ -1355,41 +1363,16 @@ end
 
 -- ---------- camera ----------
 
--- The default camera scripts have to be told to stand down, and the player's
--- own controls with them: there is nothing to walk to in a clicker, and a
--- stray WASD press would only make the character wander off the baseplate.
+-- The player walks around a real island now, so the default controls and the
+-- default camera stay exactly as Roblox made them. This file only BORROWS the
+-- camera — for a flight, or for one of the close-up views — and hands it
+-- straight back afterwards.
+--
+-- That handing-back is the whole trick. An earlier version pinned the camera
+-- to Scriptable forever, which is fine when there is nothing to walk to and
+-- immediately wrong once there is: the character would move and the view
+-- would not.
 local player = Players.LocalPlayer
-
-local function releaseControls()
-	local playerScripts = player:FindFirstChild("PlayerScripts")
-	local module = playerScripts and playerScripts:FindFirstChild("PlayerModule")
-	if not module then
-		return false
-	end
-	local ok = pcall(function()
-		local controls = (require(module) :: any):GetControls()
-		controls:Disable()
-	end)
-	return ok
-end
-
-task.spawn(function()
-	-- PlayerModule is created by Roblox's own scripts, so it may not exist yet
-	-- — and in a place with default scripts stripped out it never will. Either
-	-- way this must not block the game, so it gets a deadline.
-	local deadline = os.clock() + 10
-	while os.clock() < deadline do
-		if releaseControls() then
-			return
-		end
-		task.wait(0.25)
-	end
-end)
-
-player.CharacterAdded:Connect(function()
-	task.wait(0.5)
-	releaseControls()
-end)
 
 -- ---------- the animation loop ----------
 
@@ -1734,6 +1717,22 @@ RunService.RenderStepped:Connect(function(deltaTime)
 
 	local camera = workspace.CurrentCamera
 	if camera then
+		-- Borrowed only while there is something to show: a shot in the air,
+		-- or a close-up view the player opened. The rest of the time the
+		-- character owns it and this hands it straight back.
+		local borrowed = sceneDrivesCamera or flight.progress < 1 or elapsed < flight.holdUntil
+		if not borrowed then
+			if camera.CameraType == Enum.CameraType.Scriptable then
+				camera.CameraType = Enum.CameraType.Custom
+				local character = player.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				if humanoid then
+					camera.CameraSubject = humanoid
+				end
+			end
+			return
+		end
+
 		if camera.CameraType ~= Enum.CameraType.Scriptable then
 			camera.CameraType = Enum.CameraType.Scriptable
 		end
@@ -1874,6 +1873,17 @@ function Scene.playLaunch(plan: {
 	flight.active = true
 	flight.holdUntil = elapsed + flight.seconds + 1.1
 
+	-- Take the camera for the duration. The render loop hands it back on its
+	-- own once holdUntil passes, so nothing has to remember to.
+	sceneDrivesCamera = true
+	viewRange.target = 1
+	viewRange.value = 1
+	task.delay(flight.seconds + 1.1, function()
+		if flight.progress >= 1 then
+			sceneDrivesCamera = false
+		end
+	end)
+
 	-- Queue the pickups to pop as the shot reaches each one.
 	pickupCollecting = {}
 	for _, index in plan.collected do
@@ -2000,11 +2010,20 @@ function Scene.setView(view: string)
 	if view == "unbox" then
 		viewRange.target = 0
 		viewYaw.target = 1
+		sceneDrivesCamera = true
 	elseif view == "clicker" then
 		viewRange.target = 0
 		viewYaw.target = 0
+		sceneDrivesCamera = true
 	else
+		-- "main" is the island now: the camera goes back to the character and
+		-- the player walks. The valley is only ever seen during a flight.
 		viewRange.target = 1
+		-- Snapped rather than sprung, because the next thing the camera does
+		-- is belong to somebody else — easing toward a position it is about to
+		-- stop drawing would only show as a lurch on the way out.
+		viewRange.value = 1
+		sceneDrivesCamera = false
 	end
 
 	local atValley = viewRange.target > 0.5

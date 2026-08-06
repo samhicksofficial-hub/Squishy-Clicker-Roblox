@@ -239,9 +239,19 @@ local clickArea = make("TextButton", {
 	BackgroundTransparency = 1,
 	Text = "",
 	AutoButtonColor = false,
+	-- OFF unless the squisher close-up is open. A full-screen button eats
+	-- every click and drag underneath it, which is harmless in a clicker with
+	-- no character and immediately wrong once the player can walk: it would
+	-- swallow the camera drag and the touch-look on mobile.
+	Visible = false,
 	ZIndex = 1,
 	Parent = gui,
 })
+
+-- The close-up views are the only place tapping the screen means "squish".
+Scene.onViewChanged(function(atValley)
+	clickArea.Visible = not atValley
+end)
 
 clickArea.MouseButton1Down:Connect(function()
 	-- Only counts while the camera is actually at the squisher. The launcher
@@ -964,6 +974,38 @@ mount("Cannon HUD", function()
 	-- pushing through it once — the next sync could be a click away.
 	Cannon.update(state)
 end)
+
+-- ---------- the cannon on your plot ----------
+-- The prompt lives on a server-built part, but these events fire LOCALLY, so
+-- showing the launcher costs no round trip. The owner check has to happen here
+-- for the same reason — and it is only a UI gate: the actual shot is still
+-- validated by the server, which knows whose plot is whose without being told.
+do
+	local ProximityPromptService = game:GetService("ProximityPromptService")
+
+	local function ownsPrompt(prompt: ProximityPrompt): boolean
+		local plot = prompt:FindFirstAncestorOfClass("Folder")
+		return plot ~= nil and plot:GetAttribute("OwnerUserId") == player.UserId
+	end
+
+	ProximityPromptService.PromptShown:Connect(function(prompt)
+		if ownsPrompt(prompt) then
+			Launch.setNearCannon(true)
+		end
+	end)
+
+	ProximityPromptService.PromptHidden:Connect(function(prompt)
+		if ownsPrompt(prompt) then
+			Launch.setNearCannon(false)
+		end
+	end)
+
+	ProximityPromptService.PromptTriggered:Connect(function(prompt, triggeringPlayer)
+		if triggeringPlayer == player and ownsPrompt(prompt) then
+			Launch.open()
+		end
+	end)
+end
 
 refresh()
 
