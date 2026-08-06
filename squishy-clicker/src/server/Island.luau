@@ -212,7 +212,12 @@ local function buildGround()
 	-- segments carrying the ground on underneath the mesas, so the horizon
 	-- stands on land rather than hanging over void. The ring sits a tenth of
 	-- a stud lower where the two overlap, which settles the seam for good.
+	-- Recolourable ground is NAMED — "Grass", "Canyon", "CanyonLip" — because
+	-- the client repaints the island locally when a world is selected, and
+	-- matching parts by name is the only contract that survives this file
+	-- being rearranged. The names carry no behaviour on the server.
 	local plain = cylinder(PLAIN_RADIUS * 2, 12, Vector3.new(0, slabAt(Y.plain, 12), 0), COLOR.grass, ground)
+	plain.Name = "Grass"
 	studded(decor(plain))
 
 	local SKIRT_OUTER = 1360 -- past the last mesa terrace
@@ -228,6 +233,7 @@ local function buildGround()
 			COLOR.grass,
 			ground
 		)
+		piece.Name = "Grass"
 		studded(decor(piece))
 	end
 
@@ -248,6 +254,7 @@ local function buildGround()
 
 	local field =
 		cylinder((ISLAND_RADIUS - BEACH_WIDTH) * 2, 8, Vector3.new(0, slabAt(Y.field, 8), 0), COLOR.grass, ground)
+	field.Name = "Grass"
 	studded(field)
 
 	-- An invisible lip right at the plateau edge. The plain below is scenery
@@ -310,6 +317,7 @@ local function buildHorizon()
 			local face = CFrame.new(at) * CFrame.Angles(0, -angle, 0)
 
 			local wall = block(Vector3.new(STEP_DEPTH, height, width), face, COLOR.rock, horizon)
+			wall.Name = "Canyon"
 			wall.Material = Enum.Material.Sandstone
 			decor(wall)
 
@@ -319,6 +327,7 @@ local function buildHorizon()
 				COLOR.rockTop,
 				horizon
 			)
+			lip.Name = "CanyonLip"
 			studded(decor(lip))
 		end
 	end

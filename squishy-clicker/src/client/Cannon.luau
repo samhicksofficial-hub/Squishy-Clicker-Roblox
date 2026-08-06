@@ -39,6 +39,7 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	local buyPower = remotes:WaitForChild("BuyPower") :: RemoteEvent
 	local doRebirth = remotes:WaitForChild("DoRebirth") :: RemoteEvent
 	local buySteamer = remotes:WaitForChild("BuySteamer") :: RemoteEvent
+	local setWorldRemote = remotes:WaitForChild("SetWorld") :: RemoteEvent
 	local activateBoost = remotes:WaitForChild("ActivateBoost") :: RemoteEvent
 	local launchBroadcast = remotes:WaitForChild("LaunchBroadcast") :: RemoteEvent
 
@@ -462,17 +463,42 @@ function Cannon.mount(gui: GuiObject, scene: any)
 			Parent = entry.button,
 		})
 
-		local worldIndex = index
+		local worldId = world.id
 		entry.button.Activated:Connect(function()
-			-- Purely a stage retheme, so it is the one thing in this file the
-			-- client is allowed to decide on its own. The server still owns
-			-- every number; nothing about the world changes a payout yet.
-			scene.setWorld(worldIndex)
+			-- A world is a payout multiplier, so it is a REQUEST: the server
+			-- checks the rebirth gate and answers with a sync, and the sync is
+			-- what repaints the island. Clicking a locked row therefore does
+			-- nothing at all, which is exactly what it should do.
+			setWorldRemote:FireServer(worldId)
 			showOnly(nil)
 			scene.setView("main")
 		end)
 
 		worldRows[index] = { entry = entry, sub = sub }
+	end
+
+	-- Repaint the island in the active world's palette, LOCALLY. Property
+	-- changes on server parts don't replicate back, so each client sees its
+	-- own world without fighting anybody else's — and it is purely cosmetic:
+	-- the multiplier lives on the server, and an exploiter recolouring their
+	-- grass earns nothing. Parts are matched by the names Island.luau stamps
+	-- on them ("Grass", "Canyon", "CanyonLip").
+	local function repaintIsland(world: { grass: Color3, grassDark: Color3, canyon: Color3 })
+		local map = workspace:FindFirstChild("Map")
+		if not map then
+			return
+		end
+		for _, part in map:GetDescendants() do
+			if part:IsA("BasePart") then
+				if part.Name == "Grass" then
+					part.Color = world.grass
+				elseif part.Name == "Canyon" then
+					part.Color = world.canyon
+				elseif part.Name == "CanyonLip" then
+					part.Color = world.grassDark
+				end
+			end
+		end
 	end
 
 	-- ---------- Game Shop panel ----------
@@ -739,6 +765,7 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	end)
 	-- ---------- redraw from the server's numbers ----------
 	local lastActiveSignature = ""
+	local lastWorldId = ""
 	local boostReadyIn = 0
 	local boostLeft = 0
 
@@ -780,13 +807,34 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		rebirthOpen.button.Text = state.rebirthReady and "🔄 REBIRTH!" or ("🔄 REBIRTH %d"):format(rebirths)
 
 		-- ----- worlds -----
+		local activeWorldId = state.worldId or Config.Worlds[1].id
 		for index, world in Config.Worlds do
 			local row = worldRows[index]
 			if row then
 				local unlocked = rebirths >= world.rebirths
-				row.sub.Text = unlocked and ("Unlocked  ·  ×%.1f rewards"):format(world.multiplier)
-					or ("🔄 Needs Rebirth %d"):format(world.rebirths)
-				UI.setButtonEnabled(row.entry, unlocked, C.blue, C.blueDeep)
+				local isActive = world.id == activeWorldId
+				row.sub.Text = if isActive
+					then ("✅ ACTIVE  ·  ×%.1f rewards"):format(world.multiplier)
+					elseif unlocked then ("Unlocked  ·  ×%.1f rewards"):format(world.multiplier)
+					else ("🔄 Needs Rebirth %d"):format(world.rebirths)
+				UI.setButtonEnabled(
+					row.entry,
+					unlocked,
+					isActive and C.green or C.blue,
+					isActive and C.greenDeep or C.blueDeep
+				)
+			end
+		end
+
+		-- Repaint only when the server says the world actually changed —
+		-- GetDescendants over the island is nothing to run on every sync.
+		if activeWorldId ~= lastWorldId then
+			lastWorldId = activeWorldId
+			for _, world in Config.Worlds do
+				if world.id == activeWorldId then
+					repaintIsland(world)
+					break
+				end
 			end
 		end
 

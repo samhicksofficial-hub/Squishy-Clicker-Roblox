@@ -100,6 +100,12 @@ local SetActive = Instance.new("RemoteEvent")
 SetActive.Name = "SetActive"
 SetActive.Parent = Remotes
 
+-- Pick a world: (worldId). The unlock gate and the payout multiplier both
+-- live here — the client's repaint of the island is cosmetic and local.
+local SetWorld = Instance.new("RemoteEvent")
+SetWorld.Name = "SetWorld"
+SetWorld.Parent = Remotes
+
 local ActivateBoost = Instance.new("RemoteEvent")
 ActivateBoost.Name = "ActivateBoost"
 ActivateBoost.Parent = Remotes
@@ -197,6 +203,7 @@ type PlayerData = {
 	milestones: { [string]: boolean }, -- distance signs already paid out
 	steamersBought: number,       -- cash-bought steamers, for the price curve
 	active: { string },           -- the (at most three) squishies summoned
+	worldId: string,              -- which Config.Worlds entry pays this player
 	boostUntil: number,           -- os.clock while Rain TNT is running
 	lastBoost: number,            -- os.clock of the last activation
 
@@ -413,6 +420,18 @@ end
 
 local function rebirthMultiplier(data: PlayerData, per: number): number
 	return 1 + data.rebirths * per
+end
+
+-- The world this player is being paid under. Falls back to the first entry
+-- rather than erroring, so a world removed from Config never strands the
+-- saves that pointed at it.
+local function worldFor(data: PlayerData)
+	for _, world in Config.Worlds do
+		if world.id == data.worldId then
+			return world
+		end
+	end
+	return Config.Worlds[1]
 end
 
 -- TNT cost of the player's NEXT power level.
@@ -679,6 +698,10 @@ local function sync(player: Player)
 		active = data.active,
 		steamerCost = steamerCost(data.steamersBought),
 		luckySteamerCost = Config.LuckySteamerGemCost,
+		-- The active world and what it pays, as finished numbers: the Worlds
+		-- panel and the island repaint both key off these.
+		worldId = data.worldId,
+		worldMultiplier = worldFor(data).multiplier,
 		boostReadyIn = math.max(Config.BoostCooldownSeconds - (os.clock() - data.lastBoost), 0),
 		boostLeft = math.max(data.boostUntil - os.clock(), 0),
 	})
@@ -717,6 +740,7 @@ local function loadData(player: Player): PlayerData
 		milestones: { [string]: boolean }?,
 		steamersBought: number?,
 		active: { string }?,
+		worldId: string?,
 	}? =
 		nil
 
@@ -765,6 +789,7 @@ local function loadData(player: Player): PlayerData
 		milestones = loaded and loaded.milestones or {},
 		steamersBought = loaded and loaded.steamersBought or 0,
 		active = loaded and loaded.active or {},
+		worldId = loaded and loaded.worldId or Config.Worlds[1].id,
 		-- Not persisted, and -inf for the same reason as lastLaunch above.
 		boostUntil = 0,
 		lastBoost = -math.huge,
@@ -785,6 +810,12 @@ local function loadData(player: Player): PlayerData
 		end
 	end
 	data.active = active
+
+	-- A saved world has to still exist AND still be earned: rebirths never
+	-- decrease, so this only ever catches a save edited by hand or a world
+	-- whose unlock requirement was raised since.
+	local savedWorld = worldFor(data)
+	data.worldId = (data.rebirths >= savedWorld.rebirths) and savedWorld.id or Config.Worlds[1].id
 
 	-- Starter gift: the squisher IS the main clicker, so nobody may start
 	-- without one. Everyone gets a Red Dumpling; players who never picked a
@@ -821,6 +852,7 @@ local function saveData(player: Player)
 			milestones = data.milestones,
 			steamersBought = data.steamersBought,
 			active = data.active,
+			worldId = data.worldId,
 		})
 	end)
 	if not ok then
@@ -977,6 +1009,10 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 	-- further AND hoovers up more on the way past.
 	local magnet = effectiveMagnet(data)
 	local bonuses = squishyBonuses(data)
+	-- The active world multiplies cash and TNT — not gems, which stay the
+	-- un-buffable prize currency, and not the milestone bounties, which are
+	-- one-off achievements rather than track income.
+	local world = worldFor(data)
 
 	local collected: { number } = {}
 	local earnedTnt, earnedCoins, earnedGems = 0, 0, 0
@@ -984,7 +1020,7 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 		if pickup.distance <= distance and math.abs(heightAt(flight, pickup.distance) - pickup.height) <= magnet then
 			table.insert(collected, index)
 			if pickup.kind == "coin" then
-				earnedCoins += pickup.value * bonuses.coins * rebirthMultiplier(data, Config.RebirthCoinBonus)
+				earnedCoins += pickup.value * bonuses.coins * rebirthMultiplier(data, Config.RebirthCoinBonus) * world.multiplier
 			elseif pickup.kind == "gem" then
 				-- Gems are deliberately UNBUFFED. Summons boost power, cash,
 				-- TNT and magnet; letting them boost gems too would devalue
@@ -993,7 +1029,7 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 				-- pet bonus that no longer exists — hence the nil.)
 				earnedGems += pickup.value
 			else
-				earnedTnt += pickup.value * bonuses.tnt * rebirthMultiplier(data, Config.RebirthTntBonus)
+				earnedTnt += pickup.value * bonuses.tnt * rebirthMultiplier(data, Config.RebirthTntBonus) * world.multiplier
 			end
 		end
 	end
@@ -1044,8 +1080,9 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 		-- Shown as the summary's multiplier breakdown, so the player can see
 		-- what each part of their account is actually contributing.
 		rebirths = data.rebirths,
-		coinMultiplier = bonuses.coins * rebirthMultiplier(data, Config.RebirthCoinBonus),
-		tntMultiplier = bonuses.tnt * rebirthMultiplier(data, Config.RebirthTntBonus),
+		coinMultiplier = bonuses.coins * rebirthMultiplier(data, Config.RebirthCoinBonus) * world.multiplier,
+		tntMultiplier = bonuses.tnt * rebirthMultiplier(data, Config.RebirthTntBonus) * world.multiplier,
+		worldMultiplier = world.multiplier,
 		boosted = boostActive(data),
 	})
 
@@ -1167,6 +1204,33 @@ BuySteamer.OnServerEvent:Connect(function(player, kind)
 	sync(player)
 end)
 
+-- ---------- Worlds ----------
+-- Picking a world is picking a payout multiplier, so the unlock gate lives
+-- here and nowhere else. The client's island repaint is cosmetic and local;
+-- an exploiter recolouring their own grass earns them nothing.
+
+SetWorld.OnServerEvent:Connect(function(player, worldId)
+	local data = dataByPlayer[player]
+	if not data or overRate(data, "world", 6) then
+		return
+	end
+	if typeof(worldId) ~= "string" then
+		return
+	end
+
+	for _, world in Config.Worlds do
+		if world.id == worldId then
+			if data.rebirths < world.rebirths then
+				return -- not earned yet; the UI shows the lock, this enforces it
+			end
+			data.worldId = world.id
+			sync(player)
+			return
+		end
+	end
+	-- Unknown id: fall through silently, same as every other bad payload.
+end)
+
 -- ---------- Summoned squishies ----------
 -- The squishies ARE the pets: up to three follow you around and buff the
 -- cannon. Ownership and the slot limit are both checked here — the UI shows
@@ -1250,6 +1314,11 @@ UnboxSteamer.OnServerEvent:Connect(function(player)
 	if not data or data.unopened <= 0 then
 		return
 	end
+	-- Bounded by the banked count anyway, but rate-limited like every other
+	-- remote: uniformity is what makes the missing limiter the bug.
+	if overRate(data, "unbox", 6) then
+		return
+	end
 
 	data.unopened -= 1
 	-- The treadmill ticks on the OPEN, not the bank: hoarding unopened
@@ -1269,6 +1338,9 @@ end)
 SetClicker.OnServerEvent:Connect(function(player, squishyId)
 	local data = dataByPlayer[player]
 	if not data or typeof(squishyId) ~= "string" then
+		return
+	end
+	if overRate(data, "clicker", 8) then
 		return
 	end
 	if not Squishies.byId[squishyId] then
@@ -1291,6 +1363,9 @@ PrestigeSquishy.OnServerEvent:Connect(function(player, squishyId)
 		return
 	end
 	if typeof(squishyId) ~= "string" then
+		return
+	end
+	if overRate(data, "prestige", 6) then
 		return
 	end
 
@@ -1392,6 +1467,7 @@ if DebugAction then
 			data.milestones = {}
 			data.steamersBought = 0
 			data.active = {}
+			data.worldId = Config.Worlds[1].id
 		else
 			return
 		end
@@ -1641,8 +1717,16 @@ end
 
 -- ...and again once the client says it is actually listening, since both of
 -- the above can beat it to connecting. Same remote as the launcher's ready
--- handshake; this is the second listener on it.
-ClientReady.OnServerEvent:Connect(sendKingStateTo)
+-- handshake; this is the second listener on it — and it needs its OWN rate
+-- limit, because each listener on a remote fires independently and the first
+-- one's limiter does nothing to stop this one being spammed into an echo.
+ClientReady.OnServerEvent:Connect(function(player)
+	local data = dataByPlayer[player]
+	if not data or overRate(data, "kingReady", 2) then
+		return
+	end
+	sendKingStateTo(player)
+end)
 
 Players.PlayerRemoving:Connect(function(player)
 	king.contributions[player] = nil
