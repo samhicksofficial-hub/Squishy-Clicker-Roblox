@@ -26,9 +26,13 @@ local Models = require(script.Parent:WaitForChild("Models"))
 
 local Scene = {}
 
--- The stage lives high above the map so whatever is in the place already —
--- baseplate, spawn, the player's own character — stays out of frame.
-local ORIGIN = Vector3.new(0, 500, 0)
+-- The stage lives high above the map so the real world stays out of ITS
+-- frame — and, just as importantly, so IT stays out of the real world's. At
+-- 500 studs up the whole diorama hung in the island's sky: the rainbow
+-- runway, the LAUNCH ZONE text and the old cannon were the "something in the
+-- sky" players reported. Six thousand studs reduces it to nothing the eye
+-- can find, while the close-up cameras still teleport to it instantly.
+local ORIGIN = Vector3.new(0, 6000, 0)
 -- The MAIN view frames the squisher on its cushion; the camera never moves,
 -- it only turns. Aim height splits the difference between the cushion and the
 -- risen squishy so reveals stay in frame after the turn.
@@ -174,6 +178,10 @@ viewRange.target = 1
 -- player is stood on the island and the character camera owns the view until
 -- they open a close-up or fire a shot.
 local sceneDrivesCamera = false
+-- Whether THIS file was the one running the camera last frame, so it hands
+-- back its own loan and never anybody else's — Flight.luau borrows the same
+-- camera for the chase shot.
+local cameraWasBorrowed = false
 -- 0 = facing the squisher, 1 = turned 90° left to the steamer nook. Springy
 -- so the turn eases out with a hint of overshoot instead of lerping flatly.
 local viewYaw = spring(30, 10)
@@ -1717,12 +1725,20 @@ RunService.RenderStepped:Connect(function(deltaTime)
 
 	local camera = workspace.CurrentCamera
 	if camera then
-		-- Borrowed only while there is something to show: a shot in the air,
-		-- or a close-up view the player opened. The rest of the time the
-		-- character owns it and this hands it straight back.
+		-- Borrowed only while there is something to show: a close-up view the
+		-- player opened, or this file's own flight (unused since Flight.luau
+		-- took the shot over, but kept correct).
 		local borrowed = sceneDrivesCamera or flight.progress < 1 or elapsed < flight.holdUntil
 		if not borrowed then
-			if camera.CameraType == Enum.CameraType.Scriptable then
+			-- Hand back exactly ONCE, on the frame the borrow ends. Testing
+			-- CameraType here instead was the launch-killing bug: Flight.luau
+			-- also runs the camera Scriptable for its chase shot, this loop
+			-- saw "Scriptable while I'm not borrowing" and snapped it back to
+			-- the character EVERY FRAME — so firing the cannon showed nothing
+			-- at all. Two systems may borrow the camera; each may only return
+			-- its own loan.
+			if cameraWasBorrowed then
+				cameraWasBorrowed = false
 				camera.CameraType = Enum.CameraType.Custom
 				local character = player.Character
 				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -1732,6 +1748,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			end
 			return
 		end
+		cameraWasBorrowed = true
 
 		if camera.CameraType ~= Enum.CameraType.Scriptable then
 			camera.CameraType = Enum.CameraType.Scriptable

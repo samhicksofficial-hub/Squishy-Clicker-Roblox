@@ -56,7 +56,11 @@ local GROUND_Y = 0
 -- distance possible at all — a real strip of ground long enough for a
 -- six-figure shot would be six figures of studs long. What the plain has to
 -- do is sell the SCALE, and for that it only has to be seen.
-local RANGE_RADIUS = 1350 -- the plain, out to the horizon
+-- Half the 2048-stud Part clamp, i.e. the biggest disc Roblox will actually
+-- make. Asking for more is silently cut down to this, which is how the first
+-- pass ended up with a moat of void between the plain's real edge and the
+-- mesas — the request said 1350 and the engine built 1024.
+local PLAIN_RADIUS = 1020
 -- Beyond the furthest band, not on top of it: the 1M ring sits at 1000, and a
 -- cliff face rising out of it would read as the end of the range rather than
 -- as the horizon past it.
@@ -204,17 +208,32 @@ end
 local function buildGround()
 	local ground = group("Ground")
 
-	-- The plain first: one enormous disc at the bottom of the drop. This is
-	-- the ground the range is measured across, and the thing that has to be
-	-- visible from the plaza.
-	local plain = cylinder(RANGE_RADIUS * 2, 12, Vector3.new(0, slabAt(Y.plain, 12), 0), COLOR.grass, ground)
+	-- The plain first: one disc out to the Part clamp, then a ring of flat
+	-- segments carrying the ground on underneath the mesas, so the horizon
+	-- stands on land rather than hanging over void. The ring sits a tenth of
+	-- a stud lower where the two overlap, which settles the seam for good.
+	local plain = cylinder(PLAIN_RADIUS * 2, 12, Vector3.new(0, slabAt(Y.plain, 12), 0), COLOR.grass, ground)
 	studded(decor(plain))
 
-	-- A darker apron just off the base, so the eye has something to read the
-	-- first few hundred studs of distance against rather than flat green.
-	local apron =
-		cylinder((ISLAND_RADIUS + 320) * 2, 12, Vector3.new(0, slabAt(Y.plain + 0.1, 12), 0), COLOR.grassDark, ground)
-	studded(decor(apron))
+	local SKIRT_OUTER = 1360 -- past the last mesa terrace
+	local SKIRT_SEGMENTS = 72
+	local skirtMid = (PLAIN_RADIUS - 5 + SKIRT_OUTER) * 0.5
+	local skirtWidth = 2 * math.pi * skirtMid / SKIRT_SEGMENTS + 6
+	for index = 1, SKIRT_SEGMENTS do
+		local angle = (index / SKIRT_SEGMENTS) * math.pi * 2
+		local at = Vector3.new(math.cos(angle) * skirtMid, slabAt(Y.plain - 0.1, 12), math.sin(angle) * skirtMid)
+		local piece = block(
+			Vector3.new(SKIRT_OUTER - (PLAIN_RADIUS - 5), 12, skirtWidth),
+			CFrame.new(at) * CFrame.Angles(0, -angle, 0),
+			COLOR.grass,
+			ground
+		)
+		studded(decor(piece))
+	end
+
+	-- No apron between the cliff and the first band any more: the bands are
+	-- contiguous from the plateau edge out, so there is nothing for it to do
+	-- except peek through the seams.
 
 	-- The plateau the base sits on. A thick sand slab dropping to the plain,
 	-- which reads as a cliff edge from below and as a beach from above.
@@ -723,6 +742,20 @@ end
 function Island.build()
 	if root then
 		return -- already built; this is called once from the server's startup
+	end
+
+	-- The place file carries stowaways from the template it was made from: a
+	-- Baseplate and its SpawnLocation. The baseplate is why the painted range
+	-- VANISHED — its top sits at Y0 while the plain and every rainbow band
+	-- lie 22 studs below it, so the entire target was under the floor, and
+	-- the "dark studded expanse" players saw was the baseplate itself. This
+	-- game generates its whole world; leftover floors are never welcome.
+	-- (A SpawnLocation caught here is the template's, never ours: IslandSpawn
+	-- is built inside the Map folder after this sweep.)
+	for _, child in workspace:GetChildren() do
+		if (child:IsA("BasePart") and child.Name == "Baseplate") or child:IsA("SpawnLocation") then
+			child:Destroy()
+		end
 	end
 
 	root = Instance.new("Folder")

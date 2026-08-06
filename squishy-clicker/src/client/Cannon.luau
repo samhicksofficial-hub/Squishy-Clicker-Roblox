@@ -18,7 +18,6 @@
 --  agreeing with each other.
 -- ============================================================
 
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -26,6 +25,7 @@ local Config = require(Shared:WaitForChild("Config"))
 local Format = require(Shared:WaitForChild("Format"))
 local Squishies = require(Shared:WaitForChild("Squishies"))
 local UI = require(script.Parent:WaitForChild("UI"))
+local Flight = require(script.Parent:WaitForChild("Flight"))
 
 local Cannon = {}
 
@@ -721,15 +721,10 @@ function Cannon.mount(gui: GuiObject, scene: any)
 			return
 		end
 
-		-- Everyone gets the broadcast, including whoever fired it. Their own
-		-- shot is already flying as the real thing, so drawing a ghost of it
-		-- too would put two squishies down the valley for one launch.
-		local mine = shot.userId == Players.LocalPlayer.UserId
-		if not mine then
-			-- Draw it as the squishy they actually launched, when we know it.
-			local squishy = typeof(shot.clickerId) == "string" and Squishies.byId[shot.clickerId]
-			scene.playGhost(shot, squishy and squishy.color or Color3.fromRGB(250, 240, 220))
-		end
+		-- Ghosts fly over the REAL plain now, out from the launcher's own
+		-- plot — Flight owns them, the same as it owns your shot. It skips
+		-- your own broadcast itself, so no second squishy for one launch.
+		Flight.playGhost(shot)
 
 		table.insert(feedLines, 1, ("%s — %s"):format(shot.name, Format.abbreviate(math.floor(shot.distance or 0))))
 		while #feedLines > Config.LobbyFeedSize do

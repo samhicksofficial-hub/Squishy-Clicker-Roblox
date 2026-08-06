@@ -25,6 +25,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local Squishies = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Squishies"))
 local Models = require(script.Parent:WaitForChild("Models"))
 
 local Flight = {}
@@ -98,14 +99,82 @@ for _ = 1, POOL do
 	table.insert(pickupParts, prize)
 end
 
+-- ---------- other players' shots ----------
+-- The lobby spectacle: everyone's launches arc over the same plain, each one
+-- rising from its owner's own plot bearing with a name over it. A pool,
+-- round-robined, so a busy server recycles the oldest ghost rather than
+-- queueing shots nobody is waiting for.
+type Ghost = {
+	part: BasePart,
+	label: TextLabel,
+	arcs: { Arc },
+	arcStarts: { number },
+	simSeconds: number,
+	seconds: number,
+	progress: number,
+	active: boolean,
+	distance: number,
+	origin: Vector3,
+	outward: Vector3,
+	heightScale: number,
+}
+
+local ghosts: { Ghost } = {}
+local nextGhost = 1
+for _ = 1, Config.LobbyMaxGhosts do
+	local ball = Instance.new("Part")
+	ball.Shape = Enum.PartType.Ball
+	ball.Size = Vector3.one * 6
+	ball.Material = Enum.Material.Neon
+	ball.Anchored = true
+	ball.CanCollide = false
+	ball.CanQuery = false
+	ball.CanTouch = false
+	ball.Transparency = 1
+	ball.Parent = stage
+
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.new(0, 200, 0, 40)
+	gui.StudsOffset = Vector3.new(0, 7, 0)
+	gui.MaxDistance = 2500
+	gui.Parent = ball
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.Text = ""
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
+	label.TextStrokeTransparency = 0
+	label.TextScaled = true
+	label.Parent = gui
+
+	table.insert(ghosts, {
+		part = ball,
+		label = label,
+		arcs = {},
+		arcStarts = {},
+		simSeconds = 1,
+		seconds = 1,
+		progress = 1,
+		active = false,
+		distance = 0,
+		origin = Vector3.zero,
+		outward = Vector3.xAxis,
+		heightScale = 1,
+	})
+end
+
 -- ---------- the curve ----------
 -- The same two-phase-per-hop curve the server scored against, reproduced to
 -- animate. Only the server's copy decides what was collected, so the two
--- drifting apart is a cosmetic bug and never an exploit.
-local function sample(simTime: number): (number, number, number)
-	for index, arc in shot.arcs do
-		local started = shot.arcStarts[index] or 0
-		if simTime <= started + arc.seconds or index == #shot.arcs then
+-- drifting apart is a cosmetic bug and never an exploit. Generic over the arc
+-- list because ghosts replay other players' flights through it too.
+local function sampleArcs(arcs: { Arc }, starts: { number }, endDistance: number, simTime: number): (number, number, number)
+	for index, arc in arcs do
+		local started = starts[index] or 0
+		if simTime <= started + arc.seconds or index == #arcs then
 			local span = arc.toX - arc.fromX
 			if arc.seconds <= 0 or span <= 0 then
 				return arc.toX, 0, 0
@@ -118,7 +187,11 @@ local function sample(simTime: number): (number, number, number)
 			return arc.fromX + span * along, arc.peak * 4 * along * (1 - along), span / arc.seconds
 		end
 	end
-	return shot.distance, 0, 0
+	return endDistance, 0, 0
+end
+
+local function sample(simTime: number): (number, number, number)
+	return sampleArcs(shot.arcs, shot.arcStarts, shot.distance, simTime)
 end
 
 -- Where a game distance sits in the world, on the ray out from the plot.
@@ -128,6 +201,38 @@ local function worldAt(studs: number, height: number): Vector3
 end
 
 -- ---------- public ----------
+
+-- Laying the field out needs a plot to lay it out FROM. Until one is adopted
+-- everything stays hidden: the first field arrives from the server during the
+-- join handshake, which can beat the plot attribute replicating, and laying
+-- it out from a nil origin scattered glowing crates over the plaza — the
+-- "something in the sky" hanging above spawn. Defined above setPlot because
+-- both setPlot and setField call it, whichever order the two race in.
+local function layoutField()
+	if not origin then
+		return
+	end
+
+	local tallest = 1
+	for _, entry in pickupField do
+		tallest = math.max(tallest, entry.height)
+	end
+
+	for index, prize in pickupParts do
+		local entry = pickupField[index]
+		if entry and not pickupTaken[index] then
+			prize.Color = PICKUP_LOOK[entry.kind] or PICKUP_LOOK.tnt
+			prize.Size = Vector3.one * (entry.vip and 8 or 5)
+			prize.Transparency = 0.1
+			-- Laid out against the field's own tallest, so the strung-out
+			-- pickups sit at a readable height whatever the power level.
+			local lift = entry.height / tallest * 90
+			prize.Position = worldAt(entry.distance, 0) + Vector3.new(0, lift, 0)
+		else
+			prize.Transparency = 1
+		end
+	end
+end
 
 -- The plot to fire from. The direction is straight out from the island's
 -- centre, which is the way every plot's cannon already points.
@@ -142,6 +247,9 @@ function Flight.setPlot(centre: Vector3)
 	-- bands are circles about the centre, and firing from the rim would put
 	-- the squishy over the wrong one.
 	origin = Vector3.new(0, centre.Y + 8, 0)
+
+	-- A field may have arrived before the plot did — lay it out now.
+	layoutField()
 end
 
 function Flight.setSquishy(shape: string?, color: Color3, sparkle: boolean, sizeScale: number?)
@@ -156,27 +264,13 @@ function Flight.setField(field: { PickupEntry })
 	pickupField = field
 	pickupTaken = {}
 	pickupCollecting = {}
-
-	local tallest = 1
-	for _, entry in field do
-		tallest = math.max(tallest, entry.height)
-	end
-
-	for index, prize in pickupParts do
-		local entry = field[index]
-		if entry then
-			prize.Color = PICKUP_LOOK[entry.kind] or PICKUP_LOOK.tnt
-			prize.Size = Vector3.one * (entry.vip and 8 or 5)
-			prize.Transparency = 0.1
-			-- Laid out against the field's own tallest, so the strung-out
-			-- pickups sit at a readable height whatever the power level.
-			local lift = entry.height / tallest * 90
-			prize.Position = worldAt(entry.distance, 0) + Vector3.new(0, lift, 0)
-		else
-			prize.Transparency = 1
+	for index, entry in pickupParts do
+		if not field[index] then
 			pickupTaken[index] = true
+			entry.Transparency = 1
 		end
 	end
+	layoutField()
 end
 
 function Flight.play(plan: {
@@ -187,7 +281,10 @@ function Flight.play(plan: {
 	collected: { number },
 }): number
 	if not origin then
-		return 0 -- no plot yet; nothing to fire from
+		-- Should be impossible once a plot is claimed, so if it ever happens
+		-- it must say so in the Output rather than fail as a blank screen.
+		warn("[SquishyClicker] Launch with no plot adopted — nothing to draw the flight from.")
+		return 0
 	end
 
 	shot.distance = math.max(plan.distance, 0)
@@ -225,6 +322,77 @@ function Flight.play(plan: {
 		model = Models.buildSquishy(stage, modelSpec.shape, modelSpec.color, modelSpec.sparkle, modelSpec.scale)
 	end
 	return shot.seconds
+end
+
+-- Somebody else launched: fly their shot out from THEIR plot, over the same
+-- bands, with their name over it. Takes the broadcast payload as-is.
+function Flight.playGhost(shot2: {
+	userId: number?,
+	name: string?,
+	distance: number,
+	arcs: { Arc },
+	seconds: number,
+	clickerId: string?,
+})
+	if typeof(shot2.arcs) ~= "table" or #shot2.arcs == 0 then
+		return
+	end
+	if shot2.userId == player.UserId then
+		return -- own shot is already flying as the real thing
+	end
+
+	-- Their bearing, read off their plot's ownership stamp. No plot found
+	-- means nothing to fire from — the feed still lists the shot.
+	local map = workspace:FindFirstChild("Map")
+	local plots = map and map:FindFirstChild("Plots")
+	local bearing: Vector3? = nil
+	local originY = 8
+	if plots then
+		for _, plotFolder in plots:GetChildren() do
+			if plotFolder:GetAttribute("OwnerUserId") == shot2.userId then
+				local pad = plotFolder:FindFirstChildWhichIsA("BasePart")
+				if pad then
+					local flat = Vector3.new(pad.Position.X, 0, pad.Position.Z)
+					if flat.Magnitude > 1 then
+						bearing = flat.Unit
+						originY = pad.Position.Y + 8
+					end
+				end
+				break
+			end
+		end
+	end
+	if not bearing then
+		return
+	end
+
+	local ghost = ghosts[nextGhost]
+	nextGhost = nextGhost % #ghosts + 1
+
+	ghost.arcs = shot2.arcs
+	ghost.arcStarts = {}
+	local running, peak = 0, 1
+	for index, arc in shot2.arcs do
+		ghost.arcStarts[index] = running
+		running += arc.seconds
+		peak = math.max(peak, arc.peak)
+	end
+
+	ghost.simSeconds = math.max(shot2.seconds, 1e-3)
+	ghost.seconds = math.clamp(ghost.simSeconds * 0.25, 2.4, 8)
+	ghost.progress = 0
+	ghost.active = true
+	ghost.distance = math.max(shot2.distance, 0)
+	ghost.origin = Vector3.new(0, originY, 0)
+	ghost.outward = bearing
+
+	local span = math.max(Config.rangeRadius(ghost.distance), 1)
+	ghost.heightScale = span * ARC_HEIGHT_RATIO / peak
+
+	local squishy = shot2.clickerId and Squishies.byId[shot2.clickerId]
+	ghost.part.Color = squishy and squishy.color or Color3.fromRGB(240, 240, 240)
+	ghost.part.Transparency = 0.1
+	ghost.label.Text = shot2.name or ""
 end
 
 function Flight.distance(): number
@@ -272,9 +440,14 @@ RunService.RenderStepped:Connect(function(dt)
 		-- Hidden between shots: the squishy belongs on the cushion, not
 		-- hovering over the plain waiting for the next launch.
 		local scale = flying and 5 * modelSpec.scale or 0.001
+		-- Tumbling about the axis PERPENDICULAR to the direction of travel,
+		-- so it somersaults forward whichever way the plot faces. A fixed
+		-- world axis only looks right on two of the eight bearings; on the
+		-- others it reads as a sideways barrel roll.
+		local side = Vector3.new(-outward.Z, 0, outward.X)
 		Models.apply(
 			toy.rig,
-			CFrame.new(at) * CFrame.Angles(0, 0, -shot.progress * math.pi * 9),
+			CFrame.new(at) * CFrame.fromAxisAngle(side, -shot.progress * math.pi * 9),
 			Vector3.one * scale
 		)
 	end
@@ -289,6 +462,23 @@ RunService.RenderStepped:Connect(function(dt)
 			end
 			pickupTaken[index] = true
 			pickupCollecting[index] = nil
+		end
+	end
+
+	-- Other players' shots, arcing out from their own plots.
+	for _, ghost in ghosts do
+		if ghost.active then
+			ghost.progress += dt / ghost.seconds
+			if ghost.progress >= 1 then
+				ghost.active = false
+				ghost.part.Transparency = 1
+			else
+				local flown, height =
+					sampleArcs(ghost.arcs, ghost.arcStarts, ghost.distance, ghost.progress * ghost.simSeconds)
+				ghost.part.Position = ghost.origin
+					+ ghost.outward * Config.rangeRadius(flown)
+					+ Vector3.new(0, height * ghost.heightScale + 2, 0)
+			end
 		end
 	end
 
