@@ -336,30 +336,33 @@ Lighting.GlobalShadows = true
 Lighting.FogEnd = 100000
 
 -- ---------- post-processing ----------
--- The full pipeline: bloom, colour grade, and atmosphere. A note on history
--- before anyone re-tunes these: the legendary washout this file warns about
--- was Brightness 2.4 — at today's 1.15 these bloom numbers are Roblox's own
--- stock values and behave. If it ever goes foggy-bright again, check
--- Brightness first, not the bloom.
+-- The full pipeline: bloom, colour grade, and atmosphere — tuned NATURAL,
+-- and the history now has two entries. The first washout was Brightness 2.4.
+-- The second was Bloom Threshold 0.8: threshold is the luminance a surface
+-- needs to glow, and at 0.8 bright PLASTIC crosses it — the toy shop's white
+-- shelves, pillars and pastel walls all haloed like light fittings. It sits
+-- above 1 now, where only genuinely emissive things (neon pickups, the god
+-- rays, the wind trail) can bloom, which is what bloom is for.
 local bloom = Instance.new("BloomEffect")
-bloom.Intensity = 0.4
+bloom.Intensity = 0.35
 bloom.Size = 24
-bloom.Threshold = 0.8 -- soft glow on neon pickups, rays and rare reveals
+bloom.Threshold = 1.2
 bloom.Parent = Lighting
 
--- A warm lift and a saturation push, which is most of what reads as
--- "cartoon" versus "plastic parts under a sun".
+-- A gentle warm lift. Saturation is a seasoning, not a slider to lean on:
+-- at 0.18 the already-saturated palette (lime grass, rainbow bands, pastel
+-- squishies) tipped into candy-glare, so it stays under a tenth.
 local colorGrade = Instance.new("ColorCorrectionEffect")
-colorGrade.TintColor = Color3.fromRGB(255, 250, 245)
-colorGrade.Saturation = 0.18
-colorGrade.Contrast = 0.08
+colorGrade.TintColor = Color3.fromRGB(255, 252, 248)
+colorGrade.Saturation = 0.07
+colorGrade.Contrast = 0.03
 colorGrade.Parent = Lighting
 
 -- Haze that thickens with distance, so the far bands and the mesas recede
 -- into the sky instead of staying pin-sharp a thousand studs out — depth the
 -- long corridor otherwise has no way to show.
 local atmosphere = Instance.new("Atmosphere")
-atmosphere.Density = 0.25
+atmosphere.Density = 0.2
 atmosphere.Color = Color3.fromRGB(190, 220, 255)
 atmosphere.Decay = Color3.fromRGB(150, 180, 220)
 atmosphere.Parent = Lighting
