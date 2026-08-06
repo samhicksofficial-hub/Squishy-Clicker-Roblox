@@ -618,25 +618,73 @@ export type Plot = {
 
 local plots: { Plot } = {}
 
--- ---------- the cannon on a plot ----------
+-- ---------- imported models on a plot ----------
 
--- The imported cannon, found by a tolerant name match anywhere under
--- ReplicatedStorage — "Squishy Cannon", "SquishyCannon" and any casing all
--- resolve, because exact-name lookups on hand-imported models are how a
--- month of "the model doesn't show" bugs happened.
-local function findCannonTemplate(): (Model | BasePart)?
+-- A template found by a tolerant name match anywhere under ReplicatedStorage
+-- — "Squishy Cannon", "SquishyCannon" and any casing all resolve, because
+-- exact-name lookups on hand-imported models are how a month of "the model
+-- doesn't show" bugs happened. `looseName` is the lowercased, de-spaced form.
+local function findImportTemplate(looseName: string): (Model | BasePart)?
 	for _, descendant in game:GetService("ReplicatedStorage"):GetDescendants() do
 		local loosened = descendant.Name:lower():gsub("[%s_]", "")
-		if loosened == "squishycannon" and (descendant:IsA("Model") or descendant:IsA("BasePart")) then
+		if loosened == looseName and (descendant:IsA("Model") or descendant:IsA("BasePart")) then
 			return descendant :: any
 		end
 	end
 	return nil
 end
 
--- How big the placed cannon should be, as its largest dimension. The import
--- can be authored at any size; it is scaled to this so every plot matches.
-local CANNON_TARGET_SIZE = 13
+-- The shared handling every import gets, in one place because the second
+-- import (the capsule pod) would otherwise re-learn each lesson the cannon
+-- already paid for.
+--
+-- Scripts are destroyed — an import is GEOMETRY, nothing more. The cannon
+-- arrived carrying a toolbox touch-and-fling script written for R6 that
+-- reached for character.Torso and errored on every modern avatar; foreign
+-- scripts inside imported models do not get to run at all, both for the
+-- error spam and as basic hygiene. Every part is anchored, or the model
+-- falls through the pad the moment it spawns.
+--
+-- Returns false for a GUTTED import (no parts left — a Studio deletion that
+-- overshot), so the caller can fall back loudly instead of placing pure
+-- invisibility.
+local function prepareImport(clone: Model | BasePart): boolean
+	for _, descendant in clone:GetDescendants() do
+		if descendant:IsA("LuaSourceContainer") then
+			descendant:Destroy()
+		end
+	end
+
+	local hasAnyPart = clone:IsA("BasePart")
+	if clone:IsA("BasePart") then
+		clone.Anchored = true
+	end
+	for _, part in clone:GetDescendants() do
+		if part:IsA("BasePart") then
+			part.Anchored = true
+			hasAnyPart = true
+		end
+	end
+	return hasAnyPart
+end
+
+-- Scale to a standard largest-dimension size, whatever the import was
+-- authored at.
+local function scaleImport(clone: Model | BasePart, target: number)
+	if clone:IsA("Model") then
+		local size = clone:GetExtentsSize()
+		local largest = math.max(size.X, size.Y, size.Z, 0.001)
+		pcall(function()
+			clone:ScaleTo(clone:GetScale() * target / largest)
+		end)
+	elseif clone:IsA("BasePart") then
+		local largest = math.max(clone.Size.X, clone.Size.Y, clone.Size.Z, 0.001)
+		clone.Size = clone.Size * (target / largest)
+	end
+end
+
+-- How big the placed cannon should be, as its largest dimension.
+local CANNON_TARGET_SIZE = 26
 
 -- Which way the import's MUZZLE points relative to its authored front, as a
 -- yaw correction on top of a lookAt down the radial. 0 = authored facing -Z
@@ -688,7 +736,7 @@ local function buildFallbackCannon(frame: CFrame, folder: Folder)
 end
 
 local function buildCannon(frame: CFrame, folder: Folder)
-	local template = findCannonTemplate()
+	local template = findImportTemplate("squishycannon")
 
 	if not template then
 		warn("[SquishyClicker] No 'Squishy Cannon' model found in ReplicatedStorage — using the built-in cannon.")
@@ -698,64 +746,17 @@ local function buildCannon(frame: CFrame, folder: Folder)
 
 	local cannon = template:Clone()
 
-	-- An import is GEOMETRY, nothing more. This one arrived carrying its own
-	-- CannonScript — a toolbox touch-and-fling behaviour written for R6 that
-	-- reached for character.Torso and errored on every modern avatar. The
-	-- game's launcher is the launcher; foreign scripts inside imported models
-	-- do not get to run at all, both for the error spam and as basic hygiene
-	-- (free-model scripts are the classic place obfuscated junk hides).
-	for _, descendant in cannon:GetDescendants() do
-		if descendant:IsA("LuaSourceContainer") then
-			descendant:Destroy()
-		end
-	end
-
-	-- Guard against a GUTTED import. Deleting a stowaway script in the
-	-- Explorer is easy to overshoot — take its parent part with it and the
-	-- "model" left in ReplicatedStorage is an empty shell, which would place
-	-- here as pure invisibility with nothing in the Output to say why. An
-	-- empty clone falls back loudly instead.
-	local hasAnyPart = cannon:IsA("BasePart")
-	if not hasAnyPart then
-		for _, descendant in cannon:GetDescendants() do
-			if descendant:IsA("BasePart") then
-				hasAnyPart = true
-				break
-			end
-		end
-	end
-	if not hasAnyPart then
+	if not prepareImport(cannon) then
 		warn(
 			"[SquishyClicker] The 'Squishy Cannon' template has no parts left — "
-				.. "did deleting its script take the mesh with it? Using the built-in cannon."
+				.. "did a Studio deletion take the mesh with it? Using the built-in cannon."
 		)
 		cannon:Destroy()
 		buildFallbackCannon(frame, folder)
 		return
 	end
 
-	-- Anchor every part: an unanchored import would fall through the pad the
-	-- moment it spawned, and a cannon is furniture, not physics.
-	if cannon:IsA("BasePart") then
-		cannon.Anchored = true
-	end
-	for _, part in cannon:GetDescendants() do
-		if part:IsA("BasePart") then
-			part.Anchored = true
-		end
-	end
-
-	-- Scale to the standard size whatever the import was authored at.
-	if cannon:IsA("Model") then
-		local size = cannon:GetExtentsSize()
-		local largest = math.max(size.X, size.Y, size.Z, 0.001)
-		pcall(function()
-			cannon:ScaleTo(cannon:GetScale() * CANNON_TARGET_SIZE / largest)
-		end)
-	elseif cannon:IsA("BasePart") then
-		local largest = math.max(cannon.Size.X, cannon.Size.Y, cannon.Size.Z, 0.001)
-		cannon.Size = cannon.Size * (CANNON_TARGET_SIZE / largest)
-	end
+	scaleImport(cannon, CANNON_TARGET_SIZE)
 
 	-- Place it in two steps: roughly on the pad first, then measured — the
 	-- bounding box is nudged so its BOTTOM sits exactly on the pad's top,
@@ -806,6 +807,54 @@ function Island.rotateCannons(): number
 		place(cannonExtraYaw)
 	end
 	return (CANNON_YAW_DEGREES + cannonExtraYaw) % 360
+end
+
+-- ---------- the station beside the cannon ----------
+-- The visible thing at the prompt spot: the imported capsule pod, or the old
+-- wooden block when the import is missing. The PROMPT itself lives on a
+-- separate invisible host built in buildPlot — swapping the scenery must
+-- never be able to break the interaction.
+
+local CAPSULE_TARGET_SIZE = 9
+
+local function buildStation(frame: CFrame, folder: Folder)
+	local seat = frame:PointToWorldSpace(Vector3.new(-6, 0, 0))
+	local padTopY = frame.Position.Y + Y.plotPad
+
+	local template = findImportTemplate("capsulepod")
+	if not template then
+		warn("[SquishyClicker] No 'Capsule Pod' model found in ReplicatedStorage — using the wooden stand.")
+		local stand = block(Vector3.new(3, 5, 3), CFrame.new(seat + Vector3.new(0, 2.5 + Y.plotPad, 0)), COLOR.plank, folder)
+		stand.Material = Enum.Material.WoodPlanks
+		return
+	end
+
+	local capsule = template:Clone()
+	if not prepareImport(capsule) then
+		warn("[SquishyClicker] The 'Capsule Pod' template has no parts left — using the wooden stand.")
+		capsule:Destroy()
+		local stand = block(Vector3.new(3, 5, 3), CFrame.new(seat + Vector3.new(0, 2.5 + Y.plotPad, 0)), COLOR.plank, folder)
+		stand.Material = Enum.Material.WoodPlanks
+		return
+	end
+
+	scaleImport(capsule, CAPSULE_TARGET_SIZE)
+
+	-- Faces the radial like the cannon; a pod is near-symmetric so no yaw
+	-- correction has earned its keep yet.
+	local outwardRadial = frame:VectorToWorldSpace(Vector3.xAxis)
+	capsule:PivotTo(CFrame.lookAt(seat, seat + outwardRadial))
+
+	local boundsCFrame, boundsSize
+	if capsule:IsA("Model") then
+		boundsCFrame, boundsSize = capsule:GetBoundingBox()
+	else
+		boundsCFrame, boundsSize = capsule.CFrame, capsule.Size
+	end
+	local bottomY = boundsCFrame.Position.Y - boundsSize.Y * 0.5
+	capsule:PivotTo(capsule:GetPivot() + Vector3.new(0, padTopY - bottomY, 0))
+
+	capsule.Parent = folder
 end
 
 -- One plot: a raised pad with a fence, a sign, and a cannon on it aimed out
@@ -860,16 +909,20 @@ local function buildPlot(index: number): Plot
 	-- has a cannon on every plot rather than an empty pad.
 	buildCannon(frame, folder)
 
-	-- Where the prompt lives. Its own small part at head height beside the
-	-- plinth, so the "hold E" hint sits where a player walking up expects it
-	-- rather than buried inside the barrel.
+	-- Where the prompt lives: an INVISIBLE host at head height beside the
+	-- cannon, deliberately separate from whatever scenery stands there. The
+	-- visible half is buildStation's capsule pod (or its fallback), and
+	-- swapping that scenery can never break the interaction because the
+	-- interaction was never attached to it.
 	local station = Instance.new("Part")
-	station.Size = Vector3.new(3, 5, 3)
-	station.CFrame = frame * CFrame.new(-6, 3.5, 0)
-	station.Color = COLOR.plank
-	station.Material = Enum.Material.WoodPlanks
+	station.Size = Vector3.new(4, 6, 4)
+	station.CFrame = frame * CFrame.new(-6, 4, 0)
+	station.Transparency = 1
+	station.CanCollide = false
 	station.Anchored = true
 	station.Parent = folder
+
+	buildStation(frame, folder)
 
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.ActionText = "Launch"
