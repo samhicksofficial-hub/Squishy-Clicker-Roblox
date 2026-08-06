@@ -49,8 +49,46 @@ stage.Parent = workspace
 -- Where the shot starts and which way it goes. Set from the player's own plot
 -- the moment one is claimed for them; until then the flight has nowhere to be
 -- and simply does not play.
-local origin: Vector3? = nil
+--
+-- The shot leaves the MUZZLE of the plot's own cannon — that is the whole
+-- fantasy, and an earlier version that spawned it at the island's centre (so
+-- distance measured from where the bands do) had it popping into existence a
+-- hundred and fifty studs behind the player instead of out of their barrel.
+-- The bands still line up: see worldAt.
+local muzzle: Vector3? = nil
+local muzzleRadius = 0
 local outward = Vector3.new(1, 0, 0)
+
+-- Where bounces land, just proud of the plain's top face. Must track Y.plain
+-- in Island.luau, the same pairing as MagnetReferenceHeight / STAGE_APEX.
+local PLAIN_TOP = -20
+
+-- Cannon smoke, so the launch has a bang to it. Parked at the muzzle by
+-- setPlot; Emit'd by play.
+local smokeAnchor = Instance.new("Part")
+smokeAnchor.Size = Vector3.one
+smokeAnchor.Transparency = 1
+smokeAnchor.Anchored = true
+smokeAnchor.CanCollide = false
+smokeAnchor.CanQuery = false
+smokeAnchor.CanTouch = false
+smokeAnchor.Parent = stage
+
+local muzzleSmoke = Instance.new("ParticleEmitter")
+muzzleSmoke.Texture = "rbxasset://textures/particles/smoke_main.dds"
+muzzleSmoke.Rate = 0
+muzzleSmoke.Lifetime = NumberRange.new(0.5, 1.2)
+muzzleSmoke.Speed = NumberRange.new(12, 22)
+muzzleSmoke.SpreadAngle = Vector2.new(18, 18)
+muzzleSmoke.Size = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 2),
+	NumberSequenceKeypoint.new(1, 8),
+})
+muzzleSmoke.Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0.3),
+	NumberSequenceKeypoint.new(1, 1),
+})
+muzzleSmoke.Parent = smokeAnchor
 
 local model: Models.SquishyModel? = nil
 local modelSpec = { shape = nil :: string?, color = Color3.fromRGB(226, 120, 120), sparkle = false, scale = 1 }
@@ -114,7 +152,8 @@ type Ghost = {
 	progress: number,
 	active: boolean,
 	distance: number,
-	origin: Vector3,
+	origin: Vector3, -- their muzzle
+	muzzleRadius: number,
 	outward: Vector3,
 	heightScale: number,
 }
@@ -161,6 +200,7 @@ for _ = 1, Config.LobbyMaxGhosts do
 		active = false,
 		distance = 0,
 		origin = Vector3.zero,
+		muzzleRadius = 0,
 		outward = Vector3.xAxis,
 		heightScale = 1,
 	})
@@ -195,9 +235,23 @@ local function sample(simTime: number): (number, number, number)
 end
 
 -- Where a game distance sits in the world, on the ray out from the plot.
+--
+-- Radius is clamped at the muzzle's, so the shot leaves the barrel rather
+-- than teleporting to the island's centre first — and everything past the
+-- muzzle is on the same circles the bands are painted on, so the landing sits
+-- on exactly the band the distance says. (The first ~50 game studs compress
+-- onto the muzzle as a result; they pass in a fraction of the first arc, and
+-- the squishy is climbing out of the barrel while they do.)
+--
+-- The baseline sinks from the barrel's height down to the plain across the
+-- first band, so bounces out on the range actually touch the ground instead
+-- of skipping along at plateau height 22 studs in the air.
 local function worldAt(studs: number, height: number): Vector3
-	local from = origin or Vector3.zero
-	return from + outward * Config.rangeRadius(studs) + Vector3.new(0, height * shot.heightScale, 0)
+	local from = muzzle or Vector3.zero
+	local radius = math.max(Config.rangeRadius(studs), muzzleRadius)
+	local blend = math.clamp((radius - muzzleRadius) / math.max(Config.RangeNearRadius - muzzleRadius, 1), 0, 1)
+	local baseY = from.Y * (1 - blend) + PLAIN_TOP * blend
+	return Vector3.new(outward.X * radius, baseY + height * shot.heightScale, outward.Z * radius)
 end
 
 -- ---------- public ----------
@@ -209,7 +263,7 @@ end
 -- "something in the sky" hanging above spawn. Defined above setPlot because
 -- both setPlot and setField call it, whichever order the two race in.
 local function layoutField()
-	if not origin then
+	if not muzzle then
 		return
 	end
 
@@ -242,11 +296,14 @@ function Flight.setPlot(centre: Vector3)
 		return
 	end
 	outward = flat.Unit
-	-- Started at the island's middle rather than at the plot, so a shot's
-	-- distance is measured from the same place the rainbow bands are: the
-	-- bands are circles about the centre, and firing from the rim would put
-	-- the squishy over the wrong one.
-	origin = Vector3.new(0, centre.Y + 8, 0)
+	-- The mouth of the plot's cannon: a little outward of the plot centre and
+	-- up at the height the barrel's mouth sits. Approximated from the plot's
+	-- geometry rather than measured off the barrel part, which is close
+	-- enough at cannon scale and keeps this file ignorant of how Island.luau
+	-- happens to assemble its cannons.
+	muzzle = centre + flat.Unit * 9 + Vector3.new(0, 13, 0)
+	muzzleRadius = flat.Magnitude + 9
+	smokeAnchor.Position = muzzle :: Vector3
 
 	-- A field may have arrived before the plot did — lay it out now.
 	layoutField()
@@ -280,7 +337,7 @@ function Flight.play(plan: {
 	peakHeight: number,
 	collected: { number },
 }): number
-	if not origin then
+	if not muzzle then
 		-- Should be impossible once a plot is claimed, so if it ever happens
 		-- it must say so in the Output rather than fail as a blank screen.
 		warn("[SquishyClicker] Launch with no plot adopted — nothing to draw the flight from.")
@@ -321,6 +378,7 @@ function Flight.play(plan: {
 	if not model then
 		model = Models.buildSquishy(stage, modelSpec.shape, modelSpec.color, modelSpec.sparkle, modelSpec.scale)
 	end
+	muzzleSmoke:Emit(18)
 	return shot.seconds
 end
 
@@ -341,12 +399,13 @@ function Flight.playGhost(shot2: {
 		return -- own shot is already flying as the real thing
 	end
 
-	-- Their bearing, read off their plot's ownership stamp. No plot found
-	-- means nothing to fire from — the feed still lists the shot.
+	-- Their bearing and muzzle, read off their plot's ownership stamp. No
+	-- plot found means nothing to fire from — the feed still lists the shot.
 	local map = workspace:FindFirstChild("Map")
 	local plots = map and map:FindFirstChild("Plots")
 	local bearing: Vector3? = nil
-	local originY = 8
+	local theirMuzzle = Vector3.zero
+	local theirMuzzleRadius = 0
 	if plots then
 		for _, plotFolder in plots:GetChildren() do
 			if plotFolder:GetAttribute("OwnerUserId") == shot2.userId then
@@ -355,7 +414,9 @@ function Flight.playGhost(shot2: {
 					local flat = Vector3.new(pad.Position.X, 0, pad.Position.Z)
 					if flat.Magnitude > 1 then
 						bearing = flat.Unit
-						originY = pad.Position.Y + 8
+						-- Same approximation as our own muzzle in setPlot.
+						theirMuzzle = pad.Position + flat.Unit * 9 + Vector3.new(0, 13, 0)
+						theirMuzzleRadius = flat.Magnitude + 9
 					end
 				end
 				break
@@ -383,7 +444,8 @@ function Flight.playGhost(shot2: {
 	ghost.progress = 0
 	ghost.active = true
 	ghost.distance = math.max(shot2.distance, 0)
-	ghost.origin = Vector3.new(0, originY, 0)
+	ghost.origin = theirMuzzle
+	ghost.muzzleRadius = theirMuzzleRadius
 	ghost.outward = bearing
 
 	local span = math.max(Config.rangeRadius(ghost.distance), 1)
@@ -475,9 +537,21 @@ RunService.RenderStepped:Connect(function(dt)
 			else
 				local flown, height =
 					sampleArcs(ghost.arcs, ghost.arcStarts, ghost.distance, ghost.progress * ghost.simSeconds)
-				ghost.part.Position = ghost.origin
-					+ ghost.outward * Config.rangeRadius(flown)
-					+ Vector3.new(0, height * ghost.heightScale + 2, 0)
+				-- The same clamped radius and sinking baseline as our own
+				-- shot, so their squishy also leaves a barrel and also
+				-- bounces on the actual ground.
+				local radius = math.max(Config.rangeRadius(flown), ghost.muzzleRadius)
+				local blend = math.clamp(
+					(radius - ghost.muzzleRadius) / math.max(Config.RangeNearRadius - ghost.muzzleRadius, 1),
+					0,
+					1
+				)
+				local baseY = ghost.origin.Y * (1 - blend) + PLAIN_TOP * blend
+				ghost.part.Position = Vector3.new(
+					ghost.outward.X * radius,
+					baseY + height * ghost.heightScale + 2,
+					ghost.outward.Z * radius
+				)
 			end
 		end
 	end
