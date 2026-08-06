@@ -640,12 +640,20 @@ local CANNON_TARGET_SIZE = 13
 
 -- Which way the import's MUZZLE points relative to its authored front, as a
 -- yaw correction on top of a lookAt down the radial. 0 = authored facing -Z
--- (the usual convention), 180 = facing +Z, ±90 for the sides. The first
--- placement guessed -Z and had every muzzle aimed back at its own station,
--- which is how we know this model's muzzle is on its +Z: 180 here is the
--- flip of a proven-backward state, not another guess. If a DIFFERENT model
--- is ever imported, turn this in steps of 90 until it faces the range.
-local CANNON_YAW_DEGREES = 180
+-- (the usual convention), 180 = facing +Z, ±90 for the sides.
+--
+-- This number has been wrong twice, because it was deduced from screenshots
+-- of a model this codebase cannot open. It is now set from the latest
+-- in-game evidence (muzzle over the station at 180 means the muzzle rides
+-- the authored front, so 0) — and if it is STILL wrong, do not reason about
+-- it: press Rotate Cannons in the debug menu until they face the range, and
+-- write the number the Output prints into this constant.
+local CANNON_YAW_DEGREES = 0
+
+-- Every placed cannon's placement closure, plus the live debug offset, so
+-- Rotate Cannons can re-aim the whole island at once.
+local placedCannons: { (extraYaw: number) -> () } = {}
+local cannonExtraYaw = 0
 
 local function buildCannon(frame: CFrame, folder: Folder)
 	local template = findCannonTemplate()
@@ -715,20 +723,40 @@ local function buildCannon(frame: CFrame, folder: Folder)
 	-- muzzle. There is no other rotation in the chain to be 90° off in.
 	local seat = frame:PointToWorldSpace(Vector3.new(2, 0, 0))
 	local outwardRadial = frame:VectorToWorldSpace(Vector3.xAxis)
-	local target = CFrame.lookAt(seat, seat + outwardRadial) * CFrame.Angles(0, math.rad(CANNON_YAW_DEGREES), 0)
-	cannon:PivotTo(target)
-
-	local boundsCFrame, boundsSize
-	if cannon:IsA("Model") then
-		boundsCFrame, boundsSize = cannon:GetBoundingBox()
-	else
-		boundsCFrame, boundsSize = cannon.CFrame, cannon.Size
-	end
-	local bottomY = boundsCFrame.Position.Y - boundsSize.Y * 0.5
 	local padTopY = frame.Position.Y + Y.plotPad
-	cannon:PivotTo(cannon:GetPivot() + Vector3.new(0, padTopY - bottomY, 0))
 
+	-- The whole placement as a closure taking an extra yaw, so the debug
+	-- menu's Rotate Cannons can re-aim every cannon live and the right value
+	-- can be READ OFF rather than deduced. Guessing an unseen model's axes
+	-- from screenshots went wrong twice; it does not get a third attempt.
+	local function place(extraYaw: number)
+		local yaw = CANNON_YAW_DEGREES + extraYaw
+		cannon:PivotTo(CFrame.lookAt(seat, seat + outwardRadial) * CFrame.Angles(0, math.rad(yaw), 0))
+
+		local boundsCFrame, boundsSize
+		if cannon:IsA("Model") then
+			boundsCFrame, boundsSize = cannon:GetBoundingBox()
+		else
+			boundsCFrame, boundsSize = cannon.CFrame, cannon.Size
+		end
+		local bottomY = boundsCFrame.Position.Y - boundsSize.Y * 0.5
+		cannon:PivotTo(cannon:GetPivot() + Vector3.new(0, padTopY - bottomY, 0))
+	end
+
+	place(0)
+	table.insert(placedCannons, place)
 	cannon.Parent = folder
+end
+
+-- Turn every placed cannon another 90° and hand back the yaw now in effect,
+-- for the debug menu: press until they face the range, then write the printed
+-- number into CANNON_YAW_DEGREES above.
+function Island.rotateCannons(): number
+	cannonExtraYaw = (cannonExtraYaw + 90) % 360
+	for _, place in placedCannons do
+		place(cannonExtraYaw)
+	end
+	return (CANNON_YAW_DEGREES + cannonExtraYaw) % 360
 end
 
 -- One plot: a raised pad with a fence, a sign, and a cannon on it aimed out

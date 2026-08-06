@@ -68,7 +68,7 @@ function Debug.mount(gui: GuiObject, scene: any)
 
 	local panel = make("Frame", {
 		Name = "DebugPanel",
-		Size = UDim2.new(0, 320, 0, 580),
+		Size = UDim2.new(0, 320, 0, 620),
 		Position = UDim2.new(0, 376, 0, 66),
 		BackgroundColor3 = COLOR.panel,
 		BackgroundTransparency = 0.06,
@@ -94,9 +94,9 @@ function Debug.mount(gui: GuiObject, scene: any)
 
 	-- ---------- quick actions ----------
 	-- Two columns of 32px rows with 8px gaps; the height has to be an exact
-	-- number of those or the last row is clipped. Nine rows = 18 buttons.
+	-- number of those or the last row is clipped. Ten rows = 20 buttons.
 	local grid = make("Frame", {
-		Size = UDim2.new(1, -16, 0, 352),
+		Size = UDim2.new(1, -16, 0, 392),
 		Position = UDim2.new(0, 8, 0, 32),
 		BackgroundTransparency = 1,
 		ZIndex = 41,
@@ -156,6 +156,12 @@ function Debug.mount(gui: GuiObject, scene: any)
 	end)
 	quickButton(18, "Ready Rebirth", function()
 		fire:FireServer("readyRebirth")
+	end)
+	-- The imported cannon's facing, dialled in by eye: press until every
+	-- muzzle points at the range, then write the yaw the Output prints into
+	-- CANNON_YAW_DEGREES in Island.luau so it survives the session.
+	quickButton(19, "Rotate Cannons", function()
+		fire:FireServer("rotateCannons")
 	end)
 
 	local backdropFaded = true
@@ -246,7 +252,7 @@ function Debug.mount(gui: GuiObject, scene: any)
 	-- ---------- force a reveal ----------
 	make("TextLabel", {
 		Size = UDim2.new(1, -16, 0, 18),
-		Position = UDim2.new(0, 8, 0, 390),
+		Position = UDim2.new(0, 8, 0, 430),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		Text = "Force reveal (also grants a copy)",
@@ -258,8 +264,8 @@ function Debug.mount(gui: GuiObject, scene: any)
 	})
 
 	local list = make("ScrollingFrame", {
-		Size = UDim2.new(1, -16, 1, -420),
-		Position = UDim2.new(0, 8, 0, 412),
+		Size = UDim2.new(1, -16, 1, -460),
+		Position = UDim2.new(0, 8, 0, 452),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 4,

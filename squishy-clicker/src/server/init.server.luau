@@ -1438,6 +1438,10 @@ if DebugAction then
 			-- a fresh server, so 0 would leave the cooldown still running.
 			data.lastLaunch = -math.huge
 			data.lastBoost = -math.huge
+		elseif action == "rotateCannons" then
+			-- Dial the imported model's facing in by eye, then make it stick.
+			local yaw = Island.rotateCannons()
+			print(("[SquishyClicker] Cannons at yaw %d — write it into CANNON_YAW_DEGREES in Island.luau."):format(yaw))
 		elseif action == "richCannon" then
 			-- Enough of everything to reach every screen the cannon has.
 			data.tnt += 1000000
