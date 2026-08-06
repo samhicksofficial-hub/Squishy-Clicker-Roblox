@@ -661,35 +661,40 @@ local CANNON_PITCH_DEGREES = -90
 local placedCannons: { (extraYaw: number) -> () } = {}
 local cannonExtraYaw = 0
 
+-- The old built-from-parts cannon: the fallback whenever the import is
+-- missing OR unusable, so a plot always has a cannon on it no matter what
+-- state the place file is in.
+local function buildFallbackCannon(frame: CFrame, folder: Folder)
+	local plinth = block(Vector3.new(9, 4.5, 9), frame * CFrame.new(2, 3.9, 0), Color3.fromRGB(240, 224, 186), folder)
+	plinth.Material = Enum.Material.SmoothPlastic
+
+	local barrel = Instance.new("Part")
+	barrel.Shape = Enum.PartType.Cylinder
+	barrel.Size = Vector3.new(11, 5.6, 5.6)
+	barrel.CFrame = frame * CFrame.new(4, 8.4, 0) * CFrame.Angles(0, 0, math.rad(38)) * CFrame.new(4, 0, 0)
+	barrel.Color = COLOR.metal
+	barrel.Material = Enum.Material.SmoothPlastic
+	barrel.Anchored = true
+	barrel.CanCollide = true
+	barrel.Parent = folder
+
+	local mouth = Instance.new("Part")
+	mouth.Shape = Enum.PartType.Cylinder
+	mouth.Size = Vector3.new(0.5, 4.6, 4.6)
+	mouth.CFrame = barrel.CFrame * CFrame.new(5.4, 0, 0)
+	mouth.Color = COLOR.metalDark
+	mouth.Material = Enum.Material.SmoothPlastic
+	mouth.Anchored = true
+	decor(mouth)
+	mouth.Parent = folder
+end
+
 local function buildCannon(frame: CFrame, folder: Folder)
 	local template = findCannonTemplate()
 
 	if not template then
-		-- No import: the old built-from-parts cannon, so the game works in a
-		-- place that hasn't done the one-time Studio import yet.
 		warn("[SquishyClicker] No 'Squishy Cannon' model found in ReplicatedStorage — using the built-in cannon.")
-		local plinth = block(Vector3.new(9, 4.5, 9), frame * CFrame.new(2, 3.9, 0), Color3.fromRGB(240, 224, 186), folder)
-		plinth.Material = Enum.Material.SmoothPlastic
-
-		local barrel = Instance.new("Part")
-		barrel.Shape = Enum.PartType.Cylinder
-		barrel.Size = Vector3.new(11, 5.6, 5.6)
-		barrel.CFrame = frame * CFrame.new(4, 8.4, 0) * CFrame.Angles(0, 0, math.rad(38)) * CFrame.new(4, 0, 0)
-		barrel.Color = COLOR.metal
-		barrel.Material = Enum.Material.SmoothPlastic
-		barrel.Anchored = true
-		barrel.CanCollide = true
-		barrel.Parent = folder
-
-		local mouth = Instance.new("Part")
-		mouth.Shape = Enum.PartType.Cylinder
-		mouth.Size = Vector3.new(0.5, 4.6, 4.6)
-		mouth.CFrame = barrel.CFrame * CFrame.new(5.4, 0, 0)
-		mouth.Color = COLOR.metalDark
-		mouth.Material = Enum.Material.SmoothPlastic
-		mouth.Anchored = true
-		decor(mouth)
-		mouth.Parent = folder
+		buildFallbackCannon(frame, folder)
 		return
 	end
 
@@ -705,6 +710,30 @@ local function buildCannon(frame: CFrame, folder: Folder)
 		if descendant:IsA("LuaSourceContainer") then
 			descendant:Destroy()
 		end
+	end
+
+	-- Guard against a GUTTED import. Deleting a stowaway script in the
+	-- Explorer is easy to overshoot — take its parent part with it and the
+	-- "model" left in ReplicatedStorage is an empty shell, which would place
+	-- here as pure invisibility with nothing in the Output to say why. An
+	-- empty clone falls back loudly instead.
+	local hasAnyPart = cannon:IsA("BasePart")
+	if not hasAnyPart then
+		for _, descendant in cannon:GetDescendants() do
+			if descendant:IsA("BasePart") then
+				hasAnyPart = true
+				break
+			end
+		end
+	end
+	if not hasAnyPart then
+		warn(
+			"[SquishyClicker] The 'Squishy Cannon' template has no parts left — "
+				.. "did deleting its script take the mesh with it? Using the built-in cannon."
+		)
+		cannon:Destroy()
+		buildFallbackCannon(frame, folder)
+		return
 	end
 
 	-- Anchor every part: an unanchored import would fall through the pad the
