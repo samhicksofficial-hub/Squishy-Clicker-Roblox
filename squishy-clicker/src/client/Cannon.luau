@@ -104,9 +104,19 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	-- Built up front and hidden; opening one is a Visible flag rather than a
 	-- rebuild, so a panel keeps its scroll position between visits.
 	local panels: { [string]: UI.Panel } = {}
+	-- The modal manager: opening any panel pops it in and pops every other
+	-- one out, so exactly one can ever be up. The scrim and blur ride along
+	-- automatically — they follow each panel's Visible, which the pop
+	-- functions drive.
 	local function showOnly(name: string?)
 		for key, panel in panels do
-			panel.root.Visible = key == name
+			if key == name then
+				if not panel.root.Visible then
+					UI.popIn(panel.root)
+				end
+			elseif panel.root.Visible then
+				UI.popOut(panel.root)
+			end
 		end
 	end
 

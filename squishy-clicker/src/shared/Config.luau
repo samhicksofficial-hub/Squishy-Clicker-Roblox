@@ -89,10 +89,24 @@ local Config = {
 
 	-- ----- Flight feel (client-side FX tuning) -----
 	-- The chase camera's field of view: base at rest, plus this much stretch
-	-- at full launch speed. It snaps back toward base on every bounce, which
-	-- is most of what makes an impact feel like one.
+	-- at full launch speed (70 up to 92). It eases rather than jumps —
+	-- ChaseFovSmoothing is how quickly it chases its target, per second — and
+	-- snaps back toward base on every bounce, which is most of what makes an
+	-- impact feel like one.
 	ChaseFovBase = 70,
-	ChaseFovBoost = 12,
+	ChaseFovBoost = 22,
+	ChaseFovSmoothing = 6,
+
+	-- Impact shake: a damped sine on the camera, amplitude scaled by how fast
+	-- the squishy was going when it hit. Magnitude in studs; damping is the
+	-- exponential decay rate; Hz is the wobble frequency.
+	ImpactShakeMagnitude = 1.6,
+	ImpactShakeDamping = 6,
+	ImpactShakeHz = 7,
+
+	-- The wind trail only draws above this fraction of launch speed: a trail
+	-- on a slow roll reads as a glitch, not as speed.
+	WindTrailMinSpeedFraction = 0.45,
 
 	-- The paint splat left where the squishy hits: its size and how long it
 	-- takes to fade off the grass.

@@ -335,11 +335,34 @@ Lighting.GeographicLatitude = 8
 Lighting.GlobalShadows = true
 Lighting.FogEnd = 100000
 
+-- ---------- post-processing ----------
+-- The full pipeline: bloom, colour grade, and atmosphere. A note on history
+-- before anyone re-tunes these: the legendary washout this file warns about
+-- was Brightness 2.4 — at today's 1.15 these bloom numbers are Roblox's own
+-- stock values and behave. If it ever goes foggy-bright again, check
+-- Brightness first, not the bloom.
 local bloom = Instance.new("BloomEffect")
-bloom.Intensity = 0.3
-bloom.Size = 18
-bloom.Threshold = 1.75 -- only genuinely emissive things (neon rays) may glow
+bloom.Intensity = 0.4
+bloom.Size = 24
+bloom.Threshold = 0.8 -- soft glow on neon pickups, rays and rare reveals
 bloom.Parent = Lighting
+
+-- A warm lift and a saturation push, which is most of what reads as
+-- "cartoon" versus "plastic parts under a sun".
+local colorGrade = Instance.new("ColorCorrectionEffect")
+colorGrade.TintColor = Color3.fromRGB(255, 250, 245)
+colorGrade.Saturation = 0.18
+colorGrade.Contrast = 0.08
+colorGrade.Parent = Lighting
+
+-- Haze that thickens with distance, so the far bands and the mesas recede
+-- into the sky instead of staying pin-sharp a thousand studs out — depth the
+-- long corridor otherwise has no way to show.
+local atmosphere = Instance.new("Atmosphere")
+atmosphere.Density = 0.25
+atmosphere.Color = Color3.fromRGB(190, 220, 255)
+atmosphere.Decay = Color3.fromRGB(150, 180, 220)
+atmosphere.Parent = Lighting
 
 local keyLightHost = block(Vector3.new(0.2, 0.2, 0.2), ORIGIN + Vector3.new(5, 9, 9), BACKDROP_COLOR)
 keyLightHost.Transparency = 1

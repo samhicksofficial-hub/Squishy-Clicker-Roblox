@@ -21,6 +21,9 @@
 --    by default. Callers pass a parent; the kit only builds.
 -- ============================================================
 
+local Lighting = game:GetService("Lighting")
+local TweenService = game:GetService("TweenService")
+
 local UI = {}
 
 -- The palette. Anything picking a colour should pick it from here, so a
@@ -216,6 +219,79 @@ function UI.pricePill(props: {
 	return pill
 end
 
+-- ---------- juice ----------
+-- Pop a frame open or closed with a scale bounce. Both work through a
+-- UIScale child (created on first use) rather than tweening Size, so a
+-- frame's layout numbers are never touched and anything anchored inside it
+-- stays anchored. One live tween per frame, tracked so a fast open-close-open
+-- cancels cleanly instead of fighting itself.
+local activePops: { [GuiObject]: Tween } = {}
+
+local function popScaleOf(frame: GuiObject): UIScale
+	local scale = frame:FindFirstChild("PopScale") :: UIScale?
+	if not scale then
+		scale = UI.make("UIScale", { Name = "PopScale", Scale = 1, Parent = frame }) :: UIScale
+	end
+	return scale :: UIScale
+end
+
+function UI.popIn(frame: GuiObject)
+	local scale = popScaleOf(frame)
+	local old = activePops[frame]
+	if old then
+		old:Cancel()
+	end
+
+	frame.Visible = true
+	scale.Scale = 0.72
+	local tween = TweenService:Create(scale, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Scale = 1,
+	})
+	activePops[frame] = tween
+	tween:Play()
+end
+
+-- The close is In-eased and quicker than the open: a Back-Out on the way
+-- OUT overshoots upward first, which reads as the panel re-opening.
+function UI.popOut(frame: GuiObject)
+	if not frame.Visible then
+		return
+	end
+	local scale = popScaleOf(frame)
+	local old = activePops[frame]
+	if old then
+		old:Cancel()
+	end
+
+	local tween = TweenService:Create(scale, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+		Scale = 0.78,
+	})
+	activePops[frame] = tween
+	tween.Completed:Connect(function(state)
+		if state == Enum.PlaybackState.Completed then
+			frame.Visible = false
+			scale.Scale = 1
+		end
+	end)
+	tween:Play()
+end
+
+-- ---------- the modal blur ----------
+-- One shared BlurEffect that eases in while ANY panel is open and out when
+-- the last one closes. Counted off the scrims rather than asked of callers,
+-- so no panel has to know the blur exists — same contract as the scrim.
+local modalBlur = Instance.new("BlurEffect")
+modalBlur.Size = 0
+modalBlur.Parent = Lighting
+
+local openModals = 0
+local function noteModal(open: boolean)
+	openModals = math.max(openModals + (open and 1 or -1), 0)
+	TweenService:Create(modalBlur, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = openModals > 0 and 10 or 0,
+	}):Play()
+end
+
 -- A full panel: gradient header bar with an icon and title, a red X on the
 -- right, and a warm body underneath. Returns the pieces a caller needs — the
 -- root to show and hide, and the body to fill in.
@@ -326,11 +402,18 @@ function UI.panel(props: {
 	UI.stroke(body)
 
 	close.Activated:Connect(function()
-		root.Visible = false
+		UI.popOut(root)
 	end)
 
+	-- The scrim and the blur both follow the root's Visible, so callers keep
+	-- toggling one property and the whole modal treatment comes with it.
+	local wasVisible = root.Visible
 	root:GetPropertyChangedSignal("Visible"):Connect(function()
 		scrim.Visible = root.Visible
+		if root.Visible ~= wasVisible then
+			wasVisible = root.Visible
+			noteModal(root.Visible)
+		end
 	end)
 
 	return { root = root, body = body, close = close, title = title, scrim = scrim }

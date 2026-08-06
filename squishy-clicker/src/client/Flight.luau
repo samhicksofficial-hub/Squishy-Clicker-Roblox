@@ -123,6 +123,57 @@ local lastBounceSeen = 0
 local landingDone = true
 local fovKick = 0
 
+-- The FOV eases toward its target rather than being set from speed directly:
+-- bounces change speed in a single frame, and an FOV that jumps with it reads
+-- as a glitch where an FOV that surges reads as acceleration.
+local currentFov = Config.ChaseFovBase
+
+-- Impact shake: a damped sine, amplitude set by each hit and decaying
+-- exponentially. One oscillator serves every impact — a second hit mid-wobble
+-- just re-kicks the amplitude, which is what a real camera would do.
+local shakeAmp = 0
+local shakePhase = 0
+
+-- Milestones this flight has yet to cross, for the "+gems" popup at the
+-- moment of crossing. Stocked by play() from the server's own first-time
+-- list, so the popup can never announce a milestone that didn't pay.
+local pendingMilestones: { { at: number, text: string } } = {}
+
+-- The wind trail: two attachments on an invisible part that rides the shot,
+-- switched on only at speed. A trail on a slow roll reads as a glitch.
+local trailPart = Instance.new("Part")
+trailPart.Size = Vector3.one
+trailPart.Transparency = 1
+trailPart.Anchored = true
+trailPart.CanCollide = false
+trailPart.CanQuery = false
+trailPart.CanTouch = false
+trailPart.Parent = stage
+
+local trailTop = Instance.new("Attachment")
+trailTop.Position = Vector3.new(0, 2, 0)
+trailTop.Parent = trailPart
+local trailBottom = Instance.new("Attachment")
+trailBottom.Position = Vector3.new(0, -2, 0)
+trailBottom.Parent = trailPart
+
+local windTrail = Instance.new("Trail")
+windTrail.Attachment0 = trailTop
+windTrail.Attachment1 = trailBottom
+windTrail.Lifetime = 0.35
+windTrail.WidthScale = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 1),
+	NumberSequenceKeypoint.new(1, 0.2),
+})
+windTrail.Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0.55),
+	NumberSequenceKeypoint.new(1, 1),
+})
+windTrail.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255))
+windTrail.FaceCamera = true
+windTrail.Enabled = false
+windTrail.Parent = trailPart
+
 -- ---------- pickups ----------
 local PICKUP_LOOK = {
 	tnt = Color3.fromRGB(232, 118, 58),
@@ -419,6 +470,54 @@ local function splat(at: Vector3, radius: number)
 	end)
 end
 
+-- A small floating number: pops in with a scale bounce, drifts up four studs
+-- and is gone in six tenths of a second. Used for every pickup swept mid-air
+-- and every milestone crossed — the moment-to-moment juice, where the landing
+-- popup below is the finale.
+local function floatPopup(at: Vector3, text: string, color: Color3)
+	local anchor = Instance.new("Part")
+	anchor.Size = Vector3.one
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Position = at
+	anchor.Parent = stage
+
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.new(0, 24, 0, 10) -- scales up in the pop
+	gui.MaxDistance = 2500
+	gui.Parent = anchor
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.Text = text
+	label.TextColor3 = color
+	label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
+	label.TextStrokeTransparency = 0
+	label.TextScaled = true
+	label.Parent = gui
+
+	TweenService:Create(gui, TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Size = UDim2.new(0, 150, 0, 44),
+	}):Play()
+	TweenService:Create(anchor, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Position = at + Vector3.new(0, 4, 0),
+	}):Play()
+	task.delay(0.25, function()
+		TweenService:Create(label, TweenInfo.new(0.35), {
+			TextTransparency = 1,
+			TextStrokeTransparency = 1,
+		}):Play()
+	end)
+	task.delay(0.65, function()
+		anchor:Destroy()
+	end)
+end
+
 -- The landing announcement: "+X Studs" and "+$Y" popping up out of the point
 -- of rest, scaling in with a bounce and floating away. World-space rather
 -- than HUD, so it happens WHERE the shot ended — the summary card already
@@ -487,6 +586,7 @@ function Flight.play(plan: {
 	peakHeight: number,
 	launchSpeed: number?,
 	coins: number?,
+	milestones: { { name: string, gems: number } }?,
 	collected: { number },
 }): number
 	if not muzzle then
@@ -523,6 +623,22 @@ function Flight.play(plan: {
 	lastBounceSeen = 0
 	landingDone = false
 	fovKick = 0
+	shakeAmp = 0
+
+	-- The milestones this shot crosses for the first time, positioned from
+	-- Config by name so the popup fires at the sign it belongs to.
+	pendingMilestones = {}
+	for _, milestone in plan.milestones or {} do
+		for _, entry in Config.DistanceMilestones do
+			if entry.name == milestone.name then
+				table.insert(pendingMilestones, {
+					at = entry.at,
+					text = ("🏁 %s Studs!  +%d 💎"):format(milestone.name, milestone.gems),
+				})
+				break
+			end
+		end
+	end
 
 	pickupCollecting = {}
 	for _, index in plan.collected do
@@ -660,18 +776,29 @@ RunService.RenderStepped:Connect(function(dt)
 	-- Impact FX. A splat per skip and a snap of the camera's FOV; a bigger
 	-- splat plus the payout popup once, at the point of rest. landingDone
 	-- starts true, so none of this can fire before the first real flight.
+	local impactStrength = math.clamp(shot.speed / shot.launchSpeed, 0, 1)
 	if flying and shot.bounced > lastBounceSeen then
 		lastBounceSeen = shot.bounced
 		fovKick = 1
 		splat(worldAt(shot.flown, 0), Config.LaunchSplatRadius * 0.7)
+		-- Re-kick the shake oscillator, scaled by how fast the hit was.
+		shakeAmp = Config.ImpactShakeMagnitude * (0.4 + 0.6 * impactStrength)
+		shakePhase = 0
 	elseif not flying and not landingDone then
 		landingDone = true
 		fovKick = 1
+		shakeAmp = Config.ImpactShakeMagnitude
+		shakePhase = 0
 		local ground = worldAt(shot.distance, 0)
 		splat(ground, Config.LaunchSplatRadius)
 		payoutPopup(ground, shot.distance, shot.earnedCoins)
 	end
 	fovKick = math.max(fovKick - dt * 3, 0)
+	shakePhase += dt
+
+	-- The wind trail rides the shot and only draws at speed.
+	trailPart.CFrame = CFrame.new(at)
+	windTrail.Enabled = flying and impactStrength > Config.WindTrailMinSpeedFraction
 
 	if toy then
 		-- Hidden between shots: the squishy belongs on the cushion, not
@@ -689,16 +816,33 @@ RunService.RenderStepped:Connect(function(dt)
 		)
 	end
 
-	-- Pickups pop as the shot reaches them. The server already decided which
+	-- Pickups pop as the shot reaches them — with a little "+value" floating
+	-- off each one, so a good line through a cluster reads as a combo rather
+	-- than as scenery quietly vanishing. The server already decided WHICH
 	-- ones; this is only the moment they disappear.
 	for index, distance in pickupCollecting do
 		if shot.flown >= distance then
 			local prize = pickupParts[index]
-			if prize then
+			local entry = pickupField[index]
+			if prize and entry then
+				local icon = entry.kind == "coin" and "💵" or entry.kind == "gem" and "💎" or "🧨"
+				floatPopup(prize.Position, ("+%d %s"):format(entry.value, icon), PICKUP_LOOK[entry.kind] or PICKUP_LOOK.tnt)
 				prize.Transparency = 1
 			end
 			pickupTaken[index] = true
 			pickupCollecting[index] = nil
+		end
+	end
+
+	-- Milestone signs call out the moment the shot crosses them, at the spot
+	-- on the ground the sign marks.
+	if flying then
+		for index = #pendingMilestones, 1, -1 do
+			local milestone = pendingMilestones[index]
+			if shot.flown >= milestone.at then
+				floatPopup(worldAt(milestone.at, 0) + Vector3.new(0, 16, 0), milestone.text, Color3.fromRGB(255, 220, 120))
+				table.remove(pendingMilestones, index)
+			end
 		end
 	end
 
@@ -771,21 +915,36 @@ RunService.RenderStepped:Connect(function(dt)
 			camera.CameraType = Enum.CameraType.Scriptable
 		end
 		local side = Vector3.new(-outward.Z, 0, outward.X)
-		local eye = at - outward * CHASE_BACK + Vector3.new(0, CHASE_UP, 0) + side * CHASE_SIDE
+		-- The damped harmonic shake: an exponentially decaying sine, kicked
+		-- by every impact, riding the eye in view space so it reads as the
+		-- CAMERA being jolted rather than the world wobbling.
+		local wobble = shakeAmp * math.exp(-Config.ImpactShakeDamping * shakePhase)
+			* math.sin(shakePhase * math.pi * 2 * Config.ImpactShakeHz)
+		local shakeOffset = Vector3.new(0, wobble, 0) + side * wobble * 0.4
+
+		local eye = at - outward * CHASE_BACK + Vector3.new(0, CHASE_UP, 0) + side * CHASE_SIDE + shakeOffset
 		camera.CFrame = CFrame.lookAt(eye, at + outward * 20)
 		-- FOV stretches with speed — measured against this shot's own launch
 		-- speed, so a level-1 arc and a level-80 arc both read as fast at
 		-- their own fastest — and every impact snaps it back toward base,
 		-- which is most of what makes a bounce feel like hitting something.
+		-- Eased toward its target rather than set: speed changes in a single
+		-- frame at each bounce, and an FOV that jumps with it reads as a
+		-- glitch where one that surges reads as acceleration.
 		local speedFactor = math.clamp(shot.speed / shot.launchSpeed, 0, 1)
-		camera.FieldOfView = Config.ChaseFovBase + Config.ChaseFovBoost * speedFactor * (1 - fovKick)
+		local fovTarget = Config.ChaseFovBase + Config.ChaseFovBoost * speedFactor * (1 - fovKick)
+		currentFov += (fovTarget - currentFov) * math.min(dt * Config.ChaseFovSmoothing, 1)
+		camera.FieldOfView = currentFov
 	elseif camera and camera.CameraType == Enum.CameraType.Scriptable and shot.holdUntil > 0 then
 		-- Once, on the way out, rather than every frame forever. The FOV goes
 		-- back with the camera: leaving it stretched would hand the character
-		-- a fisheye and nobody would know which system to blame.
+		-- a fisheye and nobody would know which system to blame. The smoothed
+		-- value resets too, or the NEXT flight would open mid-surge.
 		shot.holdUntil = 0
 		camera.CameraType = Enum.CameraType.Custom
 		camera.FieldOfView = Config.ChaseFovBase
+		currentFov = Config.ChaseFovBase
+		windTrail.Enabled = false
 		local character = player.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 		if humanoid then
