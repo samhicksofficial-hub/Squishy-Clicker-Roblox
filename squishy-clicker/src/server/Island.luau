@@ -28,13 +28,33 @@ local Island = {}
 -- ---------- dimensions ----------
 -- One radius drives the whole layout, so the island can be resized by
 -- changing this and letting everything else fall out of it.
-local ISLAND_RADIUS = 130
-local BEACH_WIDTH = 14
-local PLAZA_RADIUS = 34
-local PLOT_SIZE = 34
-local PLOT_RING = ISLAND_RADIUS - 34 -- how far out the plots sit
-local PATH_WIDTH = 12
-local GROUND_Y = 0 -- top of the grass; everything else is measured off it
+local ISLAND_RADIUS = 210
+local BEACH_WIDTH = 18
+local PLAZA_RADIUS = 62 -- the event floor, and the biggest open space on the map
+local PLOT_SIZE = 40
+local PLOT_RING = 152 -- how far out the plot CENTRES sit
+local RING_ROAD = 108 -- comfortably between the plaza and the plots
+local PATH_WIDTH = 13
+local GROUND_Y = 0
+
+-- Every flat surface on the island is stacked on its OWN level. Two slabs
+-- sharing a height and overlapping in plan is what z-fighting is, and it was
+-- most of what made the first island shimmer: the plaza, its rim, the spokes
+-- and the ring road all met at roughly the same Y and fought over the pixels.
+-- Gaps of a twentieth of a stud are invisible and settle it completely.
+local Y = {
+	water = -2,
+	beach = 0,
+	field = 0.2,
+	ringRoad = 0.5,
+	spoke = 0.56,
+	plazaRim = 0.62,
+	plaza = 0.8,
+	plotRim = 1,
+	plotPad = 1.4,
+}
+
+Island.PLAZA_RADIUS = PLAZA_RADIUS
 
 Island.PLOT_COUNT = 8
 Island.PLOT_SIZE = PLOT_SIZE
@@ -92,6 +112,14 @@ end
 local function studded(part: BasePart): BasePart
 	part.TopSurface = Enum.SurfaceType.Studs
 	return part
+end
+
+-- Slabs are placed by their TOP face rather than their centre. Every layer on
+-- the island is "a floor at this height", so saying it that way removes a
+-- half-thickness from every call site and with it the arithmetic slips that
+-- put two of them on the same level in the first place.
+local function slabAt(top: number, thickness: number): number
+	return top - thickness * 0.5
 end
 
 local function cylinder(diameter: number, height: number, at: Vector3, color: Color3, parent: Instance): Part
@@ -156,24 +184,29 @@ local function buildGround()
 	local ground = group("Ground")
 
 	-- Water first, widest and lowest, so the island reads as sitting in it.
-	local water = cylinder((ISLAND_RADIUS + 40) * 2, 2, Vector3.new(0, GROUND_Y - 3, 0), COLOR.water, ground)
+	local water = cylinder((ISLAND_RADIUS + 70) * 2, 3, Vector3.new(0, slabAt(Y.water, 3), 0), COLOR.water, ground)
 	water.Material = Enum.Material.Glass
 	water.Transparency = 0.25
 	decor(water)
 
-	-- Beach, then the grass top sitting inside it.
-	local beach = cylinder(ISLAND_RADIUS * 2, 5, Vector3.new(0, GROUND_Y - 2.5, 0), COLOR.sand, ground)
+	-- Beach, then the grass sitting inside it. Both are thick slabs so the
+	-- island has a visible side rather than looking like paper on water.
+	local beach = cylinder(ISLAND_RADIUS * 2, 8, Vector3.new(0, slabAt(Y.beach, 8), 0), COLOR.sand, ground)
 	beach.Material = Enum.Material.Sand
 
-	local field = cylinder((ISLAND_RADIUS - BEACH_WIDTH) * 2, 5, Vector3.new(0, GROUND_Y - 2.4, 0), COLOR.grass, ground)
+	local field =
+		cylinder((ISLAND_RADIUS - BEACH_WIDTH) * 2, 8, Vector3.new(0, slabAt(Y.field, 8), 0), COLOR.grass, ground)
 	studded(field)
 
-	-- The plaza: a stone disc in the middle, very slightly proud of the grass
-	-- so its edge catches the light rather than z-fighting with it.
-	local plaza = cylinder(PLAZA_RADIUS * 2, 1.2, Vector3.new(0, GROUND_Y + 0.1, 0), COLOR.stone, ground)
-	studded(plaza)
-	local plazaRim = cylinder((PLAZA_RADIUS + 2) * 2, 1, Vector3.new(0, GROUND_Y - 0.1, 0), COLOR.path, ground)
+	-- The plaza: a big stone disc with a path-coloured rim, and the event
+	-- floor for King of the Steamer. Its size is the reason the island is as
+	-- wide as it is — everything else is laid out around it.
+	local plazaRim =
+		cylinder((PLAZA_RADIUS + 4) * 2, 1.6, Vector3.new(0, slabAt(Y.plazaRim, 1.6), 0), COLOR.path, ground)
 	studded(plazaRim)
+
+	local plaza = cylinder(PLAZA_RADIUS * 2, 2, Vector3.new(0, slabAt(Y.plaza, 2), 0), COLOR.stone, ground)
+	studded(plaza)
 end
 
 -- ---------- the canyon ring ----------
@@ -221,32 +254,34 @@ end
 local function buildPaths()
 	local paths = group("Paths")
 
+	-- Spokes stop just short of the plot rims. Running them under the pads is
+	-- what put two studded surfaces on top of each other at the plot edge.
+	local plotInner = PLOT_RING - PLOT_SIZE * 0.5 - 4
 	for index = 1, Island.PLOT_COUNT do
 		local angle = (index - 1) / Island.PLOT_COUNT * math.pi * 2
 		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle))
-		local from = PLAZA_RADIUS - 1
-		local to = PLOT_RING - PLOT_SIZE * 0.4
-
-		local length = to - from
+		local from = PLAZA_RADIUS + 2
+		local length = plotInner - from
 		local centre = direction * (from + length * 0.5)
+
 		local spoke = block(
-			Vector3.new(length, 0.8, PATH_WIDTH),
-			CFrame.new(centre + Vector3.new(0, GROUND_Y + 0.05, 0)) * CFrame.Angles(0, -angle, 0),
+			Vector3.new(length, 1.2, PATH_WIDTH),
+			CFrame.new(centre + Vector3.new(0, slabAt(Y.spoke, 1.2), 0)) * CFrame.Angles(0, -angle, 0),
 			COLOR.path,
 			paths
 		)
 		studded(spoke)
 	end
 
-	-- The ring road, as segments following the plot circle.
-	local SEGMENTS = 56
-	local radius = PLOT_RING - PLOT_SIZE * 0.75
-	local width = 2 * math.pi * radius / SEGMENTS + 1.5
+	-- The ring road, as segments following a circle that clears the plaza on
+	-- one side and the plots on the other.
+	local SEGMENTS = 72
+	local width = 2 * math.pi * RING_ROAD / SEGMENTS + 1.5
 	for index = 1, SEGMENTS do
 		local angle = (index / SEGMENTS) * math.pi * 2
-		local at = Vector3.new(math.cos(angle) * radius, GROUND_Y + 0.05, math.sin(angle) * radius)
+		local at = Vector3.new(math.cos(angle) * RING_ROAD, slabAt(Y.ringRoad, 1.2), math.sin(angle) * RING_ROAD)
 		local ring = block(
-			Vector3.new(PATH_WIDTH * 0.8, 0.8, width),
+			Vector3.new(PATH_WIDTH * 0.85, 1.2, width),
 			CFrame.new(at) * CFrame.Angles(0, -angle, 0),
 			COLOR.pathEdge,
 			paths
@@ -312,30 +347,56 @@ local function buildScenery()
 	-- than being a different place each time someone joins.
 	local rng = Random.new(2026)
 
-	-- Stalls in an arc around one side of the plaza.
+	-- Stalls in an arc around the plaza, sat BETWEEN the spokes rather than on
+	-- them: a stall on a path is a stall you cannot walk past.
 	for index = 1, 4 do
-		local angle = math.rad(200 + (index - 1) * 25)
-		local at = Vector3.new(math.cos(angle), 0, math.sin(angle)) * (PLAZA_RADIUS + 12)
+		local slot = index + 3.5 -- the half-step is what puts them between spokes
+		local angle = slot / Island.PLOT_COUNT * math.pi * 2
+		local at = Vector3.new(math.cos(angle), 0, math.sin(angle)) * (PLAZA_RADIUS + 22)
 		buildStall(Vector3.new(at.X, GROUND_Y, at.Z), -angle + math.pi, props)
 	end
 
-	-- Trees, bushes and rocks between the ring road and the beach, well clear
-	-- of the plots and the spokes.
-	for _ = 1, 90 do
-		local angle = rng:NextNumber() * math.pi * 2
-		local radius = rng:NextNumber(PLAZA_RADIUS + 16, ISLAND_RADIUS - BEACH_WIDTH - 6)
-		local at = Vector3.new(math.cos(angle) * radius, GROUND_Y, math.sin(angle) * radius)
+	-- Where the plots will be. Scenery is placed against the real centres
+	-- rather than against an angle-slot approximation of them — that
+	-- approximation is what dropped trees through the plot fences.
+	local plotCentres: { Vector3 } = {}
+	for index = 1, Island.PLOT_COUNT do
+		local angle = (index - 1) / Island.PLOT_COUNT * math.pi * 2
+		table.insert(plotCentres, Vector3.new(math.cos(angle) * PLOT_RING, 0, math.sin(angle) * PLOT_RING))
+	end
 
-		-- Keep the ring road and the plot pads clear.
-		local nearRing = math.abs(radius - (PLOT_RING - PLOT_SIZE * 0.75)) < PATH_WIDTH
-		local plotSlot = (angle / (math.pi * 2)) * Island.PLOT_COUNT
-		local nearPlot = math.abs(plotSlot - math.floor(plotSlot + 0.5)) < 0.28
-			and math.abs(radius - PLOT_RING) < PLOT_SIZE
-		if not (nearRing or nearPlot) then
+	-- Clear of everything built so far: the plaza, the ring road, the spokes,
+	-- the plot pads and the stalls.
+	local function isClear(at: Vector3, radius: number, angle: number): boolean
+		if math.abs(radius - RING_ROAD) < PATH_WIDTH then
+			return false
+		end
+		for _, centre in plotCentres do
+			-- Square check, because a plot pad is a square.
+			local offset = at - centre
+			if math.abs(offset.X) < PLOT_SIZE * 0.75 and math.abs(offset.Z) < PLOT_SIZE * 0.75 then
+				return false
+			end
+		end
+		-- Distance from the nearest spoke, measured across it rather than
+		-- along: near the plaza a few degrees is a couple of studs, out by the
+		-- plots the same few degrees is twenty.
+		local slot = angle / (math.pi * 2) * Island.PLOT_COUNT
+		local offBySlots = math.abs(slot - math.floor(slot + 0.5))
+		local acrossSpoke = offBySlots * (math.pi * 2 / Island.PLOT_COUNT) * radius
+		return acrossSpoke > PATH_WIDTH
+	end
+
+	for _ = 1, 150 do
+		local angle = rng:NextNumber() * math.pi * 2
+		local radius = rng:NextNumber(PLAZA_RADIUS + 14, ISLAND_RADIUS - BEACH_WIDTH - 8)
+		local at = Vector3.new(math.cos(angle) * radius, GROUND_Y + Y.field, math.sin(angle) * radius)
+
+		if isClear(at, radius, angle) then
 			local roll = rng:NextNumber()
-			if roll < 0.5 then
-				buildTree(at, rng:NextNumber(0.8, 1.4), props)
-			elseif roll < 0.78 then
+			if roll < 0.46 then
+				buildTree(at, rng:NextNumber(0.8, 1.5), props)
+			elseif roll < 0.76 then
 				local size = rng:NextNumber(3, 5)
 				local bush = block(
 					Vector3.new(size, size * 0.7, size),
@@ -385,16 +446,19 @@ local function buildPlot(index: number): Plot
 	folder.Name = ("Plot%d"):format(index)
 	folder.Parent = folders.Plots
 
-	-- The pad, with a lip of path colour around it so it reads as built.
-	local pad = block(Vector3.new(PLOT_SIZE, 1.6, PLOT_SIZE), frame * CFrame.new(0, 0.8, 0), COLOR.grassDark, folder)
-	studded(pad)
+	-- The pad, with a lip of path colour around it so it reads as built. Both
+	-- are placed by their top face on their own level — see the Y table.
 	local rim = block(
-		Vector3.new(PLOT_SIZE + 3, 1.2, PLOT_SIZE + 3),
-		frame * CFrame.new(0, 0.5, 0),
+		Vector3.new(PLOT_SIZE + 5, 2, PLOT_SIZE + 5),
+		frame * CFrame.new(0, slabAt(Y.plotRim, 2), 0),
 		COLOR.path,
 		folder
 	)
 	studded(rim)
+
+	local pad =
+		block(Vector3.new(PLOT_SIZE, 2.4, PLOT_SIZE), frame * CFrame.new(0, slabAt(Y.plotPad, 2.4), 0), COLOR.grassDark, folder)
+	studded(pad)
 
 	-- A low fence on the three sides that are not the entrance.
 	local half = PLOT_SIZE * 0.5
@@ -478,13 +542,13 @@ local function buildSpawn()
 	local spawns = group("Spawn")
 
 	-- In the middle of the plaza, deliberately NOT inside anybody's cannon.
-	local pad = cylinder(18, 1.4, Vector3.new(0, GROUND_Y + 0.9, 0), COLOR.path, spawns)
+	local pad = cylinder(24, 1.6, Vector3.new(0, slabAt(Y.plaza + 0.2, 1.6), 0), COLOR.path, spawns)
 	studded(pad)
 
 	local spawn = Instance.new("SpawnLocation")
 	spawn.Name = "IslandSpawn"
-	spawn.Size = Vector3.new(14, 1, 14)
-	spawn.CFrame = CFrame.new(0, GROUND_Y + 1.7, 0)
+	spawn.Size = Vector3.new(18, 1, 18)
+	spawn.CFrame = CFrame.new(0, Y.plaza + 0.7, 0)
 	spawn.Anchored = true
 	spawn.CanCollide = true
 	spawn.Transparency = 1
@@ -494,7 +558,7 @@ local function buildSpawn()
 	spawn.Duration = 0
 	spawn.Parent = spawns
 
-	signPost(Vector3.new(0, GROUND_Y + 1.6, -14), "🚀 Squishy Launcher", Color3.fromRGB(252, 214, 132), spawns)
+	signPost(Vector3.new(0, Y.plaza, -20), "🚀 Squishy Launcher", Color3.fromRGB(252, 214, 132), spawns)
 end
 
 -- ---------- assembly ----------

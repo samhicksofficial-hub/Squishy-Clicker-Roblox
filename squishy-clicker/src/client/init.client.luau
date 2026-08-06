@@ -39,10 +39,13 @@ local SetClicker = Remotes:WaitForChild("SetClicker") :: RemoteEvent
 local SetActive = Remotes:WaitForChild("SetActive") :: RemoteEvent
 
 -- ---------- palette ----------
+-- Text is white with a dark outline everywhere, matching UI.luau. The HUD
+-- used to be dark-brown-on-cream, which was fine over a pale panel and
+-- unreadable the moment it sat over the island.
 local COLOR = {
 	panel = Color3.fromRGB(255, 255, 255),
-	text = Color3.fromRGB(74, 52, 38),
-	dim = Color3.fromRGB(150, 130, 118),
+	text = Color3.fromRGB(255, 255, 255),
+	dim = Color3.fromRGB(244, 232, 214),
 	mint = Color3.fromRGB(126, 224, 192),
 	locked = Color3.fromRGB(228, 222, 216),
 	gold = Color3.fromRGB(255, 199, 92),
@@ -90,6 +93,14 @@ end
 -- ---------- tiny UI helpers ----------
 local function make(className: string, props: { [string]: any }): any
 	local inst = Instance.new(className)
+	-- Every piece of text in the HUD gets the dark outline by default. Doing it
+	-- here rather than at each call site is the only way it stays consistent —
+	-- there are a few dozen labels in this file and one missed stroke is a
+	-- label that vanishes against bright grass.
+	if (className == "TextLabel" or className == "TextButton") and props.TextStrokeTransparency == nil then
+		(inst :: any).TextStrokeColor3 = Color3.fromRGB(52, 38, 30);
+		(inst :: any).TextStrokeTransparency = 0.15
+	end
 	for key, value in props do
 		(inst :: any)[key] = value
 	end

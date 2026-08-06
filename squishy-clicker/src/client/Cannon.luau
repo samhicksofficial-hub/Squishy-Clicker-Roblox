@@ -44,9 +44,12 @@ function Cannon.mount(gui: GuiObject, scene: any)
 
 	-- ---------- the wallet ----------
 	-- Top right, always visible: in a simulator the balances are the score.
-	local wallet = UI.make("Frame", {
-		Name = "Wallet",
-		Size = UDim2.new(0, 210, 0, 132),
+	-- The wallet AND the three big buttons share one column with one layout.
+	-- They used to be positioned independently and drifted into each other the
+	-- moment the window was short — a list cannot overlap itself.
+	local column = UI.make("Frame", {
+		Name = "RightColumn",
+		Size = UDim2.new(0, 210, 0, 420),
 		Position = UDim2.new(1, -18, 0, 16),
 		AnchorPoint = Vector2.new(1, 0),
 		BackgroundTransparency = 1,
@@ -54,10 +57,12 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		Parent = gui,
 	})
 	UI.make("UIListLayout", {
-		Padding = UDim.new(0, 6),
+		Padding = UDim.new(0, 10),
 		SortOrder = Enum.SortOrder.LayoutOrder,
-		Parent = wallet,
+		Parent = column,
 	})
+
+	local wallet = column
 
 	local function walletRow(order: number, top: Color3, bottom: Color3, icon: string): TextLabel
 		local row = UI.make("Frame", {
@@ -240,47 +245,44 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	-- Rebirth and the shop sit apart from the rail, the way the mockups put
 	-- them: the two things the game most wants noticed.
 	local rebirthOpen = UI.button({
-		parent = gui,
-		size = UDim2.new(0, 168, 0, 46),
-		position = UDim2.new(1, -18, 0, 158),
-		anchor = Vector2.new(1, 0),
+		parent = column,
+		size = UDim2.new(1, 0, 0, 48),
 		text = "🔄 REBIRTH",
 		textSize = 18,
 		top = C.pink,
 		bottom = C.pinkDeep,
 		zIndex = 5,
 	})
+	rebirthOpen.button.LayoutOrder = 4
 	rebirthOpen.button.Activated:Connect(function()
 		showOnly("rebirth")
 	end)
 
 	local shopOpen = UI.button({
-		parent = gui,
-		size = UDim2.new(0, 168, 0, 46),
-		position = UDim2.new(1, -18, 0, 212),
-		anchor = Vector2.new(1, 0),
+		parent = column,
+		size = UDim2.new(1, 0, 0, 48),
 		text = "🧺 SHOP",
 		textSize = 18,
 		top = C.orange,
 		bottom = C.orangeDeep,
 		zIndex = 5,
 	})
+	shopOpen.button.LayoutOrder = 5
 	shopOpen.button.Activated:Connect(function()
 		showOnly("shop")
 	end)
 
 	-- ---------- Rain TNT ----------
 	local boost = UI.button({
-		parent = gui,
-		size = UDim2.new(0, 168, 0, 46),
-		position = UDim2.new(1, -18, 0, 266),
-		anchor = Vector2.new(1, 0),
+		parent = column,
+		size = UDim2.new(1, 0, 0, 48),
 		text = "🧨 RAIN TNT",
 		textSize = 17,
 		top = C.red,
 		bottom = C.redDeep,
 		zIndex = 5,
 	})
+	boost.button.LayoutOrder = 6
 	boost.button.Activated:Connect(function()
 		activateBoost:FireServer()
 	end)

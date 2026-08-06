@@ -194,6 +194,58 @@ function King.mount(gui: GuiObject, scene: any)
 		clickRemote:FireServer()
 	end)
 
+	-- ---------- am I actually at the event ----------
+	-- The server is the one that decides, and it re-checks every click. This
+	-- copy exists so the button can grey itself out the moment you walk off
+	-- the plaza rather than silently dropping taps.
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local localPlayer = Players.LocalPlayer
+
+	local plazaRadius = 58
+	local onPlaza = false
+	local roundActive = false
+	local startsIn = 0
+	local endsIn = 0
+
+	local function refreshButton()
+		if roundActive then
+			helpButton.Text = onPlaza and ("HELP PUSH!  %ds"):format(math.ceil(endsIn)) or "GO TO THE PLAZA!"
+			helpButton.BackgroundColor3 = onPlaza and COLOR.go or COLOR.gold
+			helpButton.AutoButtonColor = onPlaza
+		else
+			-- Minutes when it is far off, seconds when it is close, because
+			-- "starts in 247s" is a number nobody converts in their head.
+			local wait = math.ceil(startsIn)
+			helpButton.Text = wait >= 60 and ("Starts in %dm %02ds"):format(wait // 60, wait % 60)
+				or ("Starts in %ds"):format(wait)
+			helpButton.BackgroundColor3 = COLOR.locked
+			helpButton.AutoButtonColor = false
+		end
+	end
+
+	RunService.Heartbeat:Connect(function(dt)
+		-- Ticked locally between broadcasts, so the clock counts down smoothly
+		-- instead of stepping five times a second.
+		if roundActive then
+			endsIn = math.max(endsIn - dt, 0)
+		else
+			startsIn = math.max(startsIn - dt, 0)
+		end
+
+		local character = localPlayer.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+		local nowOnPlaza = false
+		if root then
+			local flat = Vector3.new(root.Position.X, 0, root.Position.Z)
+			nowOnPlaza = flat.Magnitude <= plazaRadius
+		end
+		if nowOnPlaza ~= onPlaza then
+			onPlaza = nowOnPlaza
+		end
+		refreshButton()
+	end)
+
 	-- The shared steamer belongs to the toy shop, not the valley: it is the
 	-- clicker half's minigame, and leaving it up over the launcher was half of
 	-- why that screen looked crowded.
@@ -211,6 +263,13 @@ function King.mount(gui: GuiObject, scene: any)
 		local goal = math.max(snapshot.goal or 1, 1)
 		local active = snapshot.active ~= false
 
+		-- The server's clocks win over the locally-ticked ones every time a
+		-- broadcast lands, so drift can never accumulate.
+		roundActive = active
+		startsIn = snapshot.startsIn or 0
+		endsIn = snapshot.endsIn or 0
+		plazaRadius = snapshot.plazaRadius or plazaRadius
+
 		progressLabel.Text = ("%d / %d"):format(clicks, goal)
 		TweenService:Create(
 			fill,
@@ -218,9 +277,7 @@ function King.mount(gui: GuiObject, scene: any)
 			{ Size = UDim2.new(math.clamp(clicks / goal, 0, 1), 0, 1, 0) }
 		):Play()
 
-		helpButton.Text = active and "HELP PUSH!" or "opening…"
-		helpButton.BackgroundColor3 = active and COLOR.go or COLOR.locked
-		helpButton.AutoButtonColor = active
+		refreshButton()
 
 		local standings = snapshot.standings or {}
 		for index, row in rows do
@@ -239,16 +296,31 @@ function King.mount(gui: GuiObject, scene: any)
 			return
 		end
 
+		-- The same remote carries the countdown callouts and the result, so
+		-- there is one place a banner appears rather than two that could
+		-- overlap each other on screen.
+		local message
+		if result.countdown then
+			local seconds = result.countdown
+			message = seconds >= 60 and ("👑 King of the Steamer starts in %dm — get to the plaza!"):format(seconds // 60)
+				or ("👑 King of the Steamer starts in %ds — get to the plaza!"):format(seconds)
+		elseif result.winner ~= "" then
+			message = ("👑 %s topped the steamer — got %s!"):format(result.winner, result.prize)
+		else
+			message = "👑 The steamer closed. Next round soon!"
+		end
+
 		local banner = make("TextLabel", {
-			Size = UDim2.new(0, 420, 0, 58),
+			Size = UDim2.new(0, 480, 0, 58),
 			Position = UDim2.new(0.5, 0, 0, 96),
 			AnchorPoint = Vector2.new(0.5, 0),
-			BackgroundColor3 = COLOR.gold,
+			BackgroundColor3 = result.countdown and COLOR.crown or COLOR.gold,
 			Font = Enum.Font.FredokaOne,
-			Text = result.winner ~= "" and ("👑 %s topped the steamer — got %s!"):format(result.winner, result.prize)
-				or "👑 The steamer opened!",
-			TextColor3 = COLOR.text,
-			TextSize = 18,
+			Text = message,
+			TextColor3 = Color3.fromRGB(255, 255, 255),
+			TextStrokeColor3 = Color3.fromRGB(52, 38, 30),
+			TextStrokeTransparency = 0.1,
+			TextSize = 20,
 			TextScaled = false,
 			ZIndex = 25,
 			Parent = gui,

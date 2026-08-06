@@ -1424,14 +1424,34 @@ local function rollBest(attempts: number): Squishies.Squishy
 	return best
 end
 
+-- King of the Steamer is an EVENT on a clock rather than a permanent button.
+-- The whole server converges on the plaza for thirty seconds every five
+-- minutes, which is the only thing that makes a shared bar feel shared — a bar
+-- that is always open is just a second clicker nobody watches.
 local king = {
 	clicks = 0,
 	goal = Config.KingBaseGoal,
 	contributions = {} :: { [Player]: number },
-	active = true,
-	nextRoundAt = 0,
+	active = false,
+	-- os.time, not os.clock: this is wall-clock scheduling that has to line up
+	-- across a whole server, and os.clock measures CPU time from process start.
+	startsAt = os.time() + Config.KingEventInterval,
+	endsAt = 0,
+	lastCallout = math.huge, -- the largest callout already announced
 	dirty = false, -- progress moved since the last broadcast
 }
+
+-- Standing on the plaza, measured on the server. The UI mirrors this so the
+-- button greys out at the right moment, but this copy is the one that counts.
+local function inPlaza(player: Player): boolean
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return false
+	end
+	local offset = root.Position - Vector3.new(0, root.Position.Y, 0)
+	return offset.Magnitude <= Config.KingPlazaRadius
+end
 
 -- Fixed at the start of each round rather than recomputed as people come and
 -- go: a goal that moved underneath players mid-round would feel broken.
@@ -1455,11 +1475,18 @@ local function kingSnapshot()
 		table.remove(standings)
 	end
 
+	local now = os.time()
 	return {
 		clicks = king.clicks,
 		goal = king.goal,
 		active = king.active,
 		standings = standings,
+		-- The two clocks the panel runs on. Only one is ever meaningful at a
+		-- time, but sending both means the client never has to guess which
+		-- phase it is in.
+		startsIn = math.max(king.startsAt - now, 0),
+		endsIn = king.active and math.max(king.endsAt - now, 0) or 0,
+		plazaRadius = Config.KingPlazaRadius,
 	}
 end
 
@@ -1473,12 +1500,17 @@ local function startKingRound()
 	king.goal = kingGoal()
 	king.contributions = {}
 	king.active = true
+	king.endsAt = os.time() + Config.KingRoundSeconds
 	broadcastKing()
 end
 
 local function finishKingRound()
 	king.active = false
-	king.nextRoundAt = os.clock() + Config.KingCooldownSeconds
+	-- The next round is scheduled from NOW rather than from the last start, so
+	-- a round that ran long (or ended early on a full bar) still leaves the
+	-- promised gap before the next one.
+	king.startsAt = os.time() + Config.KingCooldownSeconds + Config.KingEventInterval
+	king.lastCallout = math.huge
 
 	-- Settle who won before handing anything out, so the winner's own prize
 	-- is decided by the same pass as everyone else's.
@@ -1529,6 +1561,12 @@ ClickShared.OnServerEvent:Connect(function(player)
 	if overRate(data, "king", Config.KingClicksPerSecond) then
 		return
 	end
+	-- You have to actually BE there. The client greys its button out when you
+	-- wander off the plaza, but that is a courtesy — this is the check, and it
+	-- is the whole reason the event is worth walking to.
+	if not inPlaza(player) then
+		return
+	end
 
 	king.clicks += 1
 	king.contributions[player] = (king.contributions[player] or 0) + 1
@@ -1541,14 +1579,50 @@ end)
 
 -- Progress goes out on a timer, not on every click: a busy server would
 -- otherwise fire hundreds of remotes a second to say the bar moved a pixel.
+--
+-- The same loop runs the event clock, because the two are the same question —
+-- "has anything changed that everyone needs to know about".
 task.spawn(function()
 	local interval = 1 / Config.KingBroadcastsPerSecond
+	local lastSecond = 0
+
 	while true do
 		task.wait(interval)
-		if king.dirty then
-			broadcastKing()
-		elseif not king.active and os.clock() >= king.nextRoundAt then
-			startKingRound()
+		local now = os.time()
+
+		if king.active then
+			if king.dirty then
+				broadcastKing()
+			end
+			-- Thirty seconds and the bar closes whether it filled or not. A
+			-- round that can be left open indefinitely is not an event.
+			if now >= king.endsAt then
+				finishKingRound()
+			end
+		else
+			local startsIn = king.startsAt - now
+			if startsIn <= 0 then
+				startKingRound()
+			elseif now ~= lastSecond then
+				lastSecond = now
+				-- Call out at the marked seconds only. Announcing every second
+				-- for forty-five seconds is noise, not urgency — and each of
+				-- these is a remote to every client.
+				for _, mark in Config.KingCallouts do
+					if startsIn <= mark and king.lastCallout > mark then
+						king.lastCallout = mark
+						KingFinished:FireAllClients({
+							countdown = mark,
+							winner = "",
+							prize = "",
+							clicks = 0,
+						})
+						break
+					end
+				end
+				-- The panel's own clock still needs feeding while it waits.
+				broadcastKing()
+			end
 		end
 	end
 end)
@@ -1574,7 +1648,10 @@ Players.PlayerRemoving:Connect(function(player)
 	king.contributions[player] = nil
 end)
 
-startKingRound()
+-- Deliberately NOT starting a round here. The first one is on the clock like
+-- every other, so somebody joining a fresh server gets the countdown rather
+-- than walking into a round already half over.
+broadcastKing()
 
 -- ---------- Autosave ----------
 

@@ -285,6 +285,30 @@ local Config = {
 	KingBaseGoal = 60,
 	KingGoalPerPlayer = 45,
 
+	-- ----- The event timer -----
+	-- King of the Steamer is an EVENT now, not a permanent button. It runs on
+	-- the clock so the whole server converges on the plaza for it, which is
+	-- the only thing that makes a shared bar feel shared.
+
+	-- How often a round starts, measured start-to-start.
+	KingEventInterval = 300,
+
+	-- How long a round lasts once it opens. Short, so it is a scramble.
+	KingRoundSeconds = 30,
+
+	-- Seconds before the start to begin warning people, so somebody deep in
+	-- the squishy menu has time to walk back to the plaza.
+	KingWarningSeconds = 45,
+
+	-- The countdown only calls out at these marks rather than every second —
+	-- a notification a second is noise, not urgency.
+	KingCallouts = { 45, 30, 15, 10, 5, 3, 2, 1 },
+
+	-- How far from the middle of the plaza still counts as being at the event.
+	-- Slightly under the plaza's own radius, so standing on the very rim does
+	-- not qualify. The server measures this; the UI only mirrors it.
+	KingPlazaRadius = 58,
+
 	-- Breather between rounds, so a win can be read before the next starts.
 	KingCooldownSeconds = 15,
 
