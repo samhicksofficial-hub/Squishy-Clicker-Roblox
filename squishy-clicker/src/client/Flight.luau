@@ -137,6 +137,44 @@ for _ = 1, POOL do
 	table.insert(pickupParts, prize)
 end
 
+-- ---------- summoned squishies ----------
+-- The squishies ARE the pets, and summoning one means it walks the island
+-- with YOU — trailing the character, not decorating some stage. They used to
+-- be built as followers of the clicker on the hidden diorama, which meant
+-- pressing Summon visibly did nothing at all.
+type Follower = { model: Models.SquishyModel, scale: number, position: Vector3, velocity: Vector3 }
+local followers: { Follower } = {}
+
+-- Soft and underdamped on purpose: pets that keep up perfectly look welded
+-- on, and the lag IS the charm.
+local FOLLOW_STIFFNESS = 60
+local FOLLOW_DAMPING = 11
+
+function Flight.setActiveSquishies(list: { { shape: string?, color: Color3, sparkle: boolean, sizeScale: number? } })
+	for _, follower in followers do
+		follower.model.rig.folder:Destroy()
+	end
+	followers = {}
+
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local seed = root and root.Position or Vector3.zero
+
+	for index, spec in list do
+		if index > Config.MaxActiveSquishies then
+			break
+		end
+		table.insert(followers, {
+			model = Models.buildSquishy(stage, spec.shape, spec.color, spec.sparkle, spec.sizeScale),
+			scale = spec.sizeScale or 1,
+			-- Seeded at the player so a fresh summon walks out from them
+			-- rather than sprinting in from the world origin.
+			position = seed - Vector3.new(index * 3, 0, 0),
+			velocity = Vector3.zero,
+		})
+	end
+end
+
 -- ---------- other players' shots ----------
 -- The lobby spectacle: everyone's launches arc over the same plain, each one
 -- rising from its owner's own plot bearing with a name over it. A pool,
@@ -409,13 +447,15 @@ function Flight.playGhost(shot2: {
 	if plots then
 		for _, plotFolder in plots:GetChildren() do
 			if plotFolder:GetAttribute("OwnerUserId") == shot2.userId then
-				local pad = plotFolder:FindFirstChildWhichIsA("BasePart")
-				if pad then
-					local flat = Vector3.new(pad.Position.X, 0, pad.Position.Z)
+				-- The stamped centre, not the geometry — same replication
+				-- race as our own plot, same fix.
+				local centre = plotFolder:GetAttribute("PlotCenter")
+				if typeof(centre) == "Vector3" then
+					local flat = Vector3.new(centre.X, 0, centre.Z)
 					if flat.Magnitude > 1 then
 						bearing = flat.Unit
 						-- Same approximation as our own muzzle in setPlot.
-						theirMuzzle = pad.Position + flat.Unit * 9 + Vector3.new(0, 13, 0)
+						theirMuzzle = centre + flat.Unit * 9 + Vector3.new(0, 13, 0)
 						theirMuzzleRadius = flat.Magnitude + 9
 					end
 				end
@@ -524,6 +564,39 @@ RunService.RenderStepped:Connect(function(dt)
 			end
 			pickupTaken[index] = true
 			pickupCollecting[index] = nil
+		end
+	end
+
+	-- Summoned squishies trail the character in a loose wedge: first straight
+	-- behind, then back-left and back-right. Springs rather than fixed
+	-- offsets, so they swing wide on a turn and string out at a sprint.
+	local summoner = player.Character
+	local characterRoot = summoner and summoner:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if characterRoot then
+		local look = characterRoot.CFrame.LookVector
+		local flatLook = Vector3.new(look.X, 0, look.Z)
+		flatLook = flatLook.Magnitude > 0.05 and flatLook.Unit or Vector3.xAxis
+		local right = Vector3.new(-flatLook.Z, 0, flatLook.X)
+
+		for index, follower in followers do
+			local sideAmount = index == 2 and -1 or index == 3 and 1 or 0
+			local target = characterRoot.Position - flatLook * (5 + index) + right * (sideAmount * 4)
+			local pull = (target - follower.position) * FOLLOW_STIFFNESS - follower.velocity * FOLLOW_DAMPING
+			follower.velocity += pull * dt
+			follower.position += follower.velocity * dt
+
+			-- Stood at ground height off the character's own root, bobbing,
+			-- facing the way the player faces.
+			local standAt = Vector3.new(
+				follower.position.X,
+				characterRoot.Position.Y - 2.1 + math.sin(os.clock() * 3 + index * 2) * 0.25,
+				follower.position.Z
+			)
+			Models.apply(
+				follower.model.rig,
+				CFrame.lookAt(standAt, standAt + flatLook),
+				Vector3.one * 1.5 * follower.scale
+			)
 		end
 	end
 

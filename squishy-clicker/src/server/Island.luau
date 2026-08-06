@@ -620,6 +620,13 @@ local function buildPlot(index: number): Plot
 
 	local folder = Instance.new("Folder")
 	folder.Name = ("Plot%d"):format(index)
+	-- The plot's position, stamped as data rather than left to be read off
+	-- the geometry. The client needs it to aim flights out of this plot, and
+	-- reading it from a child part was a race: a folder's attributes arrive
+	-- with the folder, but its PARTS can replicate later (later still with
+	-- streaming on), and a client that looked too early found no part, gave
+	-- up silently, and then had "no plot adopted" when the cannon fired.
+	folder:SetAttribute("PlotCenter", centre)
 	folder.Parent = folders.Plots
 
 	-- The pad, with a lip of path colour around it so it reads as built. Both

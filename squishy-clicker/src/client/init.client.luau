@@ -1015,12 +1015,21 @@ do
 		if plot:GetAttribute("OwnerUserId") ~= player.UserId then
 			return
 		end
-		-- The pad is the biggest part on the plot, and its centre is the
-		-- bearing the cannon points along.
-		local pad = plot:FindFirstChildWhichIsA("BasePart")
-		if pad then
-			Flight.setPlot(pad.Position)
+		-- Position comes from the PlotCenter attribute, never from the plot's
+		-- parts: attributes arrive with the folder, parts can replicate later
+		-- (later still with streaming), and reading geometry here was the
+		-- race behind "Launch with no plot adopted".
+		local centre = plot:GetAttribute("PlotCenter")
+		if typeof(centre) == "Vector3" then
+			Flight.setPlot(centre)
 		end
+	end
+
+	local function watchPlot(plot: Instance)
+		adoptPlot(plot)
+		plot:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
+			adoptPlot(plot)
+		end)
 	end
 
 	task.spawn(function()
@@ -1030,12 +1039,12 @@ do
 			warn("[SquishyClicker] No plots on the island — the launcher has nowhere to fire from.")
 			return
 		end
+		-- Both the plots that have replicated and any that arrive after: a
+		-- client can wake up mid-replication and see only some of them.
 		for _, plot in plots:GetChildren() do
-			adoptPlot(plot)
-			plot:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
-				adoptPlot(plot)
-			end)
+			watchPlot(plot)
 		end
+		plots.ChildAdded:Connect(watchPlot)
 	end)
 
 	ProximityPromptService.PromptShown:Connect(function(prompt)
@@ -1065,7 +1074,10 @@ refresh()
 -- valley gets the launch controls and the lobby feed, the toy shop gets the
 -- steamer bar, the Unbox tray and the collection. The wallet and the nav rail
 -- belong to neither and stay up throughout.
-local steamerHud = { header, progressShell, costLabel, unboxButton, panel, squishHint }
+-- Deliberately NOT including the collection panel: My Squishies is where
+-- summoning lives, and summons follow you around the island — hiding the
+-- panel out there would hide the one button that matters out there.
+local steamerHud = { header, progressShell, costLabel, unboxButton, squishHint }
 
 Scene.onViewChanged(function(atValley)
 	for _, element in steamerHud do

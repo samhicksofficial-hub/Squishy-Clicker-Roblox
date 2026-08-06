@@ -819,7 +819,9 @@ function Cannon.mount(gui: GuiObject, scene: any)
 					})
 				end
 			end
-			scene.setActiveSquishies(specs)
+			-- Flight owns the real world, and summons live there now — walking
+			-- with the character, not decorating the hidden stage.
+			Flight.setActiveSquishies(specs)
 		end
 
 		boostReadyIn = state.boostReadyIn or 0
