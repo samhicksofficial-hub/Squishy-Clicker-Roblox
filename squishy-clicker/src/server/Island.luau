@@ -650,6 +650,12 @@ local CANNON_TARGET_SIZE = 13
 -- write the number the Output prints into this constant.
 local CANNON_YAW_DEGREES = 0
 
+-- And the same for PITCH: with the yaw settled the muzzle pointed at the
+-- sky, so the model is authored nose-up and gets tipped 90° forward onto
+-- the radial. If a re-import ever leaves the muzzle in the ground instead,
+-- flip the sign.
+local CANNON_PITCH_DEGREES = -90
+
 -- Every placed cannon's placement closure, plus the live debug offset, so
 -- Rotate Cannons can re-aim the whole island at once.
 local placedCannons: { (extraYaw: number) -> () } = {}
@@ -731,7 +737,11 @@ local function buildCannon(frame: CFrame, folder: Folder)
 	-- from screenshots went wrong twice; it does not get a third attempt.
 	local function place(extraYaw: number)
 		local yaw = CANNON_YAW_DEGREES + extraYaw
-		cannon:PivotTo(CFrame.lookAt(seat, seat + outwardRadial) * CFrame.Angles(0, math.rad(yaw), 0))
+		cannon:PivotTo(
+			CFrame.lookAt(seat, seat + outwardRadial)
+				* CFrame.Angles(0, math.rad(yaw), 0)
+				* CFrame.Angles(math.rad(CANNON_PITCH_DEGREES), 0, 0)
+		)
 
 		local boundsCFrame, boundsSize
 		if cannon:IsA("Model") then
