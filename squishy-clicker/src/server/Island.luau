@@ -170,13 +170,13 @@ local function decor(part: BasePart): BasePart
 	return part
 end
 
-local function signPost(at: Vector3, text: string, color: Color3, parent: Instance): TextLabel
+local function signPost(at: Vector3, text: string, color: Color3, parent: Instance, labelHeight: number?): TextLabel
 	local post = decor(block(Vector3.new(0.6, 7, 0.6), CFrame.new(at + Vector3.new(0, 3.5, 0)), COLOR.wood, parent))
 	post.Material = Enum.Material.Wood
 
 	local board = Instance.new("Part")
 	board.Size = Vector3.new(0.4, 0.4, 0.4)
-	board.CFrame = CFrame.new(at + Vector3.new(0, 8.6, 0))
+	board.CFrame = CFrame.new(at + Vector3.new(0, labelHeight or 8.6, 0))
 	board.Transparency = 1
 	board.Anchored = true
 	board.CanCollide = false
@@ -945,11 +945,14 @@ local function buildPlot(index: number): Plot
 	-- fence — it used to stand mid-plot on the centre line, which put a bare
 	-- post in the middle of the station area once the capsule moved in.
 	local sideWorld = frame:VectorToWorldSpace(Vector3.zAxis)
+	-- The label floats well above the post so the name clears the 26-stud
+	-- cannon instead of hovering across its barrel from across the plaza.
 	local sign = signPost(
 		centre + Vector3.new(0, GROUND_Y + 1.6, 0) - outward * (half - 3) + sideWorld * (half - 3),
 		"Empty Plot",
 		Color3.fromRGB(230, 226, 220),
-		folder
+		folder,
+		32
 	)
 
 	return {

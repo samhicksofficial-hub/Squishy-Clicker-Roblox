@@ -123,8 +123,12 @@ stationAnchor.Parent = stage
 -- nothing inside it. Under PlayerGui the full GuiObject feature set applies.
 local stationGui = Instance.new("BillboardGui")
 stationGui.Name = "CapsuleBadge"
-stationGui.Size = UDim2.new(0, 92, 0, 92)
-stationGui.MaxDistance = 220
+-- Stud-sized (the Scale component of a BillboardGui's Size is studs), not
+-- pixel-sized: a pixel badge keeps the same screen size at any range, so
+-- from across the plaza it loomed as large as the cannon itself. In studs
+-- it shrinks with perspective like the pod it sits on.
+stationGui.Size = UDim2.new(4, 0, 4, 0)
+stationGui.MaxDistance = 160
 stationGui.LightInfluence = 0 -- full brightness; an icon in shadow reads as broken
 stationGui.Adornee = stationAnchor
 stationGui.Parent = player:WaitForChild("PlayerGui")
@@ -144,7 +148,9 @@ stationCorner.Parent = stationIcon
 
 local stationRing = Instance.new("UIStroke")
 stationRing.Color = Color3.fromRGB(70, 200, 60)
-stationRing.Thickness = 4
+-- Stroke pixels don't scale with the stud-sized badge, so a thick ring
+-- would swallow the icon once distance shrinks it.
+stationRing.Thickness = 3
 stationRing.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 stationRing.Parent = stationIcon
 
