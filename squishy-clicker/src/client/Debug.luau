@@ -162,11 +162,8 @@ function Debug.mount(gui: GuiObject, scene: any)
 	quickButton(7, "View: Steamer", function()
 		scene.setView("unbox")
 	end)
-	-- The range is the hardest view to check by eye, since reaching it
-	-- normally means sitting out a cooldown and firing a shot first.
-	quickButton(15, "View: Range", function()
-		scene.setView("cannon")
-	end)
+	-- (The old "View: Range" button is gone with the diorama valley it looked
+	-- at: the range is the real world now, reached by walking.)
 	quickButton(8, "Toggle Blur", function()
 		backdropFaded = not backdropFaded
 		scene.setBackdropFaded(backdropFaded)

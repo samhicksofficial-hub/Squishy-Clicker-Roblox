@@ -478,8 +478,10 @@ function Launch.mount(gui: GuiObject, scene: any)
 			powerBar.Size = UDim2.fromScale(value, 1)
 			title.Text = ("Charge  %d%%"):format(math.floor(value * 100 + 0.5))
 		else
+			-- The angle readout in the title is the aim preview now. The old
+			-- scene.setCannonAim tilted a barrel on the diorama six thousand
+			-- studs up, which nobody aiming at their own plot could see.
 			angleBar.Position = UDim2.new(value, -value * 20 + 4, 0, 4)
-			scene.setCannonAim(value)
 			title.Text = ("Charge %d%%   ·   Angle %d°"):format(
 				math.floor(chosenPower * 100 + 0.5),
 				math.floor(Config.LaunchMinAngle + (Config.LaunchMaxAngle - Config.LaunchMinAngle) * value + 0.5)
