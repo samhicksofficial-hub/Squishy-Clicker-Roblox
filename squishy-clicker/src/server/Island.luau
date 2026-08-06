@@ -23,6 +23,9 @@
 --  Everything here is anchored and generated once at startup.
 -- ============================================================
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+
 local Island = {}
 
 -- ---------- dimensions ----------
@@ -54,7 +57,10 @@ local GROUND_Y = 0
 -- six-figure shot would be six figures of studs long. What the plain has to
 -- do is sell the SCALE, and for that it only has to be seen.
 local RANGE_RADIUS = 1350 -- the plain, out to the horizon
-local MESA_RADIUS = 1020 -- where the far cliffs stand
+-- Beyond the furthest band, not on top of it: the 1M ring sits at 1000, and a
+-- cliff face rising out of it would read as the end of the range rather than
+-- as the horizon past it.
+local MESA_RADIUS = 1160
 local PLATEAU_DROP = 22 -- how far the base sits above the plain
 
 local Y = {
@@ -304,42 +310,48 @@ end
 -- plaza they read as a scale running away in every direction, which is the
 -- whole point: the plots face outward, so the range has to be legible from all
 -- of them rather than down one corridor.
-local RANGE_RINGS = {
-	{ at = 320, name = "250", color = Color3.fromRGB(238, 232, 224) },
-	{ at = 480, name = "1K", color = Color3.fromRGB(120, 205, 235) },
-	{ at = 650, name = "10K", color = Color3.fromRGB(250, 200, 80) },
-	{ at = 830, name = "100K", color = Color3.fromRGB(245, 150, 95) },
-	{ at = 980, name = "1M", color = Color3.fromRGB(226, 96, 96) },
-}
-
 local function buildRangeMarkers()
 	local markers = group("Range")
+	local bands = Config.RangeBands
 
-	for _, ring in RANGE_RINGS do
-		local SEGMENTS = 72
-		local width = 2 * math.pi * ring.at / SEGMENTS + 3
+	for order, band in bands do
+		local radius = Config.rangeRadius(band.studs)
+		-- Rainbow near to far, so "how far did it get" is answerable at a
+		-- glance by which colour it sailed over.
+		local color = Color3.fromHSV((order - 1) / #bands * 0.85, 0.78, 1)
 
+		local SEGMENTS = 84
+		local width = 2 * math.pi * radius / SEGMENTS + 3
 		for index = 1, SEGMENTS do
 			local angle = (index / SEGMENTS) * math.pi * 2
-			local at = Vector3.new(math.cos(angle) * ring.at, Y.plain + 0.4, math.sin(angle) * ring.at)
-			local band = block(
-				Vector3.new(9, 1.2, width),
+			local at = Vector3.new(math.cos(angle) * radius, Y.plain + 0.4, math.sin(angle) * radius)
+			local strip = block(
+				Vector3.new(11, 1.2, width),
 				CFrame.new(at) * CFrame.Angles(0, -angle, 0),
-				ring.color,
+				color,
 				markers
 			)
-			studded(decor(band))
+			strip.Material = Enum.Material.Neon
+			studded(decor(strip))
 		end
 
-		-- Eight signs per ring, one roughly per plot, so whichever way a
-		-- player is facing there is a number in front of them.
-		for index = 1, 8 do
-			local angle = (index / 8) * math.pi * 2 + math.pi / 8
-			local at = Vector3.new(math.cos(angle) * ring.at, Y.plain + 2, math.sin(angle) * ring.at)
+		-- One sign per band per PLOT, on the plot's own bearing, so the
+		-- numbers a player sees are the ones their cannon is pointing at.
+		-- They used to sit half a slot off the plots, which put every ring's
+		-- sign on the same sight-line from the plaza and stacked them into an
+		-- unreadable pile.
+		for slot = 1, Island.PLOT_COUNT do
+			local angle = (slot - 1) / Island.PLOT_COUNT * math.pi * 2
+			local at = Vector3.new(math.cos(angle) * radius, Y.plain, math.sin(angle) * radius)
+
+			-- Each band's sign stands higher than the last. Perspective shrinks
+			-- the far ones toward the horizon line, and without the step they
+			-- pile up on top of each other exactly as they did before.
+			local height = 22 + (order - 1) * 16
 
 			local anchor = Instance.new("Part")
 			anchor.Size = Vector3.new(1, 1, 1)
-			anchor.Position = at + Vector3.new(0, 26, 0)
+			anchor.Position = at + Vector3.new(0, height, 0)
 			anchor.Transparency = 1
 			anchor.Anchored = true
 			anchor.CanCollide = false
@@ -348,7 +360,7 @@ local function buildRangeMarkers()
 			anchor.Parent = markers
 
 			local gui = Instance.new("BillboardGui")
-			gui.Size = UDim2.new(0, 340, 0, 90)
+			gui.Size = UDim2.new(0, 300, 0, 76)
 			-- Has to outrange the plain itself, or the far markers vanish
 			-- exactly when they are doing their job.
 			gui.MaxDistance = RANGE_RADIUS
@@ -358,12 +370,23 @@ local function buildRangeMarkers()
 			label.Size = UDim2.fromScale(1, 1)
 			label.BackgroundTransparency = 1
 			label.Font = Enum.Font.FredokaOne
-			label.Text = ("%s Studs"):format(ring.name)
-			label.TextColor3 = Color3.fromRGB(255, 255, 255)
+			label.Text = ("%s Studs"):format(band.name)
+			label.TextColor3 = color
 			label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
 			label.TextStrokeTransparency = 0
 			label.TextScaled = true
 			label.Parent = gui
+
+			-- A post down to the band, so a sign floating at forty studs still
+			-- reads as belonging to the stripe underneath it.
+			local post = block(
+				Vector3.new(1.2, height, 1.2),
+				CFrame.new(at + Vector3.new(0, height * 0.5, 0)),
+				color,
+				markers
+			)
+			post.Material = Enum.Material.Neon
+			decor(post)
 		end
 	end
 end

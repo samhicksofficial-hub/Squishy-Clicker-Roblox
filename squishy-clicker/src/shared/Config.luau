@@ -201,6 +201,36 @@ local Config = {
 	BoostPickupMultiplier = 3,
 	BoostDensityMultiplier = 2,
 
+	-- ===== The range on the ground =====
+	-- The rainbow bands painted across the plain, and the mapping that puts a
+	-- flight on them. Both the island (which builds the rings) and the flight
+	-- animation (which flies over them) read these, so a squishy passing the
+	-- "10K Studs" band has genuinely flown ten thousand studs.
+	--
+	-- The mapping is LOGARITHMIC, and it has to be: distances run from a
+	-- couple of hundred studs to seven figures, and no linear scale shows both
+	-- ends of that. On a log scale each band is a power of ten and every
+	-- upgrade moves you a visible step, which is exactly the feedback a
+	-- simulator needs.
+	RangeNearRadius = 300, -- world studs from the island centre to the first band
+	RangeFarRadius = 1000, -- ...and to the last one
+	RangeNearStuds = 100, -- the game distance the first band means
+	RangeFarStuds = 1000000, -- ...and the last
+
+	-- The bands themselves. Rainbow, near to far, so "how far did it get" is
+	-- answerable at a glance by which colour it sailed over.
+	RangeBands = {
+		{ studs = 100, name = "100" },
+		{ studs = 250, name = "250" },
+		{ studs = 500, name = "500" },
+		{ studs = 1000, name = "1K" },
+		{ studs = 5000, name = "5K" },
+		{ studs = 10000, name = "10K" },
+		{ studs = 50000, name = "50K" },
+		{ studs = 100000, name = "100K" },
+		{ studs = 1000000, name = "1M" },
+	},
+
 	-- ===== Worlds =====
 	-- Retunes of the same valley rather than separate maps: a world changes
 	-- the palette of the ground and the canyon and multiplies what the track
@@ -334,5 +364,28 @@ local Config = {
 	-- so we use a fresh datastore rather than colliding with old saves.
 	DataStoreName = "SquishyClicker_v2",
 }
+
+-- How far out from the island centre a given game distance sits, in world
+-- studs. Logarithmic — see RangeNearRadius for why.
+--
+-- This lives here as a function rather than as a formula copied into the
+-- island and again into the flight animation, because those two agreeing is
+-- the entire point: if they drift, a squishy sails over the "10K" band having
+-- flown four hundred studs and the range stops meaning anything.
+function Config.rangeRadius(studs: number): number
+	local near, far = Config.RangeNearStuds, Config.RangeFarStuds
+	if studs <= 0 then
+		return 0
+	end
+	if studs < near then
+		-- Below the first band there is no room for a decade, so the last
+		-- stretch into the cannon is drawn straight.
+		return studs / near * Config.RangeNearRadius
+	end
+
+	local span = math.log(far / near, 10)
+	local along = math.clamp(math.log(studs / near, 10) / span, 0, 1)
+	return Config.RangeNearRadius + along * (Config.RangeFarRadius - Config.RangeNearRadius)
+end
 
 return Config

@@ -28,6 +28,9 @@ local Models = require(script:WaitForChild("Models"))
 local Launch = require(script:WaitForChild("Launch"))
 local King = require(script:WaitForChild("King"))
 local Cannon = require(script:WaitForChild("Cannon"))
+-- Required up here as well as inside the plot wiring below, because refresh()
+-- needs it to keep the flying squishy matched to the equipped one.
+local ClientFlight = require(script:WaitForChild("Flight"))
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local ClickSteamer = Remotes:WaitForChild("ClickSteamer") :: RemoteEvent
@@ -849,6 +852,9 @@ local function refresh()
 		local equipped = appliedClickerId and Squishies.byId[appliedClickerId]
 		if equipped then
 			Scene.setClicker(equipped.shape, equipped.color, equipped.sparkle, equipped.id, equipped.scale)
+			-- The same squishy is what comes out of the cannon, so the thing
+			-- flying over the range is the one sat on the cushion.
+			ClientFlight.setSquishy(equipped.shape, equipped.color, equipped.sparkle == true, equipped.scale)
 		end
 	end
 
@@ -998,6 +1004,39 @@ do
 		local plot = prompt:FindFirstAncestorOfClass("Folder")
 		return plot ~= nil and plot:GetAttribute("OwnerUserId") == player.UserId
 	end
+
+	-- Find the plot the server gave us and point the flight out from it. Done
+	-- by watching for the attribute rather than by asking, because the server
+	-- stamps it during the join handshake and the answer may already be
+	-- sitting there by the time this runs.
+	local Flight = require(script:WaitForChild("Flight"))
+
+	local function adoptPlot(plot: Instance)
+		if plot:GetAttribute("OwnerUserId") ~= player.UserId then
+			return
+		end
+		-- The pad is the biggest part on the plot, and its centre is the
+		-- bearing the cannon points along.
+		local pad = plot:FindFirstChildWhichIsA("BasePart")
+		if pad then
+			Flight.setPlot(pad.Position)
+		end
+	end
+
+	task.spawn(function()
+		local map = workspace:WaitForChild("Map", 30)
+		local plots = map and map:WaitForChild("Plots", 30)
+		if not plots then
+			warn("[SquishyClicker] No plots on the island — the launcher has nowhere to fire from.")
+			return
+		end
+		for _, plot in plots:GetChildren() do
+			adoptPlot(plot)
+			plot:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
+				adoptPlot(plot)
+			end)
+		end
+	end)
 
 	ProximityPromptService.PromptShown:Connect(function(prompt)
 		if ownsPrompt(prompt) then

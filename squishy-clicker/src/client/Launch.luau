@@ -27,6 +27,10 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local Format = require(Shared:WaitForChild("Format"))
 local UI = require(script.Parent:WaitForChild("UI"))
+-- The shot is drawn in the real world now, out from the player's own plot,
+-- rather than on the stage above the map. Scene still owns the steamer and the
+-- squisher close-ups; it no longer owns the flight.
+local Flight = require(script.Parent:WaitForChild("Flight"))
 
 local Launch = {}
 
@@ -77,7 +81,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 		if stage == "flying" or stage == "summary" then
 			pendingField = field
 		else
-			scene.setLaunchField(field)
+			Flight.setField(field)
 		end
 	end)
 
@@ -358,7 +362,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 		local waiting = pendingField
 		if waiting then
 			pendingField = nil
-			scene.setLaunchField(waiting)
+			Flight.setField(waiting)
 		end
 	end
 
@@ -452,11 +456,11 @@ function Launch.mount(gui: GuiObject, scene: any)
 			-- Counting up beside the shot is the whole feedback loop of a
 			-- distance game, so it reads the stage's live position rather than
 			-- waiting for the landing to show a number.
-			distanceLabel.Text = Format.abbreviate(math.floor(scene.flightDistance()))
-			local bounces = scene.flightBounces()
+			distanceLabel.Text = Format.abbreviate(math.floor(Flight.distance()))
+			local bounces = Flight.bounces()
 			vitalsLabel.Text = ("⬆ %s   ⚡ %s/s%s"):format(
-				Format.abbreviate(math.floor(scene.flightHeight())),
-				Format.abbreviate(math.floor(scene.flightSpeed())),
+				Format.abbreviate(math.floor(Flight.height())),
+				Format.abbreviate(math.floor(Flight.speed())),
 				bounces > 0 and ("   ↻ %d bounce%s"):format(bounces, bounces == 1 and "" or "s") or ""
 			)
 			return
@@ -505,7 +509,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 		-- The stage says how long its animation runs, so the summary can wait
 		-- for the landing exactly rather than on a guessed timer. Announcing
 		-- the distance mid-flight would give the ending away.
-		local flightSeconds = scene.playLaunch(result)
+		local flightSeconds = Flight.play(result)
 
 		task.delay(flightSeconds + 0.4, function()
 			if stage ~= "flying" then
