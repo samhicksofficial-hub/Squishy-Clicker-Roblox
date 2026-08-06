@@ -857,6 +857,13 @@ RunService.RenderStepped:Connect(function(dt)
 		flatLook = flatLook.Magnitude > 0.05 and flatLook.Unit or Vector3.xAxis
 		local right = Vector3.new(-flatLook.Z, 0, flatLook.X)
 
+		-- Where the actual ground is, measured off the character rather than
+		-- assumed: root centre, less half the root part, less the humanoid's
+		-- own hip height. The old fixed -2.1 was wrong for both R6 and R15.
+		local humanoid = summoner and summoner:FindFirstChildOfClass("Humanoid")
+		local hip = humanoid and humanoid.HipHeight or 2
+		local groundY = characterRoot.Position.Y - characterRoot.Size.Y * 0.5 - hip
+
 		for index, follower in followers do
 			local sideAmount = index == 2 and -1 or index == 3 and 1 or 0
 			local target = characterRoot.Position - flatLook * (5 + index) + right * (sideAmount * 4)
@@ -864,17 +871,20 @@ RunService.RenderStepped:Connect(function(dt)
 			follower.velocity += pull * dt
 			follower.position += follower.velocity * dt
 
-			-- Stood at ground height off the character's own root, bobbing,
-			-- facing the way the player faces.
+			-- Stood on its own UNDERSIDE, like the clicker on its cushion: a
+			-- model is not centred on the ground, it rests on it, and the
+			-- giant squishies were half-buried by exactly their own radius.
+			local applied = 1.5 * follower.scale
+			local lift = -follower.model.lowestY * applied
 			local standAt = Vector3.new(
 				follower.position.X,
-				characterRoot.Position.Y - 2.1 + math.sin(os.clock() * 3 + index * 2) * 0.25,
+				groundY + lift + 0.05 + math.sin(os.clock() * 3 + index * 2) * 0.12,
 				follower.position.Z
 			)
 			Models.apply(
 				follower.model.rig,
 				CFrame.lookAt(standAt, standAt + flatLook),
-				Vector3.one * 1.5 * follower.scale
+				Vector3.one * applied
 			)
 		end
 	end

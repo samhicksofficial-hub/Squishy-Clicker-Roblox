@@ -592,10 +592,12 @@ for index, squishy in Squishies.list do
 	})
 	make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = icon })
 
-	-- Gold ring marking the equipped squisher.
+	-- Green ring marking the equipped squisher — green rather than the old
+	-- gold, because gold is already the colour of stars and prices in this
+	-- panel and the ring was reading as decoration instead of selection.
 	local equipStroke = make("UIStroke", {
-		Color = COLOR.gold,
-		Thickness = 3,
+		Color = Color3.fromRGB(70, 200, 60),
+		Thickness = 4,
 		Transparency = 1,
 		Parent = icon,
 	})

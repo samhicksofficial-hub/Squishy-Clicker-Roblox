@@ -618,6 +618,104 @@ export type Plot = {
 
 local plots: { Plot } = {}
 
+-- ---------- the cannon on a plot ----------
+
+-- The imported cannon, found by a tolerant name match anywhere under
+-- ReplicatedStorage — "Squishy Cannon", "SquishyCannon" and any casing all
+-- resolve, because exact-name lookups on hand-imported models are how a
+-- month of "the model doesn't show" bugs happened.
+local function findCannonTemplate(): (Model | BasePart)?
+	for _, descendant in game:GetService("ReplicatedStorage"):GetDescendants() do
+		local loosened = descendant.Name:lower():gsub("[%s_]", "")
+		if loosened == "squishycannon" and (descendant:IsA("Model") or descendant:IsA("BasePart")) then
+			return descendant :: any
+		end
+	end
+	return nil
+end
+
+-- How big the placed cannon should be, as its largest dimension. The import
+-- can be authored at any size; it is scaled to this so every plot matches.
+local CANNON_TARGET_SIZE = 13
+
+local function buildCannon(frame: CFrame, folder: Folder)
+	local template = findCannonTemplate()
+
+	if not template then
+		-- No import: the old built-from-parts cannon, so the game works in a
+		-- place that hasn't done the one-time Studio import yet.
+		warn("[SquishyClicker] No 'Squishy Cannon' model found in ReplicatedStorage — using the built-in cannon.")
+		local plinth = block(Vector3.new(9, 4.5, 9), frame * CFrame.new(2, 3.9, 0), Color3.fromRGB(240, 224, 186), folder)
+		plinth.Material = Enum.Material.SmoothPlastic
+
+		local barrel = Instance.new("Part")
+		barrel.Shape = Enum.PartType.Cylinder
+		barrel.Size = Vector3.new(11, 5.6, 5.6)
+		barrel.CFrame = frame * CFrame.new(4, 8.4, 0) * CFrame.Angles(0, 0, math.rad(38)) * CFrame.new(4, 0, 0)
+		barrel.Color = COLOR.metal
+		barrel.Material = Enum.Material.SmoothPlastic
+		barrel.Anchored = true
+		barrel.CanCollide = true
+		barrel.Parent = folder
+
+		local mouth = Instance.new("Part")
+		mouth.Shape = Enum.PartType.Cylinder
+		mouth.Size = Vector3.new(0.5, 4.6, 4.6)
+		mouth.CFrame = barrel.CFrame * CFrame.new(5.4, 0, 0)
+		mouth.Color = COLOR.metalDark
+		mouth.Material = Enum.Material.SmoothPlastic
+		mouth.Anchored = true
+		decor(mouth)
+		mouth.Parent = folder
+		return
+	end
+
+	local cannon = template:Clone()
+
+	-- Anchor every part: an unanchored import would fall through the pad the
+	-- moment it spawned, and a cannon is furniture, not physics.
+	if cannon:IsA("BasePart") then
+		cannon.Anchored = true
+	end
+	for _, part in cannon:GetDescendants() do
+		if part:IsA("BasePart") then
+			part.Anchored = true
+		end
+	end
+
+	-- Scale to the standard size whatever the import was authored at.
+	if cannon:IsA("Model") then
+		local size = cannon:GetExtentsSize()
+		local largest = math.max(size.X, size.Y, size.Z, 0.001)
+		pcall(function()
+			cannon:ScaleTo(cannon:GetScale() * CANNON_TARGET_SIZE / largest)
+		end)
+	elseif cannon:IsA("BasePart") then
+		local largest = math.max(cannon.Size.X, cannon.Size.Y, cannon.Size.Z, 0.001)
+		cannon.Size = cannon.Size * (CANNON_TARGET_SIZE / largest)
+	end
+
+	-- Place it in two steps: roughly on the pad first, then measured — the
+	-- bounding box is nudged so its BOTTOM sits exactly on the pad's top,
+	-- which works whatever the model's authored pivot happens to be. Models
+	-- usually face -Z, and the plot's outward is its frame's +X, so the yaw
+	-- turn maps one onto the other.
+	local target = frame * CFrame.new(2, 0, 0) * CFrame.Angles(0, -math.pi / 2, 0)
+	cannon:PivotTo(target)
+
+	local boundsCFrame, boundsSize
+	if cannon:IsA("Model") then
+		boundsCFrame, boundsSize = cannon:GetBoundingBox()
+	else
+		boundsCFrame, boundsSize = cannon.CFrame, cannon.Size
+	end
+	local bottomY = boundsCFrame.Position.Y - boundsSize.Y * 0.5
+	local padTopY = frame.Position.Y + Y.plotPad
+	cannon:PivotTo(cannon:GetPivot() + Vector3.new(0, padTopY - bottomY, 0))
+
+	cannon.Parent = folder
+end
+
 -- One plot: a raised pad with a fence, a sign, and a cannon on it aimed out
 -- over the water. The cannon is the interactive bit — everything else is
 -- there to make the pad feel like somewhere rather than a square of floor.
@@ -665,31 +763,10 @@ local function buildPlot(index: number): Plot
 		fence.Material = Enum.Material.WoodPlanks
 	end
 
-	-- The cannon: a cream plinth and a fat barrel, pointed out over the water
-	-- and tilted up. Simplified from the one on the launch stage — this one is
-	-- scenery plus a prompt, and the real shot is drawn on the client.
-	local plinth = block(Vector3.new(9, 4.5, 9), frame * CFrame.new(2, 3.9, 0), Color3.fromRGB(240, 224, 186), folder)
-	plinth.Material = Enum.Material.SmoothPlastic
-
-	local barrel = Instance.new("Part")
-	barrel.Shape = Enum.PartType.Cylinder
-	barrel.Size = Vector3.new(11, 5.6, 5.6)
-	barrel.CFrame = frame * CFrame.new(4, 8.4, 0) * CFrame.Angles(0, 0, math.rad(38)) * CFrame.new(4, 0, 0)
-	barrel.Color = COLOR.metal
-	barrel.Material = Enum.Material.SmoothPlastic
-	barrel.Anchored = true
-	barrel.CanCollide = true
-	barrel.Parent = folder
-
-	local mouth = Instance.new("Part")
-	mouth.Shape = Enum.PartType.Cylinder
-	mouth.Size = Vector3.new(0.5, 4.6, 4.6)
-	mouth.CFrame = barrel.CFrame * CFrame.new(5.4, 0, 0)
-	mouth.Color = COLOR.metalDark
-	mouth.Material = Enum.Material.SmoothPlastic
-	mouth.Anchored = true
-	decor(mouth)
-	mouth.Parent = folder
+	-- The cannon. The imported "Squishy Cannon" model when it exists, and the
+	-- old built-from-parts one otherwise, so a place without the import still
+	-- has a cannon on every plot rather than an empty pad.
+	buildCannon(frame, folder)
 
 	-- Where the prompt lives. Its own small part at head height beside the
 	-- plinth, so the "hold E" hint sits where a player walking up expects it
