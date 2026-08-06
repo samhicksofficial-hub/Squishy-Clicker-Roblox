@@ -642,13 +642,11 @@ local CANNON_TARGET_SIZE = 13
 -- yaw correction on top of a lookAt down the radial. 0 = authored facing -Z
 -- (the usual convention), 180 = facing +Z, ±90 for the sides.
 --
--- This number has been wrong twice, because it was deduced from screenshots
--- of a model this codebase cannot open. It is now set from the latest
--- in-game evidence (muzzle over the station at 180 means the muzzle rides
--- the authored front, so 0) — and if it is STILL wrong, do not reason about
--- it: press Rotate Cannons in the debug menu until they face the range, and
--- write the number the Output prints into this constant.
-local CANNON_YAW_DEGREES = 0
+-- Dialled in BY EYE with the debug menu's Rotate Cannons and written back
+-- from the number the Output printed — never deduced from screenshots, which
+-- went wrong twice before that button existed. If a future import faces the
+-- wrong way, do the same: press until right, copy the number here.
+local CANNON_YAW_DEGREES = 90
 
 -- And the same for PITCH. The FIRST import was authored nose-up and needed
 -- -90 to tip it onto the radial; the current one is authored upright, so
