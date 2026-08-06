@@ -354,10 +354,10 @@ local Config = {
 
 	-- ===== King of the Steamer (the shared minigame) =====
 	-- Goal for a server of one, plus this much for every player beyond the
-	-- first. Scaling on player count is what keeps it beatable alone without
-	-- being over in seconds when twenty people pile on.
-	KingBaseGoal = 60,
-	KingGoalPerPlayer = 45,
+	-- first. A flat 500 no matter the crowd: a big number the whole plaza
+	-- has to gang up on, rather than a bar that quietly stretches to match.
+	KingBaseGoal = 500,
+	KingGoalPerPlayer = 0,
 
 	-- ----- The event timer -----
 	-- King of the Steamer is an EVENT now, not a permanent button. It runs on
