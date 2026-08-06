@@ -117,14 +117,22 @@ stationAnchor.CanTouch = false
 stationAnchor.Position = Vector3.new(0, -500, 0) -- parked until a plot is adopted
 stationAnchor.Parent = stage
 
+-- Parented to PLAYERGUI with the anchor as Adornee, not to the anchor
+-- itself: a ViewportFrame inside a workspace-parented BillboardGui does not
+-- reliably render its 3D scene — which is how the green ring shipped with
+-- nothing inside it. Under PlayerGui the full GuiObject feature set applies.
 local stationGui = Instance.new("BillboardGui")
+stationGui.Name = "CapsuleBadge"
 stationGui.Size = UDim2.new(0, 92, 0, 92)
 stationGui.MaxDistance = 220
-stationGui.Parent = stationAnchor
+stationGui.LightInfluence = 0 -- full brightness; an icon in shadow reads as broken
+stationGui.Adornee = stationAnchor
+stationGui.Parent = player:WaitForChild("PlayerGui")
 
 local stationIcon = Instance.new("ViewportFrame")
 stationIcon.Size = UDim2.fromScale(1, 1)
 stationIcon.BackgroundColor3 = Color3.fromRGB(252, 248, 244)
+stationIcon.BackgroundTransparency = 0
 stationIcon.Ambient = Color3.fromRGB(170, 165, 160)
 stationIcon.LightColor = Color3.fromRGB(255, 250, 244)
 stationIcon.LightDirection = Vector3.new(-0.5, -1, -0.6)
