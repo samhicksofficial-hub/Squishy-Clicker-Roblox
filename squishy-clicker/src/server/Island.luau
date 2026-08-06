@@ -817,8 +817,14 @@ end
 
 local CAPSULE_TARGET_SIZE = 9
 
+-- How far INWARD of the plot centre the station sits. The doubled cannon
+-- spans about eleven studs behind its own seat, so anything nearer than
+-- twelve ends up under the carriage — which is exactly where the capsule
+-- first appeared.
+local STATION_BACK = 13
+
 local function buildStation(frame: CFrame, folder: Folder)
-	local seat = frame:PointToWorldSpace(Vector3.new(-6, 0, 0))
+	local seat = frame:PointToWorldSpace(Vector3.new(-STATION_BACK, 0, 0))
 	local padTopY = frame.Position.Y + Y.plotPad
 
 	local template = findImportTemplate("capsulepod")
@@ -916,7 +922,9 @@ local function buildPlot(index: number): Plot
 	-- interaction was never attached to it.
 	local station = Instance.new("Part")
 	station.Size = Vector3.new(4, 6, 4)
-	station.CFrame = frame * CFrame.new(-6, 4, 0)
+	-- On the same STATION_BACK as the capsule, so the "hold E" hint sits at
+	-- the thing the player is actually walking up to.
+	station.CFrame = frame * CFrame.new(-STATION_BACK, 4, 0)
 	station.Transparency = 1
 	station.CanCollide = false
 	station.Anchored = true
