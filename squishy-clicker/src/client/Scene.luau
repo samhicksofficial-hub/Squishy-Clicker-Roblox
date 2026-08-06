@@ -182,12 +182,27 @@ local progress = 0
 local revealToken = 0
 
 -- ---------- the stage ----------
+-- Everything this file builds lives under Workspace.Map, sorted into folders
+-- by what it is. That is worth the few extra lines: the map is a couple of
+-- thousand parts generated at runtime, and a flat folder of them is unusable
+-- in the Explorer when something needs finding.
 
 local stage = Instance.new("Folder")
-stage.Name = "SquishyStage"
+stage.Name = "Map"
 stage.Parent = workspace
 
-local function block(size: Vector3, position: Vector3, color: Color3): Part
+local function group(name: string): Folder
+	local folder = Instance.new("Folder")
+	folder.Name = name
+	folder.Parent = stage
+	return folder
+end
+
+local valleyFolder = group("Valley") -- ground, canyon walls, distance ladder
+local baseFolder = group("Base") -- the lobby: paths, stalls, catapults
+local propsFolder = group("Props") -- trees, rocks, crates, trucks
+
+local function block(size: Vector3, position: Vector3, color: Color3, parent: Instance?): Part
 	local part = Instance.new("Part")
 	part.Size = size
 	part.Position = position
@@ -199,7 +214,14 @@ local function block(size: Vector3, position: Vector3, color: Color3): Part
 	part.CanTouch = false
 	part.TopSurface = Enum.SurfaceType.Smooth
 	part.BottomSurface = Enum.SurfaceType.Smooth
-	part.Parent = stage
+	part.Parent = parent or stage
+	return part
+end
+
+-- The classic Roblox stud top, which is most of what makes the reference's
+-- ground read as ground rather than as a flat green plane.
+local function studded(part: BasePart): BasePart
+	part.TopSurface = Enum.SurfaceType.Studs
 	return part
 end
 
@@ -320,10 +342,14 @@ local VALLEY_HALF_WIDTH = 26 -- grass, from the centre line out
 local TRACK_HALF_WIDTH = 17 -- the mown strip the distance markers sit on
 local RANGE_DRAWN = TRACK_SPAN
 
-local GRASS_COLOR = Color3.fromRGB(138, 214, 74)
-local GRASS_DARK = Color3.fromRGB(112, 190, 58)
-local CANYON_COLOR = Color3.fromRGB(226, 118, 118)
-local CANYON_TOP = Color3.fromRGB(150, 214, 88)
+-- Straight off the reference. The canyon is a muted brick rather than the
+-- pink it used to be, and the field is a bright lime with a slightly deeper
+-- mown strip down the middle for the track.
+local GRASS_COLOR = Color3.fromRGB(150, 226, 84)
+local GRASS_DARK = Color3.fromRGB(130, 210, 80)
+local CANYON_COLOR = Color3.fromRGB(180, 80, 80)
+local CANYON_TOP = Color3.fromRGB(130, 210, 80)
+local PATH_COLOR = Color3.fromRGB(210, 110, 60)
 local WOOD_COLOR = Color3.fromRGB(150, 104, 62)
 
 -- The valley floor. One long slab, wide enough that the canyon walls are
@@ -331,18 +357,22 @@ local WOOD_COLOR = Color3.fromRGB(150, 104, 62)
 local grass = block(
 	Vector3.new(RANGE_DRAWN + 80, 1, VALLEY_HALF_WIDTH * 2),
 	CANNON_ORIGIN + Vector3.new(RANGE_DRAWN * 0.5 - 20, -0.5, 0),
-	GRASS_COLOR
+	GRASS_COLOR,
+	valleyFolder
 )
-grass.Material = Enum.Material.Grass
+grass.Material = Enum.Material.Plastic
+studded(grass)
 
 -- A slightly darker mown strip down the middle, so the track reads as a track
 -- without needing a painted road on it.
 local mown = block(
 	Vector3.new(RANGE_DRAWN + 80, 1, TRACK_HALF_WIDTH * 2),
 	CANNON_ORIGIN + Vector3.new(RANGE_DRAWN * 0.5 - 20, -0.46, 0),
-	GRASS_DARK
+	GRASS_DARK,
+	valleyFolder
 )
-mown.Material = Enum.Material.Grass
+mown.Material = Enum.Material.Plastic
+studded(mown)
 
 -- ---------- the canyon walls ----------
 -- Stepped terraces of red rock either side, each step capped with grass, in
@@ -365,7 +395,8 @@ for side = -1, 1, 2 do
 		local face = block(
 			Vector3.new(RANGE_DRAWN + 80, height, CANYON_STEP_DEPTH),
 			CANNON_ORIGIN + Vector3.new(RANGE_DRAWN * 0.5 - 20, height * 0.5, side * (outward + CANYON_STEP_DEPTH * 0.5)),
-			CANYON_COLOR
+			CANYON_COLOR,
+			valleyFolder
 		)
 		face.Material = Enum.Material.Sandstone
 		table.insert(canyonFaces, face)
@@ -375,12 +406,159 @@ for side = -1, 1, 2 do
 		local lip = block(
 			Vector3.new(RANGE_DRAWN + 80, 0.8, CANYON_STEP_DEPTH),
 			CANNON_ORIGIN + Vector3.new(RANGE_DRAWN * 0.5 - 20, height + 0.4, side * (outward + CANYON_STEP_DEPTH * 0.5)),
-			CANYON_TOP
+			CANYON_TOP,
+			valleyFolder
 		)
-		lip.Material = Enum.Material.Grass
+		lip.Material = Enum.Material.Plastic
+		studded(lip)
 		table.insert(canyonLips, lip)
 	end
 end
+
+-- ---------- the base ----------
+-- The lobby at the foot of the cannon: a dirt path network, a row of market
+-- stalls, and everybody else's catapults lined up along it. This is where the
+-- camera sits between shots, so it is what the player is looking at whenever
+-- they are not watching something fly.
+--
+-- All of it is static rather than on the treadmill, which is safe because it
+-- lives BEHIND the launch pad: once a shot is away the chase camera is already
+-- past it, so it never appears to follow the squishy down the track.
+-- The valley camera stands at the pad looking down the track, so the base has
+-- to FLANK that view rather than sit behind it: anything much further back
+-- than the camera is simply never seen. Stalls and catapults therefore line
+-- the banks either side of the near track, between the mown strip and the
+-- canyon, which is also how the reference arranges them.
+local BASE_BACK = -40 -- where the approach path starts
+local BASE_BANK = (TRACK_HALF_WIDTH + VALLEY_HALF_WIDTH) * 0.5 -- the strip they stand on
+local PATH_WIDTH = 9
+
+-- Ground paint. Sits a hair above the field so it never z-fights with it.
+local function paint(size: Vector3, centre: Vector3, color: Color3): Part
+	local part = block(size, centre, color, baseFolder)
+	part.Material = Enum.Material.Plastic
+	return studded(part) :: Part
+end
+
+-- A cross path just in front of the pad, and an approach running back down the
+-- middle to it. The approach STOPS at the pad — past that the track is green,
+-- which is what makes the orange read as "the bit you stand on".
+paint(
+	Vector3.new(PATH_WIDTH, 0.4, BASE_BANK * 2 + 8),
+	CANNON_ORIGIN + Vector3.new(-11, 0.22, 0),
+	PATH_COLOR
+)
+paint(
+	Vector3.new(math.abs(BASE_BACK) + 2, 0.4, PATH_WIDTH),
+	CANNON_ORIGIN + Vector3.new(BASE_BACK * 0.5, 0.22, 0),
+	PATH_COLOR
+)
+-- Spurs out to each bank, so the stalls and the catapults are connected to
+-- the path rather than dropped on the grass beside it.
+for _, side in { -1, 1 } do
+	paint(
+		Vector3.new(PATH_WIDTH * 0.7, 0.4, BASE_BANK - 2),
+		CANNON_ORIGIN + Vector3.new(-11, 0.22, side * (BASE_BANK * 0.5 + 1)),
+		PATH_COLOR
+	)
+end
+
+-- ---------- market stalls ----------
+-- Wooden counter, four posts, and a red-and-white striped awning, which is the
+-- whole silhouette in the reference. Built facing the path they stand on.
+local function stall(at: Vector3, facing: number)
+	local frame = CFrame.new(at) * CFrame.Angles(0, facing, 0)
+	local function piece(size: Vector3, offset: Vector3, color: Color3, material: Enum.Material): Part
+		local part = block(size, at, color, baseFolder)
+		part.CFrame = frame * CFrame.new(offset)
+		part.Material = material
+		return part
+	end
+
+	piece(Vector3.new(9, 1.2, 1.6), Vector3.new(0, 2.6, -1.6), Color3.fromRGB(196, 140, 86), Enum.Material.WoodPlanks)
+	piece(Vector3.new(9, 3, 3.4), Vector3.new(0, 1.5, 0), Color3.fromRGB(150, 104, 62), Enum.Material.WoodPlanks)
+	for _, side in { -4.2, 4.2 } do
+		piece(Vector3.new(0.6, 6, 0.6), Vector3.new(side, 3, -1.4), WOOD_COLOR, Enum.Material.Wood)
+		piece(Vector3.new(0.6, 6, 0.6), Vector3.new(side, 3, 1.4), WOOD_COLOR, Enum.Material.Wood)
+	end
+
+	-- Striped awning: alternating blocks rather than a texture, so it reads at
+	-- distance and needs no uploaded asset.
+	for strip = -4, 4 do
+		piece(
+			Vector3.new(1, 0.5, 5),
+			Vector3.new(strip, 6.3, 0),
+			strip % 2 == 0 and Color3.fromRGB(232, 74, 74) or Color3.fromRGB(250, 246, 240),
+			Enum.Material.SmoothPlastic
+		)
+	end
+end
+
+-- Turned to face the path, so the counters point inward at the player.
+for index = 1, 3 do
+	stall(CANNON_ORIGIN + Vector3.new(-22 + (index - 1) * 15, 0, -BASE_BANK), math.pi)
+end
+
+-- ---------- the catapult row ----------
+-- Everybody else's launchers, lined up along the far side of the base. They
+-- are scenery — the player's own cannon is the real one — but a row of them is
+-- what makes the place read as somewhere other people also launch from.
+local function catapult(at: Vector3)
+	local function piece(size: Vector3, offset: Vector3, color: Color3, material: Enum.Material): Part
+		local part = block(size, at + offset, color, baseFolder)
+		part.Material = material
+		return part
+	end
+
+	piece(Vector3.new(7, 0.8, 5), Vector3.new(0, 0.4, 0), Color3.fromRGB(178, 132, 84), Enum.Material.WoodPlanks)
+	for _, side in { -2.2, 2.2 } do
+		local leg = piece(Vector3.new(0.8, 6.5, 0.8), Vector3.new(-1, 3.2, side), WOOD_COLOR, Enum.Material.Wood)
+		leg.CFrame = CFrame.new(at + Vector3.new(-1, 3.2, side)) * CFrame.Angles(0, 0, math.rad(18))
+	end
+	local arm = piece(Vector3.new(8, 0.7, 0.9), Vector3.new(0.5, 5.2, 0), Color3.fromRGB(196, 140, 86), Enum.Material.WoodPlanks)
+	arm.CFrame = CFrame.new(at + Vector3.new(0.5, 5.2, 0)) * CFrame.Angles(0, 0, math.rad(-28))
+	piece(Vector3.new(1.8, 1.4, 1.8), Vector3.new(4, 7.2, 0), Color3.fromRGB(120, 150, 210), Enum.Material.SmoothPlastic)
+end
+
+for index = 1, 4 do
+	catapult(CANNON_ORIGIN + Vector3.new(-24 + (index - 1) * 13, 0, BASE_BANK))
+end
+
+-- ---------- ground signage ----------
+-- Text printed flat on the ground, the way the reference marks its launch pad.
+-- A part with a Top-facing SurfaceGui rather than a Decal, so there is nothing
+-- to upload and the wording can be changed in one line here.
+local function groundText(size: Vector3, centre: Vector3, text: string, color: Color3, rotate: boolean)
+	local plate = block(size, centre, GRASS_COLOR, baseFolder)
+	plate.Transparency = 1
+
+	local surface = Instance.new("SurfaceGui")
+	surface.Face = Enum.NormalId.Top
+	surface.PixelsPerStud = 28
+	surface.Parent = plate
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.Text = text
+	label.TextColor3 = color
+	label.TextStrokeColor3 = Color3.fromRGB(52, 34, 28)
+	label.TextStrokeTransparency = 0
+	label.TextScaled = true
+	-- Printed to be read from the base looking down the track, not from the
+	-- far end looking back.
+	label.Rotation = rotate and 180 or 0
+	label.Parent = surface
+end
+
+groundText(
+	Vector3.new(15, 0.16, TRACK_HALF_WIDTH * 2.2),
+	CANNON_ORIGIN + Vector3.new(13, 0.3, 0),
+	"🚀 LAUNCH ZONE 🚀",
+	Color3.fromRGB(238, 62, 62),
+	true
+)
 
 -- Flat cylinders, for the launch pad and its island.
 local function disc(diameter: number, height: number, centre: Vector3, color: Color3): Part
@@ -509,6 +687,24 @@ for index, milestone in Config.DistanceMilestones do
 	})
 end
 
+-- Signs over the base, so the two halves of it name themselves. Placed here
+-- rather than up with the rest of the base because floatingLabel is only in
+-- scope from this point on.
+floatingLabel(
+	CANNON_ORIGIN + Vector3.new(-14, 11, -BASE_BANK),
+	"🏠 Your Base",
+	Color3.fromRGB(252, 214, 132),
+	200,
+	46
+)
+floatingLabel(
+	CANNON_ORIGIN + Vector3.new(-11, 11, BASE_BANK),
+	"🎪 Launch Row",
+	Color3.fromRGB(198, 244, 158),
+	200,
+	46
+)
+
 -- ---------- scenery ----------
 -- Trees, bushes, crates, logs and the odd truck scattered up both banks of the
 -- valley. Fixed geometry rather than treadmill-recycled: the eye reads the
@@ -517,7 +713,8 @@ end
 local rangeRandom = Random.new(19)
 
 local function tree(at: Vector3, scale: number)
-	local trunk = block(Vector3.new(0.9 * scale, 3 * scale, 0.9 * scale), at + Vector3.new(0, 1.5 * scale, 0), WOOD_COLOR)
+	local trunk =
+		block(Vector3.new(0.9 * scale, 3 * scale, 0.9 * scale), at + Vector3.new(0, 1.5 * scale, 0), WOOD_COLOR, propsFolder)
 	trunk.Material = Enum.Material.Wood
 	-- Three shrinking slabs rather than a cone: the reference's trees are
 	-- stacked blocks, and it reads better at a distance than a smooth shape.
@@ -526,9 +723,11 @@ local function tree(at: Vector3, scale: number)
 		local leaf = block(
 			Vector3.new(width, 1.6 * scale, width),
 			at + Vector3.new(0, (3.4 + tier * 1.4) * scale, 0),
-			tier == 0 and Color3.fromRGB(96, 186, 76) or Color3.fromRGB(120, 208, 92)
+			tier == 0 and Color3.fromRGB(96, 186, 76) or Color3.fromRGB(120, 208, 92),
+			propsFolder
 		)
-		leaf.Material = Enum.Material.Grass
+		leaf.Material = Enum.Material.Plastic
+		studded(leaf)
 	end
 end
 
@@ -1008,7 +1207,9 @@ end
 Lighting.Ambient = Color3.fromRGB(96, 90, 86)
 Lighting.OutdoorAmbient = Color3.fromRGB(112, 105, 99)
 Lighting.Brightness = 1.15
-Lighting.ClockTime = 14.2
+-- Early afternoon: high enough for a bright sky, off-noon enough that the sun
+-- is at an angle and everything on the map casts a readable shadow.
+Lighting.ClockTime = 14
 Lighting.GeographicLatitude = 8
 Lighting.GlobalShadows = true
 Lighting.FogEnd = 100000
