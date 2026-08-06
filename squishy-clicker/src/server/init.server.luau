@@ -1510,7 +1510,7 @@ end
 -- that is always open is just a second clicker nobody watches.
 local king = {
 	clicks = 0,
-	goal = Config.KingBaseGoal,
+	goal = Config.KingCrownClicks,
 	contributions = {} :: { [Player]: number },
 	active = false,
 	-- os.time, not os.clock: this is wall-clock scheduling that has to line up
@@ -1531,13 +1531,6 @@ local function inPlaza(player: Player): boolean
 	end
 	local offset = root.Position - Vector3.new(0, root.Position.Y, 0)
 	return offset.Magnitude <= Config.KingPlazaRadius
-end
-
--- Fixed at the start of each round rather than recomputed as people come and
--- go: a goal that moved underneath players mid-round would feel broken.
-local function kingGoal(): number
-	local population = math.max(#Players:GetPlayers(), 1)
-	return Config.KingBaseGoal + (population - 1) * Config.KingGoalPerPlayer
 end
 
 local function kingSnapshot()
@@ -1577,7 +1570,9 @@ end
 
 local function startKingRound()
 	king.clicks = 0
-	king.goal = kingGoal()
+	-- The "goal" the clients draw is the crown threshold: the bar to beat is
+	-- personal now, not shared, so it doesn't scale with the player count.
+	king.goal = Config.KingCrownClicks
 	king.contributions = {}
 	king.active = true
 	king.endsAt = os.time() + Config.KingRoundSeconds
@@ -1601,6 +1596,13 @@ local function finishKingRound()
 			topClicks = clicks
 			topPlayer = contributor
 		end
+	end
+
+	-- The crown has a floor: the top clicker only wins if they got OVER the
+	-- threshold. Below it the round still pays every helper their ordinary
+	-- roll — it just crowns nobody, and the rarest prize stays in the pot.
+	if topClicks <= Config.KingCrownClicks then
+		topPlayer = nil
 	end
 
 	local winnerName = ""
@@ -1651,10 +1653,8 @@ ClickShared.OnServerEvent:Connect(function(player)
 	king.clicks += 1
 	king.contributions[player] = (king.contributions[player] or 0) + 1
 	king.dirty = true
-
-	if king.clicks >= king.goal then
-		finishKingRound()
-	end
+	-- No early finish on a filled bar: the round is a race, and a race runs
+	-- to the bell — being past the threshold just means the crown is live.
 end)
 
 -- Progress goes out on a timer, not on every click: a busy server would

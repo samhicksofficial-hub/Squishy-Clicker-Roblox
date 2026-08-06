@@ -108,22 +108,26 @@ function King.mount(gui: GuiObject)
 	local roundActive = false
 	local startsIn = 0
 	local endsIn = 0
-	local clicks, goal = 0, 60
+	local goal = 100
+	-- The bar that matters is the LEADER'S count against the crown threshold,
+	-- not the room's total — the round is a race, and this is the score to beat.
+	local leaderClicks = 0
 	local topLine = ""
 
 	local function redraw()
 		if roundActive then
-			statusLabel.Text = ("%d / %d   ·   %ds left"):format(clicks, goal, math.ceil(endsIn))
-			subLabel.Text = topLine ~= "" and ("👑 %s"):format(topLine) or "PUSH! Everyone who helps gets a squishy!"
+			statusLabel.Text = ("Top: %d / %d   ·   %ds left"):format(leaderClicks, goal, math.ceil(endsIn))
+			subLabel.Text = topLine ~= "" and ("👑 %s"):format(topLine)
+				or ("Most clicks wins — pass %d to take the crown!"):format(goal)
 			push.button.Visible = true
-			push.button.Text = onPlaza and "👑 HELP PUSH!" or "GO TO THE PLAZA!"
+			push.button.Text = onPlaza and "👑 CLICK! CLICK!" or "GO TO THE PLAZA!"
 			UI.setButtonEnabled(push, onPlaza, C.orange, C.orangeDeep)
 		else
 			local wait = math.max(math.ceil(startsIn), 0)
 			statusLabel.Text = if wait >= 60
 				then ("Starts in %dm %02ds"):format(wait // 60, wait % 60)
 				else ("Starts in %ds"):format(wait)
-			subLabel.Text = "Be on the plaza when it opens — best helper wins the rarest roll"
+			subLabel.Text = "Be on the plaza when it opens — most clicks wins the rarest roll"
 			push.button.Visible = false
 		end
 	end
@@ -155,14 +159,15 @@ function King.mount(gui: GuiObject)
 		roundActive = snapshot.active ~= false
 		startsIn = snapshot.startsIn or 0
 		endsIn = snapshot.endsIn or 0
-		clicks = snapshot.clicks or 0
 		goal = math.max(snapshot.goal or 1, 1)
 		plazaRadius = snapshot.plazaRadius or plazaRadius
 
 		topLine = ""
+		leaderClicks = 0
 		local standings = snapshot.standings
 		if typeof(standings) == "table" and standings[1] then
 			topLine = ("%s — %d"):format(standings[1].name, standings[1].clicks)
+			leaderClicks = standings[1].clicks
 		end
 		redraw()
 	end)
@@ -184,7 +189,7 @@ function King.mount(gui: GuiObject)
 		elseif result.winner ~= "" then
 			message = ("👑 %s topped the steamer — got %s!"):format(result.winner, result.prize)
 		else
-			message = "👑 The steamer closed. Next round soon!"
+			message = "👑 Nobody clicked enough for the crown. Next round soon!"
 		end
 
 		local banner = UI.make("Frame", {

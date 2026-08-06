@@ -353,11 +353,10 @@ local Config = {
 	LobbyMaxGhosts = 6,
 
 	-- ===== King of the Steamer (the shared minigame) =====
-	-- Goal for a server of one, plus this much for every player beyond the
-	-- first. A flat 500 no matter the crowd: a big number the whole plaza
-	-- has to gang up on, rather than a bar that quietly stretches to match.
-	KingBaseGoal = 500,
-	KingGoalPerPlayer = 0,
+	-- The round is a race, not a shared bar: whoever clicks the most wins the
+	-- crown — but only if they got over this many clicks. A dead round where
+	-- the "winner" tapped a dozen times shouldn't hand out the rarest roll.
+	KingCrownClicks = 100,
 
 	-- ----- The event timer -----
 	-- King of the Steamer is an EVENT now, not a permanent button. It runs on
