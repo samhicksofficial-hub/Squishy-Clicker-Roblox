@@ -42,8 +42,23 @@ local GROUND_Y = 0
 -- most of what made the first island shimmer: the plaza, its rim, the spokes
 -- and the ring road all met at roughly the same Y and fought over the pixels.
 -- Gaps of a twentieth of a stud are invisible and settle it completely.
+-- ---------- the range ----------
+-- The island is a PLATEAU, not an island in water any more, and what
+-- surrounds it is the ground the squishies fly over. Standing anywhere on the
+-- base you should be able to see the whole expanse and the mesas ringing it,
+-- because that view is the pitch: this is how far you are going to throw.
+--
+-- It is scenery. The flight itself is animated on the per-player stage 500
+-- studs above, on a treadmill, because that is what makes an unbounded
+-- distance possible at all — a real strip of ground long enough for a
+-- six-figure shot would be six figures of studs long. What the plain has to
+-- do is sell the SCALE, and for that it only has to be seen.
+local RANGE_RADIUS = 1350 -- the plain, out to the horizon
+local MESA_RADIUS = 1020 -- where the far cliffs stand
+local PLATEAU_DROP = 22 -- how far the base sits above the plain
+
 local Y = {
-	water = -2,
+	plain = -PLATEAU_DROP,
 	beach = 0,
 	field = 0.2,
 	ringRoad = 0.5,
@@ -183,20 +198,47 @@ end
 local function buildGround()
 	local ground = group("Ground")
 
-	-- Water first, widest and lowest, so the island reads as sitting in it.
-	local water = cylinder((ISLAND_RADIUS + 70) * 2, 3, Vector3.new(0, slabAt(Y.water, 3), 0), COLOR.water, ground)
-	water.Material = Enum.Material.Glass
-	water.Transparency = 0.25
-	decor(water)
+	-- The plain first: one enormous disc at the bottom of the drop. This is
+	-- the ground the range is measured across, and the thing that has to be
+	-- visible from the plaza.
+	local plain = cylinder(RANGE_RADIUS * 2, 12, Vector3.new(0, slabAt(Y.plain, 12), 0), COLOR.grass, ground)
+	studded(decor(plain))
 
-	-- Beach, then the grass sitting inside it. Both are thick slabs so the
-	-- island has a visible side rather than looking like paper on water.
-	local beach = cylinder(ISLAND_RADIUS * 2, 8, Vector3.new(0, slabAt(Y.beach, 8), 0), COLOR.sand, ground)
-	beach.Material = Enum.Material.Sand
+	-- A darker apron just off the base, so the eye has something to read the
+	-- first few hundred studs of distance against rather than flat green.
+	local apron =
+		cylinder((ISLAND_RADIUS + 320) * 2, 12, Vector3.new(0, slabAt(Y.plain + 0.1, 12), 0), COLOR.grassDark, ground)
+	studded(decor(apron))
+
+	-- The plateau the base sits on. A thick sand slab dropping to the plain,
+	-- which reads as a cliff edge from below and as a beach from above.
+	local cliff = cylinder(
+		ISLAND_RADIUS * 2,
+		PLATEAU_DROP + 8,
+		Vector3.new(0, slabAt(Y.beach, PLATEAU_DROP + 8), 0),
+		COLOR.sand,
+		ground
+	)
+	cliff.Material = Enum.Material.Sand
 
 	local field =
 		cylinder((ISLAND_RADIUS - BEACH_WIDTH) * 2, 8, Vector3.new(0, slabAt(Y.field, 8), 0), COLOR.grass, ground)
 	studded(field)
+
+	-- An invisible lip right at the plateau edge. The plain below is scenery
+	-- with no collision, so without this a player who wandered off the rim
+	-- would drop straight through it and fall until Roblox respawned them.
+	-- Invisible rather than a fence, because a fence is exactly the thing that
+	-- was blocking the view in the first place.
+	local SEGMENTS = 48
+	local width = 2 * math.pi * ISLAND_RADIUS / SEGMENTS + 3
+	for index = 1, SEGMENTS do
+		local angle = (index / SEGMENTS) * math.pi * 2
+		local at = Vector3.new(math.cos(angle) * ISLAND_RADIUS, GROUND_Y + 4, math.sin(angle) * ISLAND_RADIUS)
+		local rail = block(Vector3.new(2, 10, width), CFrame.new(at) * CFrame.Angles(0, -angle, 0), COLOR.sand, ground)
+		rail.Transparency = 1
+		rail.CanQuery = false
+	end
 
 	-- The plaza: a big stone disc with a path-coloured rim, and the event
 	-- floor for King of the Steamer. Its size is the reason the island is as
@@ -209,40 +251,119 @@ local function buildGround()
 	studded(plaza)
 end
 
--- ---------- the canyon ring ----------
--- Terraced red rock around the rim, capped with grass, the same language as
--- the launch valley. Built as a ring of segments rather than a smooth shape:
--- the blockiness is the look, and it means plain Parts throughout.
-local function buildCanyon()
-	local canyon = group("Canyon")
+-- ---------- the horizon ----------
+-- Terraced mesas ringing the plain, a thousand studs out. They used to stand
+-- at the island's own edge, which walled the base in and hid the one thing
+-- worth seeing from it — the distance. Pushed out here they do the opposite
+-- job: they give the eye something to measure the range against, and they
+-- close the world off without anybody feeling closed in.
+--
+-- Segment counts are low on purpose. At this distance a mesa is a silhouette,
+-- and detail spent here is detail nobody can resolve.
+local function buildHorizon()
+	local horizon = group("Horizon")
 
-	local STEPS = 4
-	local STEP_HEIGHT = 7
-	local STEP_DEPTH = 9
-	local SEGMENTS = 44
+	local STEPS = 5
+	local STEP_HEIGHT = 26
+	local STEP_DEPTH = 34
+	local SEGMENTS = 64
 
 	for step = 1, STEPS do
-		local radius = ISLAND_RADIUS + 6 + (step - 1) * STEP_DEPTH
+		local radius = MESA_RADIUS + (step - 1) * STEP_DEPTH
 		local height = step * STEP_HEIGHT
 		-- Chord length for one segment of a ring at this radius, plus a little
-		-- overlap so the joins never show a gap.
-		local width = 2 * math.pi * radius / SEGMENTS + 2
+		-- overlap so the joins never show daylight between them.
+		local width = 2 * math.pi * radius / SEGMENTS + 6
 
 		for index = 1, SEGMENTS do
 			local angle = (index / SEGMENTS) * math.pi * 2
-			local at = Vector3.new(math.cos(angle) * radius, GROUND_Y + height * 0.5 - 2, math.sin(angle) * radius)
+			local at = Vector3.new(
+				math.cos(angle) * radius,
+				Y.plain + height * 0.5 - 6,
+				math.sin(angle) * radius
+			)
 			local face = CFrame.new(at) * CFrame.Angles(0, -angle, 0)
 
-			local wall = block(Vector3.new(STEP_DEPTH, height, width), face, COLOR.rock, canyon)
+			local wall = block(Vector3.new(STEP_DEPTH, height, width), face, COLOR.rock, horizon)
 			wall.Material = Enum.Material.Sandstone
+			decor(wall)
 
 			local lip = block(
-				Vector3.new(STEP_DEPTH, 1, width),
-				face * CFrame.new(0, height * 0.5 + 0.5, 0),
+				Vector3.new(STEP_DEPTH, 4, width),
+				face * CFrame.new(0, height * 0.5 + 2, 0),
 				COLOR.rockTop,
-				canyon
+				horizon
 			)
-			studded(lip)
+			studded(decor(lip))
+		end
+	end
+end
+
+-- ---------- distance rings ----------
+-- Bands painted across the plain at increasing radius, each labelled. From the
+-- plaza they read as a scale running away in every direction, which is the
+-- whole point: the plots face outward, so the range has to be legible from all
+-- of them rather than down one corridor.
+local RANGE_RINGS = {
+	{ at = 320, name = "250", color = Color3.fromRGB(238, 232, 224) },
+	{ at = 480, name = "1K", color = Color3.fromRGB(120, 205, 235) },
+	{ at = 650, name = "10K", color = Color3.fromRGB(250, 200, 80) },
+	{ at = 830, name = "100K", color = Color3.fromRGB(245, 150, 95) },
+	{ at = 980, name = "1M", color = Color3.fromRGB(226, 96, 96) },
+}
+
+local function buildRangeMarkers()
+	local markers = group("Range")
+
+	for _, ring in RANGE_RINGS do
+		local SEGMENTS = 72
+		local width = 2 * math.pi * ring.at / SEGMENTS + 3
+
+		for index = 1, SEGMENTS do
+			local angle = (index / SEGMENTS) * math.pi * 2
+			local at = Vector3.new(math.cos(angle) * ring.at, Y.plain + 0.4, math.sin(angle) * ring.at)
+			local band = block(
+				Vector3.new(9, 1.2, width),
+				CFrame.new(at) * CFrame.Angles(0, -angle, 0),
+				ring.color,
+				markers
+			)
+			studded(decor(band))
+		end
+
+		-- Eight signs per ring, one roughly per plot, so whichever way a
+		-- player is facing there is a number in front of them.
+		for index = 1, 8 do
+			local angle = (index / 8) * math.pi * 2 + math.pi / 8
+			local at = Vector3.new(math.cos(angle) * ring.at, Y.plain + 2, math.sin(angle) * ring.at)
+
+			local anchor = Instance.new("Part")
+			anchor.Size = Vector3.new(1, 1, 1)
+			anchor.Position = at + Vector3.new(0, 26, 0)
+			anchor.Transparency = 1
+			anchor.Anchored = true
+			anchor.CanCollide = false
+			anchor.CanQuery = false
+			anchor.CanTouch = false
+			anchor.Parent = markers
+
+			local gui = Instance.new("BillboardGui")
+			gui.Size = UDim2.new(0, 340, 0, 90)
+			-- Has to outrange the plain itself, or the far markers vanish
+			-- exactly when they are doing their job.
+			gui.MaxDistance = RANGE_RADIUS
+			gui.Parent = anchor
+
+			local label = Instance.new("TextLabel")
+			label.Size = UDim2.fromScale(1, 1)
+			label.BackgroundTransparency = 1
+			label.Font = Enum.Font.FredokaOne
+			label.Text = ("%s Studs"):format(ring.name)
+			label.TextColor3 = Color3.fromRGB(255, 255, 255)
+			label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
+			label.TextStrokeTransparency = 0
+			label.TextScaled = true
+			label.Parent = gui
 		end
 	end
 end
@@ -575,7 +696,8 @@ function Island.build()
 	group("Plots")
 
 	buildGround()
-	buildCanyon()
+	buildHorizon()
+	buildRangeMarkers()
 	buildPaths()
 	buildScenery()
 	buildSpawn()
