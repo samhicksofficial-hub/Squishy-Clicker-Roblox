@@ -595,10 +595,17 @@ for index, squishy in Squishies.list do
 	-- Green ring marking the equipped squisher — green rather than the old
 	-- gold, because gold is already the colour of stars and prices in this
 	-- panel and the ring was reading as decoration instead of selection.
+	--
+	-- Border mode is the load-bearing line: a UIStroke on a TextButton
+	-- defaults to Contextual, which strokes the TEXT — and the icon's "?" is
+	-- hidden behind the 3D preview, so the ring was being drawn faithfully
+	-- around invisible glyphs. This is why "add a green circle" was asked
+	-- for twice.
 	local equipStroke = make("UIStroke", {
 		Color = Color3.fromRGB(70, 200, 60),
 		Thickness = 4,
 		Transparency = 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 		Parent = icon,
 	})
 

@@ -96,6 +96,75 @@ muzzleSmoke.Parent = smokeAnchor
 local model: Models.SquishyModel? = nil
 local modelSpec = { shape = nil :: string?, color = Color3.fromRGB(226, 120, 120), sparkle = false, scale = 1 }
 
+-- ---------- the capsule display ----------
+-- The chosen squishy's icon floating over the launch capsule, so the pod
+-- reads as loaded with THIS one: the same circular swatch as the collection
+-- list, with the real 3D model in a viewport and the selection-green ring.
+-- Client-local like the rest of this file.
+
+-- Must track STATION_BACK in Island.luau — the capsule stands this far
+-- inward of the plot centre.
+local STATION_BACK = 13
+local CAPSULE_ICON_HEIGHT = 11
+
+local stationAnchor = Instance.new("Part")
+stationAnchor.Size = Vector3.one
+stationAnchor.Transparency = 1
+stationAnchor.Anchored = true
+stationAnchor.CanCollide = false
+stationAnchor.CanQuery = false
+stationAnchor.CanTouch = false
+stationAnchor.Position = Vector3.new(0, -500, 0) -- parked until a plot is adopted
+stationAnchor.Parent = stage
+
+local stationGui = Instance.new("BillboardGui")
+stationGui.Size = UDim2.new(0, 92, 0, 92)
+stationGui.MaxDistance = 220
+stationGui.Parent = stationAnchor
+
+local stationIcon = Instance.new("ViewportFrame")
+stationIcon.Size = UDim2.fromScale(1, 1)
+stationIcon.BackgroundColor3 = Color3.fromRGB(252, 248, 244)
+stationIcon.Ambient = Color3.fromRGB(170, 165, 160)
+stationIcon.LightColor = Color3.fromRGB(255, 250, 244)
+stationIcon.LightDirection = Vector3.new(-0.5, -1, -0.6)
+stationIcon.Parent = stationGui
+
+local stationCorner = Instance.new("UICorner")
+stationCorner.CornerRadius = UDim.new(1, 0)
+stationCorner.Parent = stationIcon
+
+local stationRing = Instance.new("UIStroke")
+stationRing.Color = Color3.fromRGB(70, 200, 60)
+stationRing.Thickness = 4
+stationRing.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+stationRing.Parent = stationIcon
+
+local stationCamera = Instance.new("Camera")
+stationCamera.FieldOfView = 28
+stationCamera.CFrame = CFrame.lookAt(Vector3.new(0, 0.9, 8), Vector3.zero)
+stationCamera.Parent = stationIcon
+stationIcon.CurrentCamera = stationCamera
+
+local stationStage: Folder? = nil
+
+-- Rebuild the icon's little 3D scene for the current squishy. Same recipe as
+-- the collection icons: the real model, narrow lens from further back so the
+-- shape reads cleanly at icon size.
+local function refreshStationIcon()
+	if stationStage then
+		stationStage:Destroy()
+	end
+	local previewStage = Instance.new("Folder")
+	previewStage.Name = "Model"
+	previewStage.Parent = stationIcon
+	stationStage = previewStage
+
+	local preview = Models.buildSquishy(previewStage, modelSpec.shape, modelSpec.color, modelSpec.sparkle, modelSpec.scale)
+	Models.apply(preview.rig, CFrame.identity, Vector3.one * preview.sizeScale)
+	stationIcon.BackgroundColor3 = modelSpec.color
+end
+
 local shot = {
 	active = false,
 	progress = 1,
@@ -418,6 +487,10 @@ function Flight.setPlot(centre: Vector3)
 	muzzleRadius = flat.Magnitude + 9
 	smokeAnchor.Position = muzzle :: Vector3
 
+	-- The capsule display floats over the station, STATION_BACK inward of
+	-- the plot centre — the same spot Island.luau builds the pod.
+	stationAnchor.Position = centre - flat.Unit * STATION_BACK + Vector3.new(0, CAPSULE_ICON_HEIGHT, 0)
+
 	-- A field may have arrived before the plot did — lay it out now.
 	layoutField()
 end
@@ -431,6 +504,9 @@ function Flight.setSquishy(shape: string?, color: Color3, sparkle: boolean, size
 	-- model sits loaded in the cannon's scoop, so it has to exist the moment
 	-- a squishy is equipped, not the moment one is fired.
 	model = Models.buildSquishy(stage, modelSpec.shape, modelSpec.color, modelSpec.sparkle, modelSpec.scale)
+
+	-- And the capsule's icon swaps with it.
+	refreshStationIcon()
 end
 
 function Flight.setField(field: { PickupEntry })
