@@ -501,6 +501,31 @@ local function buildStall(at: Vector3, facing: number, parent: Instance)
 			Enum.Material.SmoothPlastic
 		))
 	end
+
+	-- The browse prompt lives on its own invisible host in front of the
+	-- counter rather than on the scenery — same pattern as the cannons, so a
+	-- future fancier stall model doesn't take the interaction down with it.
+	-- The client opens the squishy market menu when this fires; the server
+	-- hands out nothing here, so there is nothing to validate.
+	local host = Instance.new("Part")
+	host.Name = "MarketPromptHost"
+	host.Size = Vector3.new(5, 6, 4)
+	host.CFrame = frame * CFrame.new(0, 3, -4)
+	host.Transparency = 1
+	host.Anchored = true
+	host.CanCollide = false
+	host.CanQuery = false
+	host.CanTouch = false
+	host.Parent = parent
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "SquishyMarket"
+	prompt.ObjectText = "Squishy Market"
+	prompt.ActionText = "Browse Squishies"
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = 12
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = host
 end
 
 -- ---------- scenery ----------
@@ -532,13 +557,23 @@ local function buildScenery()
 	-- than being a different place each time someone joins.
 	local rng = Random.new(2026)
 
-	-- Stalls in an arc around the plaza, sat BETWEEN the spokes rather than on
-	-- them: a stall on a path is a stall you cannot walk past.
+	-- Stalls ON the spoke paths — every other spoke, counter fronting the
+	-- path like a market street. Beside the paving rather than across it
+	-- (a stall planted mid-path is a stall you cannot walk past), close
+	-- enough that the awning overhangs the edge and it reads as ON the path.
 	for index = 1, 4 do
-		local slot = index + 3.5 -- the half-step is what puts them between spokes
-		local angle = slot / Island.PLOT_COUNT * math.pi * 2
-		local at = Vector3.new(math.cos(angle), 0, math.sin(angle)) * (PLAZA_RADIUS + 22)
-		buildStall(Vector3.new(at.X, GROUND_Y, at.Z), -angle + math.pi, props)
+		local spoke = index * 2 - 1
+		local angle = (spoke - 1) / Island.PLOT_COUNT * math.pi * 2
+		local along = Vector3.new(math.cos(angle), 0, math.sin(angle))
+		local perp = Vector3.new(-math.sin(angle), 0, math.cos(angle))
+		-- Alternate sides of the path so walking the ring passes stalls on
+		-- both hands instead of a one-sided arcade.
+		local side = if index % 2 == 0 then 1 else -1
+		local at = along * (PLAZA_RADIUS + 28) + perp * (side * (PATH_WIDTH / 2 + 3.5))
+		-- The stall's open front is local -Z; aim it across at the paving.
+		local look = -perp * side
+		local facing = math.atan2(-look.X, -look.Z)
+		buildStall(Vector3.new(at.X, GROUND_Y, at.Z), facing, props)
 	end
 
 	-- Where the plots will be. Scenery is placed against the real centres

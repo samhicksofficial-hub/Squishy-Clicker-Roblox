@@ -28,6 +28,7 @@ local Models = require(script:WaitForChild("Models"))
 local Launch = require(script:WaitForChild("Launch"))
 local King = require(script:WaitForChild("King"))
 local Cannon = require(script:WaitForChild("Cannon"))
+local Market = require(script:WaitForChild("Market"))
 -- Required up here as well as inside the plot wiring below, because refresh()
 -- needs it to keep the flying squishy matched to the equipped one.
 local ClientFlight = require(script:WaitForChild("Flight"))
@@ -869,6 +870,7 @@ local function refresh()
 	Launch.setReadyIn(state.launchReadyIn or 0)
 	Launch.setBest(state.bestDistance or 0)
 	Cannon.update(state)
+	Market.update(state)
 
 	unboxButton.Text = ("🥡 Unbox (%d)"):format(state.unopened)
 	unboxButton.BackgroundColor3 = state.unopened > 0 and COLOR.mint or COLOR.locked
@@ -1019,6 +1021,10 @@ mount("Cannon HUD", function()
 	-- pushing through it once — the next sync could be a click away.
 	Cannon.update(state)
 end)
+mount("Squishy Market", function()
+	Market.mount(gui)
+	Market.update(state)
+end)
 
 -- ---------- the cannon on your plot ----------
 -- The prompt lives on a server-built part, but these events fire LOCALLY, so
@@ -1088,7 +1094,14 @@ do
 	end)
 
 	ProximityPromptService.PromptTriggered:Connect(function(prompt, triggeringPlayer)
-		if triggeringPlayer == player and ownsPrompt(prompt) then
+		if triggeringPlayer ~= player then
+			return
+		end
+		-- The market stalls carry their own named prompt; everything else that
+		-- prompts is a plot cannon, which only opens for its owner.
+		if prompt.Name == "SquishyMarket" then
+			Market.open()
+		elseif ownsPrompt(prompt) then
 			Launch.open()
 		end
 	end)

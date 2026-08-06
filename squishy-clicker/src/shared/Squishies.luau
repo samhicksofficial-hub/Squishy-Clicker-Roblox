@@ -31,6 +31,9 @@ export type Squishy = {
 	-- Size multiplier, for the ones whose name promises a size. Absent = 1,
 	-- meaning every squishy is normalised to the same on-screen size.
 	scale: number?,
+	-- Which drawer of the market menu this files under. Stamped from the
+	-- category map below the list, so it is never nil after module load.
+	category: string?,
 }
 
 -- Order matters only for display (least → most rare).
@@ -122,6 +125,41 @@ local list: { Squishy } = {
 	{ id = "giantopal",       name = "Giant Opal Dumpling",  rarity = "Mythical",  color = Color3.fromRGB(232, 225, 245), sparkle = true,  shape = "opalmesh",       scale = GIANT },
 }
 
+-- ---------- categories ----------
+-- The market menu files every squishy into one of these drawers. A separate
+-- map rather than a field on each catalog line, so the roster above stays
+-- scannable; anything missed here files under Oddities instead of vanishing
+-- from the menu.
+local categories = { "Dumplings", "Fruits", "Snacks", "Cubes", "Animals", "Oddities" }
+
+local categoryById: { [string]: string } = {
+	-- Dumplings: everything on the dumpling mould, glitter or not.
+	red = "Dumplings", pink = "Dumplings", blue = "Dumplings", green = "Dumplings",
+	white = "Dumplings", purple = "Dumplings", teal = "Dumplings",
+	skyglit = "Dumplings", oliveglit = "Dumplings",
+	confetti = "Dumplings", rainbow = "Dumplings", gold = "Dumplings",
+	opal = "Dumplings", giantopal = "Dumplings",
+
+	banana = "Fruits", coconut = "Fruits", plainstrawberry = "Fruits",
+	giantbanana = "Fruits", strawberry = "Fruits",
+
+	-- Snacks: the bakery-and-dairy shelf.
+	cloud = "Snacks", butter = "Snacks", cheese = "Snacks", cake = "Snacks",
+	glowdonut = "Snacks", rainbutter = "Snacks",
+	giantbutter = "Snacks", giantrainbutter = "Snacks",
+
+	jellycube = "Cubes", swirlcube = "Cubes", snowcube = "Cubes",
+	glitcube = "Cubes", twotone = "Cubes", icecube = "Cubes",
+
+	pug = "Animals", blobfish = "Animals",
+
+	brain = "Oddities", sugarbaby = "Oddities", sparkledrop = "Oddities",
+}
+
+for _, squishy in list do
+	squishy.category = categoryById[squishy.id] or "Oddities"
+end
+
 -- ---------- lookups (built once) ----------
 local byId: { [string]: Squishy } = {}
 for _, squishy in list do
@@ -167,5 +205,6 @@ return {
 	byId = byId,
 	rarities = rarities,
 	rarityByName = rarityByName,
+	categories = categories,
 	roll = roll,
 }
