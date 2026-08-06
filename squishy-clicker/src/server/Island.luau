@@ -310,84 +310,97 @@ end
 -- plaza they read as a scale running away in every direction, which is the
 -- whole point: the plots face outward, so the range has to be legible from all
 -- of them rather than down one corridor.
+-- A target painted around the plaza: filled rainbow rings covering the ground
+-- from the plateau edge out to the last band, with the distance printed FLAT
+-- on each one.
+--
+-- Filled rather than thin stripes on grass, because a solid band is the thing
+-- that reads at a thousand studs — a nine-stud line seen almost edge-on is a
+-- scratch. And printed on the ground rather than floated above it, because
+-- floating signs are drawn at a fixed pixel size however far away they are:
+-- the far ones stayed large, crowded toward the horizon line and stacked into
+-- an unreadable pile. Ground text shrinks with perspective like everything
+-- else, which is exactly what makes a receding scale legible.
 local function buildRangeMarkers()
 	local markers = group("Range")
 	local bands = Config.RangeBands
 
+	local inner = ISLAND_RADIUS -- the first band starts at the plateau edge
 	for order, band in bands do
-		local radius = Config.rangeRadius(band.studs)
-		-- Rainbow near to far, so "how far did it get" is answerable at a
-		-- glance by which colour it sailed over.
-		local color = Color3.fromHSV((order - 1) / #bands * 0.85, 0.78, 1)
+		local outer = Config.rangeRadius(band.studs)
+		local depth = outer - inner
+		if depth > 1 then
+			-- Rainbow near to far, so "how far did it get" is answerable at a
+			-- glance by which colour it sailed over.
+			local color = Color3.fromHSV((order - 1) / #bands * 0.86, 0.72, 1)
+			local mid = (inner + outer) * 0.5
 
-		local SEGMENTS = 84
-		local width = 2 * math.pi * radius / SEGMENTS + 3
-		for index = 1, SEGMENTS do
-			local angle = (index / SEGMENTS) * math.pi * 2
-			local at = Vector3.new(math.cos(angle) * radius, Y.plain + 0.4, math.sin(angle) * radius)
-			local strip = block(
-				Vector3.new(11, 1.2, width),
-				CFrame.new(at) * CFrame.Angles(0, -angle, 0),
-				color,
-				markers
-			)
-			strip.Material = Enum.Material.Neon
-			studded(decor(strip))
+			-- Segment count scales with circumference: a fixed count would
+			-- make the inner rings needlessly dense and the outer ones coarse
+			-- enough to show as a polygon.
+			local segments = math.clamp(math.floor(mid / 7), 48, 160)
+			local width = 2 * math.pi * mid / segments + 3
+
+			for index = 1, segments do
+				local angle = (index / segments) * math.pi * 2
+				local at = Vector3.new(math.cos(angle) * mid, Y.plain + 0.4, math.sin(angle) * mid)
+				local strip = block(
+					Vector3.new(depth + 1, 1.2, width),
+					CFrame.new(at) * CFrame.Angles(0, -angle, 0),
+					color,
+					markers
+				)
+				studded(decor(strip))
+			end
+
+			-- The number, lying on the band, once per plot bearing so whichever
+			-- way a cannon points there is a figure under it. Sat at the band's
+			-- OUTER edge: that is the line the distance actually means, and it
+			-- is the edge a squishy crosses.
+			for slot = 1, Island.PLOT_COUNT do
+				local angle = (slot - 1) / Island.PLOT_COUNT * math.pi * 2
+				local textRadius = outer - math.min(depth * 0.42, 34)
+				local at = Vector3.new(
+					math.cos(angle) * textRadius,
+					Y.plain + 1.1,
+					math.sin(angle) * textRadius
+				)
+
+				-- X runs radially, Z runs along the band, so the text reads
+				-- across the ring the way it does in a real distance marker.
+				local plateDepth = math.min(depth * 0.7, 56)
+				local plate = block(
+					Vector3.new(plateDepth, 0.6, plateDepth * 3.4),
+					CFrame.new(at) * CFrame.Angles(0, -angle, 0),
+					color,
+					markers
+				)
+				plate.Transparency = 1 -- the plate is only a surface to print on
+				decor(plate)
+
+				local surface = Instance.new("SurfaceGui")
+				surface.Face = Enum.NormalId.Top
+				-- Low, because the text has to be huge in world terms to be
+				-- read from the plaza a thousand studs away.
+				surface.PixelsPerStud = 12
+				surface.Parent = plate
+
+				local label = Instance.new("TextLabel")
+				label.Size = UDim2.fromScale(1, 1)
+				label.BackgroundTransparency = 1
+				label.Font = Enum.Font.FredokaOne
+				label.Text = ("%s Studs"):format(band.name)
+				label.TextColor3 = Color3.fromRGB(255, 255, 255)
+				label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
+				label.TextStrokeTransparency = 0
+				label.TextScaled = true
+				-- Printed to be read from the island looking OUT, not from the
+				-- horizon looking back.
+				label.Rotation = 180
+				label.Parent = surface
+			end
 		end
-
-		-- One sign per band per PLOT, on the plot's own bearing, so the
-		-- numbers a player sees are the ones their cannon is pointing at.
-		-- They used to sit half a slot off the plots, which put every ring's
-		-- sign on the same sight-line from the plaza and stacked them into an
-		-- unreadable pile.
-		for slot = 1, Island.PLOT_COUNT do
-			local angle = (slot - 1) / Island.PLOT_COUNT * math.pi * 2
-			local at = Vector3.new(math.cos(angle) * radius, Y.plain, math.sin(angle) * radius)
-
-			-- Each band's sign stands higher than the last. Perspective shrinks
-			-- the far ones toward the horizon line, and without the step they
-			-- pile up on top of each other exactly as they did before.
-			local height = 22 + (order - 1) * 16
-
-			local anchor = Instance.new("Part")
-			anchor.Size = Vector3.new(1, 1, 1)
-			anchor.Position = at + Vector3.new(0, height, 0)
-			anchor.Transparency = 1
-			anchor.Anchored = true
-			anchor.CanCollide = false
-			anchor.CanQuery = false
-			anchor.CanTouch = false
-			anchor.Parent = markers
-
-			local gui = Instance.new("BillboardGui")
-			gui.Size = UDim2.new(0, 300, 0, 76)
-			-- Has to outrange the plain itself, or the far markers vanish
-			-- exactly when they are doing their job.
-			gui.MaxDistance = RANGE_RADIUS
-			gui.Parent = anchor
-
-			local label = Instance.new("TextLabel")
-			label.Size = UDim2.fromScale(1, 1)
-			label.BackgroundTransparency = 1
-			label.Font = Enum.Font.FredokaOne
-			label.Text = ("%s Studs"):format(band.name)
-			label.TextColor3 = color
-			label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
-			label.TextStrokeTransparency = 0
-			label.TextScaled = true
-			label.Parent = gui
-
-			-- A post down to the band, so a sign floating at forty studs still
-			-- reads as belonging to the stripe underneath it.
-			local post = block(
-				Vector3.new(1.2, height, 1.2),
-				CFrame.new(at + Vector3.new(0, height * 0.5, 0)),
-				color,
-				markers
-			)
-			post.Material = Enum.Material.Neon
-			decor(post)
-		end
+		inner = outer
 	end
 end
 
