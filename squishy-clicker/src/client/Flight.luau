@@ -42,6 +42,13 @@ local CHASE_BACK = 26
 local CHASE_UP = 14
 local CHASE_SIDE = 16
 
+-- Where the loaded squishy nests on the cannon, relative to the muzzle: back
+-- along the barrel and slightly down, into the model's loading scoop. Tuned
+-- by eye against the imported Squishy Cannon — nudge these if the import's
+-- proportions change.
+local LOADED_BACK = 7
+local LOADED_DOWN = 2
+
 type Arc = { fromX: number, toX: number, peak: number, seconds: number, rolling: boolean }
 
 local stage = Instance.new("Folder")
@@ -425,8 +432,11 @@ function Flight.setSquishy(shape: string?, color: Color3, sparkle: boolean, size
 	modelSpec = { shape = shape, color = color, sparkle = sparkle, scale = sizeScale or 1 }
 	if model then
 		model.rig.folder:Destroy()
-		model = nil
 	end
+	-- Built NOW rather than lazily on the first shot: between shots this
+	-- model sits loaded in the cannon's scoop, so it has to exist the moment
+	-- a squishy is equipped, not the moment one is fired.
+	model = Models.buildSquishy(stage, modelSpec.shape, modelSpec.color, modelSpec.sparkle, modelSpec.scale)
 end
 
 function Flight.setField(field: { PickupEntry })
@@ -801,19 +811,33 @@ RunService.RenderStepped:Connect(function(dt)
 	windTrail.Enabled = flying and impactStrength > Config.WindTrailMinSpeedFraction
 
 	if toy then
-		-- Hidden between shots: the squishy belongs on the cushion, not
-		-- hovering over the plain waiting for the next launch.
-		local scale = flying and 5 * modelSpec.scale or 0.001
-		-- Tumbling about the axis PERPENDICULAR to the direction of travel,
-		-- so it somersaults forward whichever way the plot faces. A fixed
-		-- world axis only looks right on two of the eight bearings; on the
-		-- others it reads as a sideways barrel roll.
-		local side = Vector3.new(-outward.Z, 0, outward.X)
-		Models.apply(
-			toy.rig,
-			CFrame.new(at) * CFrame.fromAxisAngle(side, -shot.progress * math.pi * 9),
-			Vector3.one * scale
-		)
+		if flying then
+			-- Tumbling about the axis PERPENDICULAR to the direction of
+			-- travel, so it somersaults forward whichever way the plot faces.
+			-- A fixed world axis only looks right on two of the eight
+			-- bearings; on the others it reads as a sideways barrel roll.
+			local side = Vector3.new(-outward.Z, 0, outward.X)
+			Models.apply(
+				toy.rig,
+				CFrame.new(at) * CFrame.fromAxisAngle(side, -shot.progress * math.pi * 9),
+				Vector3.one * 5 * modelSpec.scale
+			)
+		elseif muzzle then
+			-- LOADED between shots: the equipped squishy sits in the scoop on
+			-- top of the cannon, bobbing gently, facing down the range — so
+			-- the thing about to be fired is visibly the thing you picked,
+			-- and firing it reads as exactly that.
+			local spot = (muzzle :: Vector3) - outward * LOADED_BACK
+				+ Vector3.new(0, -LOADED_DOWN + math.sin(os.clock() * 2) * 0.15, 0)
+			Models.apply(
+				toy.rig,
+				CFrame.lookAt(spot, spot + outward),
+				Vector3.one * 4 * modelSpec.scale
+			)
+		else
+			-- No plot adopted yet: nowhere to sit, so park it out of sight.
+			Models.apply(toy.rig, CFrame.new(0, -500, 0), Vector3.one * 0.001)
+		end
 	end
 
 	-- Pickups pop as the shot reaches them — with a little "+value" floating

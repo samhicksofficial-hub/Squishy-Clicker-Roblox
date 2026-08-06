@@ -638,6 +638,13 @@ end
 -- can be authored at any size; it is scaled to this so every plot matches.
 local CANNON_TARGET_SIZE = 13
 
+-- Which way the import faces, as a yaw correction in degrees. A model can be
+-- authored facing any of the four compass points, and the first guess (-90,
+-- assuming the usual faces-minus-Z convention) had every muzzle aimed back at
+-- its own station. If a re-import ever points the cannons sideways again,
+-- turn this in steps of 90 until they face the range.
+local CANNON_YAW_DEGREES = 90
+
 local function buildCannon(frame: CFrame, folder: Folder)
 	local template = findCannonTemplate()
 
@@ -697,10 +704,9 @@ local function buildCannon(frame: CFrame, folder: Folder)
 
 	-- Place it in two steps: roughly on the pad first, then measured — the
 	-- bounding box is nudged so its BOTTOM sits exactly on the pad's top,
-	-- which works whatever the model's authored pivot happens to be. Models
-	-- usually face -Z, and the plot's outward is its frame's +X, so the yaw
-	-- turn maps one onto the other.
-	local target = frame * CFrame.new(2, 0, 0) * CFrame.Angles(0, -math.pi / 2, 0)
+	-- which works whatever the model's authored pivot happens to be. The yaw
+	-- turn maps the model's authored front onto the plot's outward (+X).
+	local target = frame * CFrame.new(2, 0, 0) * CFrame.Angles(0, math.rad(CANNON_YAW_DEGREES), 0)
 	cannon:PivotTo(target)
 
 	local boundsCFrame, boundsSize
