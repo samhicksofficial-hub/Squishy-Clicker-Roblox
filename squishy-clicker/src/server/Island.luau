@@ -1072,26 +1072,16 @@ local function buildBarriers()
 		wall:SetAttribute("BarrierFade", true)
 	end
 
+	-- Lane dividers live entirely OUT on the range, from the island base to
+	-- the 1M band. They used to continue inward across the island between
+	-- the plots too, but a see-through wall cutting across walkable grass
+	-- read as clutter, not as a lane — the island keeps only its rim ring.
+	-- No collision: nobody can reach these, and the server's flights are
+	-- arithmetic, not physics, so there is nothing for them to block.
 	for slot = 1, Island.PLOT_COUNT do
 		local angle = (slot - 0.5) / Island.PLOT_COUNT * math.pi * 2
 		local yaw = CFrame.Angles(0, -angle, 0)
 
-		-- The island stretch: solid, so neighbouring plots are properly
-		-- partitioned. Starts past the ring road — circulation stays open.
-		local islandFrom, islandTo = 126, ISLAND_RADIUS - 1
-		local islandMid = (islandFrom + islandTo) * 0.5
-		local wall = barrierPart(
-			Vector3.new(islandTo - islandFrom, BARRIER_HEIGHT, 1.5),
-			CFrame.new(Vector3.new(math.cos(angle) * islandMid, GROUND_Y + BARRIER_HEIGHT * 0.5 - 3, math.sin(angle) * islandMid))
-				* yaw,
-			barriers
-		)
-		wall.Transparency = 0.45
-		wall:SetAttribute("BarrierFade", true)
-
-		-- The range stretch: pure lane marking, out to the 1M band. No
-		-- collision — nobody can reach it, and the server's flights are
-		-- arithmetic, not physics, so there is nothing for it to block.
 		local rangeFrom, rangeTo = ISLAND_RADIUS + 4, Config.RangeFarRadius
 		local rangeMid = (rangeFrom + rangeTo) * 0.5
 		local lane = barrierPart(
