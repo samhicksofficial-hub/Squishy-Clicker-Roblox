@@ -1028,6 +1028,82 @@ end
 
 -- ---------- assembly ----------
 
+-- ---------- barriers ----------
+-- Two jobs, one force-field look: a ring at the island rim that stops anyone
+-- walking off the plateau, and a divider on each bisector between
+-- neighbouring plots that carries on across the range, so every cannon's
+-- firing lane reads at a glance from the plaza.
+--
+-- The walls near players FADE: built at their "seen" transparency here, then
+-- eased fully clear by the client (init.client.luau) whenever the character
+-- is far away — the island shouldn't read as caged from across the plaza.
+-- The range dividers hold a constant faint blue instead: they exist to be
+-- seen from a distance, which is the one thing a proximity fade would undo.
+local BARRIER_COLOR = Color3.fromRGB(96, 178, 255)
+local BARRIER_HEIGHT = 26
+
+local function barrierPart(size: Vector3, cframe: CFrame, parent: Instance): Part
+	local wall = block(size, cframe, BARRIER_COLOR, parent)
+	wall.Material = Enum.Material.ForceField
+	wall.CastShadow = false
+	-- Collidable but otherwise inert: never catches clicks or touch events.
+	wall.CanQuery = false
+	wall.CanTouch = false
+	return wall
+end
+
+local function buildBarriers()
+	local barriers = group("Barriers")
+
+	-- The rim ring, just inside the beach edge so every walkable stud stays
+	-- inside it. Sunk a few studs so dips in the beach don't open a gap.
+	local SEGMENTS = 48
+	local radius = ISLAND_RADIUS - 2
+	local width = 2 * math.pi * radius / SEGMENTS + 1.5
+	for segment = 1, SEGMENTS do
+		local angle = segment / SEGMENTS * math.pi * 2
+		local at = Vector3.new(math.cos(angle) * radius, GROUND_Y + BARRIER_HEIGHT * 0.5 - 3, math.sin(angle) * radius)
+		local wall = barrierPart(
+			Vector3.new(2, BARRIER_HEIGHT, width),
+			CFrame.new(at) * CFrame.Angles(0, -angle, 0),
+			barriers
+		)
+		wall.Transparency = 0.45
+		wall:SetAttribute("BarrierFade", true)
+	end
+
+	for slot = 1, Island.PLOT_COUNT do
+		local angle = (slot - 0.5) / Island.PLOT_COUNT * math.pi * 2
+		local yaw = CFrame.Angles(0, -angle, 0)
+
+		-- The island stretch: solid, so neighbouring plots are properly
+		-- partitioned. Starts past the ring road — circulation stays open.
+		local islandFrom, islandTo = 126, ISLAND_RADIUS - 1
+		local islandMid = (islandFrom + islandTo) * 0.5
+		local wall = barrierPart(
+			Vector3.new(islandTo - islandFrom, BARRIER_HEIGHT, 1.5),
+			CFrame.new(Vector3.new(math.cos(angle) * islandMid, GROUND_Y + BARRIER_HEIGHT * 0.5 - 3, math.sin(angle) * islandMid))
+				* yaw,
+			barriers
+		)
+		wall.Transparency = 0.45
+		wall:SetAttribute("BarrierFade", true)
+
+		-- The range stretch: pure lane marking, out to the 1M band. No
+		-- collision — nobody can reach it, and the server's flights are
+		-- arithmetic, not physics, so there is nothing for it to block.
+		local rangeFrom, rangeTo = ISLAND_RADIUS + 4, Config.RangeFarRadius
+		local rangeMid = (rangeFrom + rangeTo) * 0.5
+		local lane = barrierPart(
+			Vector3.new(rangeTo - rangeFrom, 30, 1.5),
+			CFrame.new(Vector3.new(math.cos(angle) * rangeMid, Y.plain + 15, math.sin(angle) * rangeMid)) * yaw,
+			barriers
+		)
+		lane.CanCollide = false
+		lane.Transparency = 0.7
+	end
+end
+
 -- The skybox is imported by hand like the cannon and the capsule — but a Sky
 -- only renders as a child of LIGHTING, and imports land wherever Studio drops
 -- them (ReplicatedStorage, Workspace, inside a folder). Find it by class —
@@ -1106,6 +1182,7 @@ function Island.build()
 	buildPaths()
 	buildScenery()
 	buildSpawn()
+	buildBarriers()
 
 	for index = 1, Island.PLOT_COUNT do
 		table.insert(plots, buildPlot(index))

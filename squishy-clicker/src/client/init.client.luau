@@ -1107,6 +1107,56 @@ do
 	end)
 end
 
+-- ---------- barrier fade ----------
+-- The rim force-field is clear until you walk toward the edge. The server
+-- builds the walls at their "seen" transparency and tags the fading ones;
+-- this eases LocalTransparencyModifier — never Transparency itself, so the
+-- authored look is composed with, not overwritten — from invisible at 64
+-- studs to fully seen at 22. The range lane dividers carry no tag and keep
+-- their constant faint blue: they exist to be read from across the map.
+task.spawn(function()
+	local RunService = game:GetService("RunService")
+	local map = workspace:WaitForChild("Map", 30)
+	local barriers = map and map:WaitForChild("Barriers", 30)
+	if not barriers then
+		return
+	end
+
+	local fading: { BasePart } = {}
+	local function adopt(child: Instance)
+		if child:IsA("BasePart") and child:GetAttribute("BarrierFade") then
+			table.insert(fading, child)
+		end
+	end
+	for _, child in barriers:GetChildren() do
+		adopt(child)
+	end
+	barriers.ChildAdded:Connect(adopt)
+
+	local NEAR, FAR = 22, 64
+	RunService.Heartbeat:Connect(function()
+		local character = player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if not root then
+			return
+		end
+		local from = root.Position
+		for _, wall in fading do
+			-- Distance to the wall's actual box, not its centre: the island
+			-- dividers are 80 studs long, and centre-distance would keep one
+			-- ghostly while the character stood right against its far end.
+			local localPoint = wall.CFrame:PointToObjectSpace(from)
+			local half = wall.Size * 0.5
+			local outside = Vector3.new(
+				math.max(math.abs(localPoint.X) - half.X, 0),
+				math.max(math.abs(localPoint.Y) - half.Y, 0),
+				math.max(math.abs(localPoint.Z) - half.Z, 0)
+			)
+			wall.LocalTransparencyModifier = math.clamp((outside.Magnitude - NEAR) / (FAR - NEAR), 0, 1)
+		end
+	end)
+end)
+
 refresh()
 
 -- ---------- one HUD per view ----------
