@@ -1049,12 +1049,36 @@ local function adoptSkybox()
 	warn("[SquishyClicker] No skybox found — drop the Sky object anywhere in ReplicatedStorage and it will be adopted on the next run.")
 end
 
+-- The sky pack also dumps post-processing effects into WORKSPACE, where they
+-- silently do nothing — effects only run under Lighting or a camera. The
+-- SunRays are worth adopting: the game has none, and god rays belong to the
+-- realistic sun. The pack's Bloom, Blur and ColorCorrection are NOT — the
+-- client already builds its own tuned bloom and grade (Scene.luau), and
+-- stacking a second set on top is exactly how the over-bright washout looked
+-- before, with a screen blur thrown in. Those get cleared, loudly.
+local function adoptSkyEffects()
+	local lighting = game:GetService("Lighting")
+	for _, child in workspace:GetChildren() do
+		if child:IsA("SunRaysEffect") then
+			if lighting:FindFirstChildOfClass("SunRaysEffect") then
+				child:Destroy()
+			else
+				child.Parent = lighting
+			end
+		elseif child:IsA("PostEffect") then
+			warn(("[SquishyClicker] Removed a stray %s from Workspace — the game runs its own tuned post-processing."):format(child.ClassName))
+			child:Destroy()
+		end
+	end
+end
+
 function Island.build()
 	if root then
 		return -- already built; this is called once from the server's startup
 	end
 
 	adoptSkybox()
+	adoptSkyEffects()
 
 	-- The place file carries stowaways from the template it was made from: a
 	-- Baseplate and its SpawnLocation. The baseplate is why the painted range

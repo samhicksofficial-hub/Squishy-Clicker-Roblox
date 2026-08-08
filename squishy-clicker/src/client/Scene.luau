@@ -361,11 +361,19 @@ colorGrade.Parent = Lighting
 -- Haze that thickens with distance, so the far bands and the mesas recede
 -- into the sky instead of staying pin-sharp a thousand studs out — depth the
 -- long corridor otherwise has no way to show.
-local atmosphere = Instance.new("Atmosphere")
-atmosphere.Density = 0.2
-atmosphere.Color = Color3.fromRGB(190, 220, 255)
-atmosphere.Decay = Color3.fromRGB(150, 180, 220)
-atmosphere.Parent = Lighting
+--
+-- Only as a FALLBACK: the realistic sky pack ships its own Atmosphere in the
+-- place file, tuned against its own sun and horizon, and two atmospheres
+-- fight over the same screen. If one is already in Lighting, it wins and
+-- this block builds nothing — the haze knob then lives on that instance in
+-- Studio, not here.
+if not Lighting:FindFirstChildOfClass("Atmosphere") then
+	local atmosphere = Instance.new("Atmosphere")
+	atmosphere.Density = 0.2
+	atmosphere.Color = Color3.fromRGB(190, 220, 255)
+	atmosphere.Decay = Color3.fromRGB(150, 180, 220)
+	atmosphere.Parent = Lighting
+end
 
 local keyLightHost = block(Vector3.new(0.2, 0.2, 0.2), ORIGIN + Vector3.new(5, 9, 9), BACKDROP_COLOR)
 keyLightHost.Transparency = 1
