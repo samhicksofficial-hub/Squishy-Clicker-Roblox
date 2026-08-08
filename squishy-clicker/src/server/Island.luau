@@ -1028,10 +1028,33 @@ end
 
 -- ---------- assembly ----------
 
+-- The skybox is imported by hand like the cannon and the capsule — but a Sky
+-- only renders as a child of LIGHTING, and imports land wherever Studio drops
+-- them (ReplicatedStorage, Workspace, inside a folder). Find it by class —
+-- unambiguous, no name matching needed — and seat it where it works. Lighting
+-- replicates, so every player gets the sky without the client doing anything.
+local function adoptSkybox()
+	local lighting = game:GetService("Lighting")
+	if lighting:FindFirstChildOfClass("Sky") then
+		return -- already seated; nothing to adopt
+	end
+	for _, container in { ReplicatedStorage :: Instance, workspace :: Instance } do
+		for _, descendant in container:GetDescendants() do
+			if descendant:IsA("Sky") then
+				descendant.Parent = lighting
+				return
+			end
+		end
+	end
+	warn("[SquishyClicker] No skybox found — drop the Sky object anywhere in ReplicatedStorage and it will be adopted on the next run.")
+end
+
 function Island.build()
 	if root then
 		return -- already built; this is called once from the server's startup
 	end
+
+	adoptSkybox()
 
 	-- The place file carries stowaways from the template it was made from: a
 	-- Baseplate and its SpawnLocation. The baseplate is why the painted range
