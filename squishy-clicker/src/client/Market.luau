@@ -301,6 +301,10 @@ function Market.mount(gui: ScreenGui)
 			Parent = detail,
 		}) :: Frame
 		UI.make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = portrait })
+		-- The same rarity ring the grid cards wear, so the two always agree.
+		if rarity then
+			UI.stroke(portrait, 4, rarity.color)
+		end
 		if discovered then
 			buildPreview(portrait, squishy, Z + 4)
 		else
@@ -506,6 +510,13 @@ function Market.mount(gui: ScreenGui)
 				Parent = card,
 			}) :: Frame
 			UI.make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = swatch })
+			-- Rarity ring: the rarity's colour around every face, so a drawer
+			-- reads at a glance. Undiscovered ones keep it too — it is the
+			-- tease of WHAT tier is hiding behind the question mark.
+			local cardRarity = Squishies.rarityByName[squishy.rarity]
+			if cardRarity then
+				UI.stroke(swatch, 3, cardRarity.color)
+			end
 			if discovered then
 				buildPreview(swatch, squishy, Z + 5)
 			else

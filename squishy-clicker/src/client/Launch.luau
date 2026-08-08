@@ -136,7 +136,14 @@ function Launch.mount(gui: GuiObject, scene: any)
 
 	-- Pulsed on every locked tap: the whole panel breathes once, which is a
 	-- cheaper and louder acknowledgement than any label change.
+	--
+	-- This UIScale is SHARED: the HUD fitter in init.client.luau owns its
+	-- resting value (it sizes every fixed-pixel panel to the window), and the
+	-- pulse only breathes around that rest. The rest is captured between
+	-- pulses, never mid-pulse, so overlapping taps can't inflate it.
 	local panelScale = UI.make("UIScale", { Scale = 1, Parent = panel }) :: UIScale
+	local pulseRest = 1
+	local pulseLive = false
 
 	local title = UI.label({
 		Size = UDim2.new(1, -20, 0, 30),
@@ -543,11 +550,24 @@ function Launch.mount(gui: GuiObject, scene: any)
 		table.insert(tapsLocked, precision)
 
 		-- Feedback: the panel breathes once, and the tick pitches up with
-		-- each tap so a full set makes a little ascending phrase.
-		panelScale.Scale = 1.06
-		TweenService:Create(panelScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-			Scale = 1,
-		}):Play()
+		-- each tap so a full set makes a little ascending phrase. The breath
+		-- is RELATIVE to the fitted rest — the first pass tweened to a hard
+		-- 1, which erased the HUD fitter's scale on the very first tap and
+		-- left the meter oversized for every shot after the first.
+		if not pulseLive then
+			pulseRest = panelScale.Scale
+		end
+		pulseLive = true
+		panelScale.Scale = pulseRest * 1.06
+		local pulse = TweenService:Create(panelScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+			Scale = pulseRest,
+		})
+		pulse.Completed:Connect(function(playback)
+			if playback == Enum.PlaybackState.Completed then
+				pulseLive = false
+			end
+		end)
+		pulse:Play()
 		tapSound.PlaybackSpeed = 0.9 + #tapsLocked * 0.18 + precision * 0.25
 		tapSound:Play()
 

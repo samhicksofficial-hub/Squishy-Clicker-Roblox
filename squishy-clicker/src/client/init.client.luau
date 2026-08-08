@@ -192,7 +192,11 @@ local function scalePanel(child: Instance)
 
 	local existing = child:FindFirstChildOfClass("UIScale")
 	if existing then
+		-- Adopt it: panels like the launch meter bring their own UIScale for
+		-- pulse effects. It still has to follow window resizes, so it joins
+		-- the fitted list rather than being set once and then forgotten.
 		existing.Scale = hudScale
+		table.insert(panelScales, existing)
 		return
 	end
 	local scale = Instance.new("UIScale")

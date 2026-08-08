@@ -493,14 +493,16 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	glowdonutmesh = { template = "GlowDonut", yaw = 0, fallback = "donut" },
 	cheesemesh = { template = "SquishCheese", yaw = 0, fallback = "cheese" },
 	coconutmesh = { template = "CoconutBall", yaw = 0, fallback = "ball" },
-	babymesh = { template = "GlitterBaby", yaw = 0, fallback = "baby" },
+	-- Imported facing away — flipped so the face points at the preview lens.
+	babymesh = { template = "GlitterBaby", yaw = 180, fallback = "baby" },
 	dropmesh = { template = "SparkleDrop", yaw = 0, fallback = "drop" },
 	brainmesh = { template = "SquishyBrain", yaw = 0, fallback = "brain" },
 	cloudmesh = { template = "DoughCloud", yaw = 0, fallback = "cloud" },
 	strawberrymesh = { template = "StrawberrySquishy", yaw = 0, fallback = "strawberry" },
 	-- No pug among the primitives, so a plain ball stands in if the model
 	-- isn't in the place.
-	pugmesh = { template = "PugSquishy", yaw = 0, fallback = "ball" },
+	-- Imported facing away — flipped so the face points at the preview lens.
+	pugmesh = { template = "PugSquishy", yaw = 180, fallback = "ball" },
 	icecubemesh = { template = "IceCubeSquishy", yaw = 0, fallback = "jellycube" },
 	-- The cubes come as one model per colour, named <Colour>CubeSquishy. Each
 	-- asks for its own colour and settles for a tinted sibling if that one
