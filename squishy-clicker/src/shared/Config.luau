@@ -80,6 +80,11 @@ local Config = {
 	-- passes under the needle more often but for less time.
 	LaunchNeedleHz = 0.55,
 
+	-- Each locked tap multiplies the sweep speed by this, so a shot gets
+	-- harder as it goes: the first tap is the read, the last is the test.
+	-- At 1.35 the third tap sweeps at nearly double the first's speed.
+	LaunchNeedleGrowth = 1.35,
+
 	-- The launch elevation, as the same 0-1 fraction of the angle span the
 	-- old dial sent. Fixed since the meter took over aiming: the skill moved
 	-- into tap timing, and 0.55 (about 48 degrees) is the sweet spot the old

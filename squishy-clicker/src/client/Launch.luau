@@ -596,8 +596,10 @@ function Launch.mount(gui: GuiObject, scene: any)
 		end
 
 		-- A sine sweep: smooth turnarounds at the edges, fastest through the
-		-- green centre — which is exactly what makes the centre hard.
-		needlePhase += dt * math.pi * 2 * Config.LaunchNeedleHz
+		-- green centre — which is exactly what makes the centre hard. Every
+		-- locked tap steps the speed up, so the shot escalates as it goes.
+		local sweepHz = Config.LaunchNeedleHz * Config.LaunchNeedleGrowth ^ #tapsLocked
+		needlePhase += dt * math.pi * 2 * sweepHz
 		local position = 0.5 + 0.5 * math.sin(needlePhase)
 		local precision = 1 - math.abs(position - 0.5) * 2
 
