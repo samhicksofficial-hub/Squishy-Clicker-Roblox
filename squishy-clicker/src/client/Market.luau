@@ -16,6 +16,7 @@
 -- ============================================================
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 
 local UI = require(script.Parent:WaitForChild("UI"))
 local Models = require(script.Parent:WaitForChild("Models"))
@@ -50,7 +51,7 @@ local latest: any = { counts = {}, stars = {}, active = {} }
 local root: Frame? = nil
 local rerender: () -> () = function() end
 
-function Market.mount(gui: ScreenGui)
+function Market.mount(gui: GuiObject)
 	local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 	local SetActive = Remotes:WaitForChild("SetActive") :: RemoteEvent
 
@@ -147,12 +148,17 @@ function Market.mount(gui: ScreenGui)
 		Parent = teamStrip,
 	})
 
+	-- The three squares double as DROP TARGETS for the drag below. Rebuilt
+	-- with the strip on every sync, so the list is re-registered each pass.
+	local teamSlots: { { button: TextButton, id: string? } } = {}
+
 	local function rebuildTeam()
 		for _, child in teamStrip:GetChildren() do
 			if not child:IsA("UIListLayout") then
 				child:Destroy()
 			end
 		end
+		table.clear(teamSlots)
 
 		local active: { string } = latest.active or {}
 		for slot = 1, Config.MaxActiveSquishies do
@@ -192,8 +198,120 @@ function Market.mount(gui: ScreenGui)
 					SetActive:FireServer(squishy.id, false)
 				end)
 			end
+
+			table.insert(teamSlots, { button = square, id = id })
 		end
 	end
+
+	-- ---------- drag to team ----------
+	-- The ADD TO TEAM button works, but dragging a face onto a team square is
+	-- what hands expect. A press starts a watch; travelling ~10 pixels turns
+	-- it into a real drag with a floating copy under the pointer; releasing
+	-- over a team square summons the squishy — swapping out the occupant if
+	-- the square was taken. A press that never travels stays a click and
+	-- selects the card exactly as before.
+	local dragState: { squishy: Squishies.Squishy, ghost: Frame?, fromX: number?, fromY: number? }? = nil
+
+	local function pointOver(object: GuiObject, x: number, y: number): boolean
+		local corner = object.AbsolutePosition
+		local size = object.AbsoluteSize
+		return x >= corner.X and x <= corner.X + size.X and y >= corner.Y and y <= corner.Y + size.Y
+	end
+
+	-- The hovered square glows gold while a drag is over it; passing nil
+	-- restores every square to its resting stroke.
+	local function paintSlotTargets(x: number?, y: number?)
+		for _, slot in teamSlots do
+			local stroke = slot.button:FindFirstChildOfClass("UIStroke")
+			if stroke then
+				local over = x ~= nil and y ~= nil and pointOver(slot.button, x, y)
+				stroke.Thickness = over and 5 or 3
+				stroke.Color = over and GOLD or (slot.id and RING or UI.color.ink)
+			end
+		end
+	end
+
+	local function beginDrag(squishy: Squishies.Squishy)
+		dragState = { squishy = squishy }
+	end
+
+	UserInputService.InputChanged:Connect(function(input)
+		local drag = dragState
+		if not drag then
+			return
+		end
+		if
+			input.UserInputType ~= Enum.UserInputType.MouseMovement
+			and input.UserInputType ~= Enum.UserInputType.Touch
+		then
+			return
+		end
+		local x, y = input.Position.X, input.Position.Y
+		-- The baseline is the first move after the press, measured in the
+		-- same coordinate space as every later move — button-event and
+		-- input-event coordinates don't reliably share an origin.
+		local fromX, fromY = drag.fromX, drag.fromY
+		if not fromX or not fromY then
+			drag.fromX, drag.fromY = x, y
+			return
+		end
+		local ghost = drag.ghost
+		if not ghost then
+			if math.abs(x - fromX) + math.abs(y - fromY) < 10 then
+				return
+			end
+			ghost = UI.make("Frame", {
+				Size = UDim2.new(0, 64, 0, 64),
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				BackgroundColor3 = drag.squishy.color,
+				ClipsDescendants = true,
+				ZIndex = Z + 10,
+				Parent = gui,
+			}) :: Frame
+			UI.make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = ghost })
+			UI.stroke(ghost, 3, RING)
+			buildPreview(ghost, drag.squishy, Z + 11)
+			drag.ghost = ghost
+		end
+		ghost.Position = UDim2.fromOffset(x, y)
+		paintSlotTargets(x, y)
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if
+			input.UserInputType ~= Enum.UserInputType.MouseButton1
+			and input.UserInputType ~= Enum.UserInputType.Touch
+		then
+			return
+		end
+		local drag = dragState
+		dragState = nil
+		if not drag then
+			return
+		end
+		paintSlotTargets(nil, nil)
+		local ghost = drag.ghost
+		if not ghost then
+			return -- never travelled: the card's own tap handler has it
+		end
+		ghost:Destroy()
+
+		local x, y = input.Position.X, input.Position.Y
+		for _, slot in teamSlots do
+			if pointOver(slot.button, x, y) then
+				-- Dropping on a taken square swaps: the occupant steps down,
+				-- the dragged one steps in. The server re-checks ownership
+				-- and the slot limit on both, as it does for every request.
+				if slot.id ~= drag.squishy.id then
+					if slot.id then
+						SetActive:FireServer(slot.id, false)
+					end
+					SetActive:FireServer(drag.squishy.id, true)
+				end
+				break
+			end
+		end
+	end)
 
 	-- ---------- category tabs ----------
 	local tabRow = UI.make("Frame", {
@@ -555,6 +673,14 @@ function Market.mount(gui: ScreenGui)
 				rebuildGrid()
 				renderDetail()
 			end)
+
+			-- Press-and-drag onto a team square. Only discovered squishies:
+			-- an unowned one has nothing to summon, so it doesn't lift.
+			if discovered then
+				card.MouseButton1Down:Connect(function()
+					beginDrag(squishy)
+				end)
+			end
 		end
 	end
 
