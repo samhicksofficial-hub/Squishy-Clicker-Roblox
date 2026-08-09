@@ -282,8 +282,12 @@ local pickupField: { PickupEntry } = {}
 local pickupTaken: { [number]: boolean } = {}
 local pickupCollecting: { [number]: number } = {}
 
-local POOL = Config.LaunchPickupCount * Config.BoostDensityMultiplier
-	+ Config.VipZoneCount * Config.VipZoneDensityMultiplier
+-- Double the base count: headroom for the extra pickups VIP zones add.
+-- (This line once multiplied by the Cash Rain density constant — reading a
+-- REMOVED config key made it nil arithmetic, which killed this module at
+-- require time and took the whole HUD down with it. Every button gone, no
+-- error visible past the Output.)
+local POOL = Config.LaunchPickupCount * 2 + Config.VipZoneCount * Config.VipZoneDensityMultiplier
 for _ = 1, POOL do
 	local prize = Instance.new("Part")
 	prize.Size = Vector3.one * 5
