@@ -329,6 +329,15 @@ local Config = {
 	ActiveSquishyMagnetPerRank = 0.12,
 	ActiveSquishyStarBonus = 0.15,
 
+	-- ===== The sky =====
+	-- The realistic sky, owned by CODE once its texture ids are known. A Sky
+	-- instance living only in the place file kept vanishing between Studio
+	-- sessions; with the ids filled in here the server rebuilds it at every
+	-- startup and nothing can lose it again. While this is false, the server
+	-- falls back to adopting whatever Sky instance it finds — and prints
+	-- this exact line, filled in, to the Output. Paste that over this.
+	SkyTextures = false,
+
 	-- ===== The collection bonus =====
 	-- Every DISTINCT squishy ever discovered adds this to the Cash
 	-- multiplier, permanently — dupes feed stars, but a NEW face pays for

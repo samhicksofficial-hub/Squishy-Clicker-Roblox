@@ -1094,25 +1094,75 @@ local function buildBarriers()
 	end
 end
 
--- The skybox is imported by hand like the cannon and the capsule — but a Sky
--- only renders as a child of LIGHTING, and imports land wherever Studio drops
--- them (ReplicatedStorage, Workspace, inside a folder). Find it by class —
--- unambiguous, no name matching needed — and seat it where it works. Lighting
--- replicates, so every player gets the sky without the client doing anything.
+-- The sky. Two paths, in order of preference:
+--
+-- 1. Config.SkyTextures filled in: the server BUILDS the sky from those ids
+--    at every startup. Code cannot lose it; the place file is irrelevant.
+-- 2. Config empty: adopt a Sky instance from wherever Studio dropped it
+--    (Lighting, ReplicatedStorage, Workspace, nested anywhere), seat it in
+--    Lighting — and print its ids as a ready-to-paste Config line, which is
+--    the exit ramp to path 1. A Sky that lives only in the place file has
+--    already vanished between sessions once.
+--
+-- Lighting replicates, so every player gets the sky either way without the
+-- client doing anything.
 local function adoptSkybox()
 	local lighting = game:GetService("Lighting")
-	if lighting:FindFirstChildOfClass("Sky") then
-		return -- already seated; nothing to adopt
+
+	local wanted: any = (Config :: any).SkyTextures
+	if wanted then
+		local sky = lighting:FindFirstChildOfClass("Sky") or Instance.new("Sky")
+		sky.SkyboxBk = wanted.Bk
+		sky.SkyboxDn = wanted.Dn
+		sky.SkyboxFt = wanted.Ft
+		sky.SkyboxLf = wanted.Lf
+		sky.SkyboxRt = wanted.Rt
+		sky.SkyboxUp = wanted.Up
+		if wanted.SunAngularSize then
+			sky.SunAngularSize = wanted.SunAngularSize
+		end
+		if wanted.MoonAngularSize then
+			sky.MoonAngularSize = wanted.MoonAngularSize
+		end
+		sky.Parent = lighting
+		return
 	end
-	for _, container in { ReplicatedStorage :: Instance, workspace :: Instance } do
+
+	local sky: Sky? = nil
+	for _, container in { lighting :: Instance, ReplicatedStorage :: Instance, workspace :: Instance } do
 		for _, descendant in container:GetDescendants() do
 			if descendant:IsA("Sky") then
-				descendant.Parent = lighting
-				return
+				sky = descendant
+				break
 			end
 		end
+		if sky then
+			break
+		end
 	end
-	warn("[SquishyClicker] No skybox found — drop the Sky object anywhere in ReplicatedStorage and it will be adopted on the next run.")
+	if not sky then
+		warn(
+			"[SquishyClicker] No skybox found — insert the Realistic Sky anywhere (Lighting or ReplicatedStorage) and it will be adopted, and its ids printed for Config.SkyTextures."
+		)
+		return
+	end
+
+	sky.Parent = lighting
+	-- The exit ramp: paste this over Config's `SkyTextures = false,` and the
+	-- sky stops depending on the place file forever.
+	print("[SquishyClicker] Sky adopted. To make it permanent, paste this into Config.luau:")
+	print(
+		("\tSkyTextures = { Bk = %q, Dn = %q, Ft = %q, Lf = %q, Rt = %q, Up = %q, SunAngularSize = %g, MoonAngularSize = %g },"):format(
+			sky.SkyboxBk,
+			sky.SkyboxDn,
+			sky.SkyboxFt,
+			sky.SkyboxLf,
+			sky.SkyboxRt,
+			sky.SkyboxUp,
+			sky.SunAngularSize,
+			sky.MoonAngularSize
+		)
+	)
 end
 
 -- The sky pack also dumps post-processing effects into WORKSPACE, where they
