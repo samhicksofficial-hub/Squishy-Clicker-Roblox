@@ -149,16 +149,19 @@ local Config = {
 	LaunchPowerGrowth = 1.14,
 	LaunchMaxPowerLevel = 200,
 
-	-- Cash cost of the next power level: base × growth^level. The growth
-	-- deliberately OUTPACES the 1.14 the power (and so the income) grows by:
-	-- every level takes ≈1.07× longer than the last, compounding. That
-	-- compounding IS the world schedule — by level ~50 an upgrade takes ~30×
-	-- what it did fresh, which is exactly the ×30 Sunset Mesa pays; by ~100
-	-- the wall is ~900× and Frostbite Pass picks it up. Levels 50 and 100
-	-- are where moving worlds should FEEL necessary, and the world gates
-	-- below sit on the same numbers.
-	PowerUpgradeBaseCost = 40,
-	PowerUpgradeCostGrowth = 1.22,
+	-- Cash cost of the next power level:
+	--   base × growth^level × quadGrowth^(level²)
+	-- Two regimes on purpose. Early, the plain growth rules and levels stay
+	-- cheap (Lv 0 ≈ 120, Lv 10 ≈ 365, Lv 25 ≈ 3.5K) — the start feels like
+	-- accelerating. Then the quadratic term takes over and each level's
+	-- growth RATE itself climbs: ≈10% per level at Lv 0, ≈29% at Lv 50,
+	-- ≈50% by Lv 99 (Lv 50 ≈ 770K, Lv 75 ≈ 1.2B, Lv 100 ≈ 15T). Income
+	-- only grows ~14% a level, so the late curve is a wall by construction —
+	-- worlds, rebirths, stars and the collection bonus are what breach it.
+	-- Which is to say: playing the game does, and buying alone does not.
+	PowerUpgradeBaseCost = 120,
+	PowerUpgradeCostGrowth = 1.1,
+	PowerUpgradeCostQuadGrowth = 1.0016,
 
 	-- ----- What stars buy -----
 	-- The squishy collection's second job. Each star adds a fraction to
@@ -276,12 +279,13 @@ local Config = {
 	-- ===== Worlds =====
 	-- Retunes of the same valley rather than separate maps: a world changes
 	-- the palette of the ground and the canyon and multiplies what the track
-	-- pays, and is unlocked by CANNON LEVEL. The gates sit exactly on the
-	-- upgrade curve's walls (see PowerUpgradeCostGrowth): the ×30 and ×900
-	-- are sized to cancel how far costs have outrun income by the time each
-	-- gate opens, so a new world makes upgrades affordable again rather than
-	-- merely bigger-numbered. One table drives both the Worlds panel and the
-	-- colours the stage paints itself, so adding an entry here is the job.
+	-- pays, and is unlocked by CANNON LEVEL. The gates sit where the upgrade
+	-- curve's accelerating growth starts to bite (see PowerUpgradeCost*):
+	-- around 50 the quadratic term is charging ~29% a level against income's
+	-- ~14%, and Sunset's ×30 is the relief; past 100 the curve is a cliff on
+	-- purpose and Frostbite's ×900 plus rebirths are what climb it. One
+	-- table drives both the Worlds panel and the colours the stage paints
+	-- itself, so adding an entry here is the whole job.
 	Worlds = {
 		{
 			id = "meadow",

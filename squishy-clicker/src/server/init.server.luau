@@ -497,9 +497,16 @@ local function worldFor(data: PlayerData)
 	return Config.Worlds[1]
 end
 
--- Cash cost of the player's NEXT power level.
+-- Cash cost of the player's NEXT power level. Exponential with an
+-- ACCELERATING rate: the quadratic term barely registers early and
+-- dominates late — cheap start, then the wall (see Config for the curve).
 local function powerUpgradeCost(level: number): number
-	return math.floor(Config.PowerUpgradeBaseCost * Config.PowerUpgradeCostGrowth ^ level + 0.5)
+	return math.floor(
+		Config.PowerUpgradeBaseCost
+				* Config.PowerUpgradeCostGrowth ^ level
+				* Config.PowerUpgradeCostQuadGrowth ^ (level * level)
+			+ 0.5
+	)
 end
 
 -- Everything that makes a shot go further, gathered in one place so the
