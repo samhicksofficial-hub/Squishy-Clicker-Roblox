@@ -272,15 +272,23 @@ windTrail.Parent = trailPart
 -- ---------- pickups ----------
 -- One currency now: every pickup is Cash. The kind key survives so an old
 -- server payload can't crash the lookup — anything unknown draws as coin.
+-- Deep cash green rather than bright gold: neon brightness rides the
+-- colour's luminance, and the old pale gold bloomed into featureless white
+-- blobs against the bright sky. VIP pickups stay golden — the jackpot
+-- stretch is supposed to shout.
 local PICKUP_LOOK = {
-	coin = Color3.fromRGB(252, 208, 96),
+	coin = Color3.fromRGB(96, 210, 100),
 }
+local VIP_GOLD = Color3.fromRGB(240, 190, 70)
 type PickupEntry = { distance: number, height: number, kind: string, value: number, vip: boolean }
 
 local pickupParts: { BasePart } = {}
 local pickupField: { PickupEntry } = {}
 local pickupTaken: { [number]: boolean } = {}
 local pickupCollecting: { [number]: number } = {}
+-- Where each drawn pickup RESTS: the render loop bobs and spins them around
+-- these, so layout writes here and animation never fights it.
+local pickupBase: { [number]: Vector3 } = {}
 
 -- Double the base count: headroom for the extra pickups VIP zones add.
 -- (This line once multiplied by the Cash Rain density constant — reading a
@@ -290,7 +298,7 @@ local pickupCollecting: { [number]: number } = {}
 local POOL = Config.LaunchPickupCount * 2 + Config.VipZoneCount * Config.VipZoneDensityMultiplier
 for _ = 1, POOL do
 	local prize = Instance.new("Part")
-	prize.Size = Vector3.one * 5
+	prize.Size = Vector3.one * 4
 	prize.Material = Enum.Material.Neon
 	prize.Anchored = true
 	prize.CanCollide = false
@@ -298,6 +306,23 @@ for _ = 1, POOL do
 	prize.CanTouch = false
 	prize.Transparency = 1
 	prize.Parent = stage
+
+	-- The 💵 over each block is what says "this is money" from any range.
+	-- Stud-sized, so it shrinks with distance like the block it labels.
+	local icon = Instance.new("BillboardGui")
+	icon.Name = "CashIcon"
+	icon.Size = UDim2.new(3, 0, 3, 0)
+	icon.StudsOffset = Vector3.new(0, 3.4, 0)
+	icon.LightInfluence = 0
+	icon.Enabled = false
+	icon.Parent = prize
+	local face = Instance.new("TextLabel")
+	face.Size = UDim2.fromScale(1, 1)
+	face.BackgroundTransparency = 1
+	face.Text = "💵"
+	face.TextScaled = true
+	face.Parent = icon
+
 	table.insert(pickupParts, prize)
 end
 
@@ -490,15 +515,31 @@ local function layoutField()
 			and not pickupTaken[index]
 			and Config.rangeRadius(entry.distance) > muzzleRadius + 6
 		if entry and drawable then
-			prize.Color = PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin
-			prize.Size = Vector3.one * (entry.vip and 8 or 5)
+			-- Cash green for the ordinary ones, gold for the VIP stretch.
+			prize.Color = entry.vip and VIP_GOLD or (PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
+			prize.Size = Vector3.one * (entry.vip and 6.5 or 4)
 			prize.Transparency = 0.1
 			-- Laid out against the field's own tallest, so the strung-out
 			-- pickups sit at a readable height whatever the power level.
 			local lift = entry.height / tallest * 90
-			prize.Position = worldAt(entry.distance, 0) + Vector3.new(0, lift, 0)
+			pickupBase[index] = worldAt(entry.distance, 0) + Vector3.new(0, lift, 0)
+			prize.Position = pickupBase[index] :: Vector3
+
+			local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
+			if icon then
+				icon.Enabled = true
+				local face = icon:FindFirstChildOfClass("TextLabel")
+				if face then
+					face.Text = entry.vip and "💰" or "💵"
+				end
+			end
 		else
 			prize.Transparency = 1
+			pickupBase[index] = nil
+			local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
+			if icon then
+				icon.Enabled = false
+			end
 		end
 	end
 end
@@ -998,9 +1039,26 @@ RunService.RenderStepped:Connect(function(dt)
 			if prize and entry then
 				floatPopup(prize.Position, ("+%d 💵"):format(entry.value), PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
 				prize.Transparency = 1
+				pickupBase[index] = nil
+				local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
+				if icon then
+					icon.Enabled = false
+				end
 			end
 			pickupTaken[index] = true
 			pickupCollecting[index] = nil
+		end
+	end
+
+	-- The cash idles alive: a slow bob and turn on every visible pickup,
+	-- around the rest position layout remembered. Each gets its index as a
+	-- phase offset so the field shimmers rather than marching in step.
+	local idleClock = os.clock()
+	for index, prize in pickupParts do
+		local base = pickupBase[index]
+		if base and prize.Transparency < 1 then
+			prize.CFrame = CFrame.new(base + Vector3.new(0, math.sin(idleClock * 2.2 + index) * 0.7, 0))
+				* CFrame.Angles(0, idleClock * 1.4 + index, 0)
 		end
 	end
 

@@ -34,6 +34,9 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local Format = require(Shared:WaitForChild("Format"))
 local UI = require(script.Parent:WaitForChild("UI"))
+-- For the cash-collect animation on landing. One-way: Cannon never
+-- requires Launch, so this cannot cycle.
+local Cannon = require(script.Parent:WaitForChild("Cannon"))
 -- The shot is drawn in the real world, out from the player's own plot. Scene
 -- still owns the steamer and the squisher close-ups; it does not own the flight.
 local Flight = require(script.Parent:WaitForChild("Flight"))
@@ -696,6 +699,10 @@ function Launch.mount(gui: GuiObject, scene: any)
 			setStage("summary")
 			summary.root.BackgroundTransparency = 1
 			TweenService:Create(summary.root, TweenInfo.new(0.22), { BackgroundTransparency = 0 }):Play()
+
+			-- The turn's earnings fly home: bills stream from the summary
+			-- into the wallet, where the number actually changes.
+			Cannon.collectCash((result.coins or 0) + (result.milestoneCash or 0))
 		end)
 	end)
 

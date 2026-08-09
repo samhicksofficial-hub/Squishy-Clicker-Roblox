@@ -19,6 +19,7 @@
 -- ============================================================
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
@@ -31,6 +32,10 @@ local Cannon = {}
 
 -- Replaced on mount, so a sync arriving before the UI is up is harmless.
 function Cannon.update(_state: any) end
+
+-- Replaced on mount too: the shot summary calls this with the turn's
+-- earnings, and a result landing before the wallet exists must be a no-op.
+function Cannon.collectCash(_amount: number) end
 
 local C = UI.color
 
@@ -102,6 +107,61 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	-- gone — everything a shot earns and everything the game sells meet in
 	-- this number, which is what makes spending it a decision.
 	local coinLabel = walletRow(1, C.cash, Color3.fromRGB(84, 186, 60), "💵")
+
+	-- ---------- the cash collect ----------
+	-- A shot's earnings FLY here: bills stream up from the summary into the
+	-- wallet, each arrival bumping the chip — the payout lands on the place
+	-- the number actually changes, so the eye follows the money home.
+	local cashRow = coinLabel.Parent :: Frame
+	local walletPulse = UI.make("UIScale", { Scale = 1, Parent = cashRow }) :: UIScale
+
+	function Cannon.collectCash(amount: number)
+		if amount <= 0 then
+			return
+		end
+		-- More cash, more bills — logarithmically, so a jackpot is a flurry
+		-- rather than a blizzard.
+		local bills = math.clamp(3 + math.floor(math.log10(amount + 1)), 4, 9)
+
+		-- Root-relative target: absolute coordinates live in the inset
+		-- space, the Root's offsets don't — the same trap as the drag ghost.
+		local rootAt = (gui :: GuiObject).AbsolutePosition
+		local target = UDim2.fromOffset(
+			math.floor(cashRow.AbsolutePosition.X - rootAt.X + cashRow.AbsoluteSize.X * 0.5 + 0.5),
+			math.floor(cashRow.AbsolutePosition.Y - rootAt.Y + cashRow.AbsoluteSize.Y * 0.5 + 0.5)
+		)
+
+		for index = 1, bills do
+			task.delay((index - 1) * 0.07, function()
+				local bill = UI.label({
+					Size = UDim2.new(0, 34, 0, 34),
+					Position = UDim2.new(0.5, math.random(-100, 100), 0.6, math.random(-50, 30)),
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Text = "💵",
+					TextSize = 30,
+					Rotation = math.random(-28, 28),
+					ZIndex = 40,
+					Parent = gui,
+				})
+				local flight = TweenService:Create(
+					bill,
+					TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ Position = target, Rotation = 0, TextSize = 16 }
+				)
+				flight.Completed:Connect(function()
+					bill:Destroy()
+					-- The wallet gulps: a quick pulse per arriving bill.
+					walletPulse.Scale = 1.12
+					TweenService:Create(
+						walletPulse,
+						TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+						{ Scale = 1 }
+					):Play()
+				end)
+				flight:Play()
+			end)
+		end
+	end
 
 	-- ---------- panels ----------
 	-- Built up front and hidden; opening one is a Visible flag rather than a
