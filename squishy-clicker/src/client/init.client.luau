@@ -485,7 +485,12 @@ task.spawn(function()
 		return
 	end
 	local function fit()
-		local top = math.floor(column.AbsolutePosition.Y + column.AbsoluteSize.Y + 14 + 0.5)
+		-- ROOT-relative, not raw AbsolutePosition: absolute coordinates are
+		-- reported in the inset-adjusted space while this panel's offsets
+		-- are in the Root's own, and mixing the two shifted the panel a
+		-- topbar's height upward — straight under the Cash chip.
+		local columnTop = column.AbsolutePosition.Y - gui.AbsolutePosition.Y
+		local top = math.floor(columnTop + column.AbsoluteSize.Y + 14 + 0.5)
 		panel.Position = UDim2.new(1, -18, 0, top)
 		panel.Size = UDim2.new(0, 300, 1, -(top + 16))
 	end
@@ -517,9 +522,94 @@ make("TextLabel", {
 	Parent = panel,
 })
 
-local invList = make("ScrollingFrame", {
-	Size = UDim2.new(1, -16, 1, -58),
+-- ---------- the equipped team ----------
+-- The three team squares from the market, repeated at the top of this
+-- panel: "who is out right now" shouldn't need a walk to a stall to
+-- answer. Tapping a filled square dismisses that squishy.
+local teamStrip = make("Frame", {
+	Size = UDim2.new(1, -16, 0, 84),
 	Position = UDim2.new(0, 8, 0, 50),
+	BackgroundTransparency = 1,
+	Parent = panel,
+})
+make("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	HorizontalAlignment = Enum.HorizontalAlignment.Center,
+	Padding = UDim.new(0, 10),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+	Parent = teamStrip,
+})
+
+-- Rebuilt only when the summoned set actually changes: each filled square
+-- carries a live ViewportFrame, and syncs arrive on every steamer click.
+local lastTeamSignature: string? = nil
+local function rebuildTeamStrip()
+	local active: { string } = state.active or {}
+	local signature = table.concat(active, ",")
+	if signature == lastTeamSignature then
+		return
+	end
+	lastTeamSignature = signature
+
+	for _, child in teamStrip:GetChildren() do
+		if not child:IsA("UIListLayout") then
+			child:Destroy()
+		end
+	end
+
+	for slot = 1, Config.MaxActiveSquishies do
+		local id = active[slot]
+		local squishy = id and Squishies.byId[id]
+		local square = make("TextButton", {
+			Size = UDim2.new(0, 84, 0, 84),
+			BackgroundColor3 = squishy and squishy.color or COLOR.locked,
+			AutoButtonColor = squishy ~= nil,
+			ClipsDescendants = true,
+			Font = Enum.Font.FredokaOne,
+			Text = squishy and "" or "+",
+			TextColor3 = COLOR.inkSoft,
+			TextStrokeTransparency = 1,
+			TextSize = 34,
+			LayoutOrder = slot,
+			Parent = teamStrip,
+		})
+		corner(14, square)
+		make("UIStroke", {
+			Color = squishy and Color3.fromRGB(70, 200, 60) or COLOR.locked,
+			Thickness = 3,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+			Parent = square,
+		})
+
+		if squishy then
+			local viewport = make("ViewportFrame", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundTransparency = 1,
+				Ambient = Color3.fromRGB(170, 165, 160),
+				LightColor = Color3.fromRGB(255, 250, 244),
+				LightDirection = Vector3.new(-0.5, -1, -0.6),
+				ZIndex = 4,
+				Parent = square,
+			})
+			local stage = make("Folder", { Name = "Model", Parent = viewport })
+			local model = Models.buildSquishy(stage, squishy.shape, squishy.color, squishy.sparkle, squishy.scale)
+			Models.apply(model.rig, CFrame.identity, Vector3.one * model.sizeScale)
+			local camera = Instance.new("Camera")
+			camera.FieldOfView = 28
+			camera.CFrame = CFrame.lookAt(Vector3.new(0, 0.9, 8), Vector3.zero)
+			camera.Parent = viewport
+			viewport.CurrentCamera = camera
+
+			square.Activated:Connect(function()
+				SetActive:FireServer(squishy.id, false)
+			end)
+		end
+	end
+end
+
+local invList = make("ScrollingFrame", {
+	Size = UDim2.new(1, -16, 1, -152),
+	Position = UDim2.new(0, 8, 0, 144),
 	BackgroundTransparency = 1,
 	BorderSizePixel = 0,
 	ScrollBarThickness = 4,
@@ -927,6 +1017,8 @@ local function refresh()
 		state.totalStars,
 		math.floor(discount * 100 + 0.5)
 	)
+
+	rebuildTeamStrip()
 
 	-- Which squishies are out, as a set, so the loop below is a lookup rather
 	-- than a scan per row.

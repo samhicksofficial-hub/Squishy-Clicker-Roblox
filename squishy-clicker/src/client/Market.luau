@@ -287,7 +287,11 @@ function Market.mount(gui: GuiObject)
 			buildPreview(ghost, drag.squishy, Z + 11)
 			drag.ghost = ghost
 		end
-		ghost.Position = UDim2.fromOffset(x, y)
+		-- Root-relative: input coordinates live in the inset-adjusted space,
+		-- while the ghost's offsets are in the inset-IGNORING root's — used
+		-- raw, the ghost trails a topbar's height below the finger.
+		local rootAt = gui.AbsolutePosition
+		ghost.Position = UDim2.fromOffset(x - rootAt.X, y - rootAt.Y)
 		paintSlotTargets(x, y)
 	end)
 
