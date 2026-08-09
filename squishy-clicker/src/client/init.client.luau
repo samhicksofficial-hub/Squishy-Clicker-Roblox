@@ -72,11 +72,9 @@ local state = {
 	clickerId = nil :: string?,
 	launchReadyIn = 0,
 	bestDistance = 0,
-	-- The cannon's own economy. Defaults matter here: refresh() runs once
-	-- before the first sync arrives.
-	tnt = 0,
+	-- The cannon's own economy — ONE currency now. Defaults matter here:
+	-- refresh() runs once before the first sync arrives.
 	coins = 0,
-	gems = 0,
 	powerLevel = 0,
 	powerCost = Config.PowerUpgradeBaseCost,
 	launchPower = Config.LaunchBasePower,
@@ -86,7 +84,8 @@ local state = {
 	rebirthReady = false,
 	active = {} :: { string },
 	steamerCost = Config.SteamerCoinCost,
-	luckySteamerCost = Config.LuckySteamerGemCost,
+	luckySteamerCost = Config.LuckySteamerCoinCost,
+	collectionBonus = 1,
 	boostReadyIn = 0,
 	boostLeft = 0,
 }
@@ -458,13 +457,13 @@ local costLabel = make("TextLabel", {
 })
 
 -- ---------- inventory / collection (right side) ----------
--- Starts BELOW the whole right column — wallet, Rebirth, Shop, Rain TNT end
--- at y 330 — so the two can never share a pixel. They used to: the panel
--- began at 170 and slid under the buttons, which then floated on top of the
--- list like they owned it.
+-- Starts BELOW the whole right column — wallet, Rebirth, Shop, Cash Rain end
+-- at y 230 now that the wallet is a single Cash row — so the two can never
+-- share a pixel. They used to: the panel began at 170 and slid under the
+-- buttons, which then floated on top of the list like they owned it.
 local panel = make("Frame", {
-	Size = UDim2.new(0, 300, 1, -360),
-	Position = UDim2.new(1, -18, 0, 344),
+	Size = UDim2.new(0, 300, 1, -260),
+	Position = UDim2.new(1, -18, 0, 244),
 	AnchorPoint = Vector2.new(1, 0),
 	BackgroundColor3 = COLOR.panel,
 	BackgroundTransparency = 0.08,

@@ -142,16 +142,23 @@ local Config = {
 	LaunchRollDeceleration = 34,
 
 	-- ----- Launch power -----
-	-- Power is bought in levels with TNT and grows geometrically, which is
+	-- Power is bought in levels with Cash and grows geometrically, which is
 	-- what lets distances climb from a few hundred studs to six figures
 	-- without the level number becoming absurd.
 	LaunchBasePower = 120,
 	LaunchPowerGrowth = 1.14,
 	LaunchMaxPowerLevel = 200,
 
-	-- TNT cost of the next power level: base × growth^level.
-	PowerUpgradeBaseCost = 25,
-	PowerUpgradeCostGrowth = 1.16,
+	-- Cash cost of the next power level: base × growth^level. The growth
+	-- deliberately OUTPACES the 1.14 the power (and so the income) grows by:
+	-- every level takes ≈1.07× longer than the last, compounding. That
+	-- compounding IS the world schedule — by level ~50 an upgrade takes ~30×
+	-- what it did fresh, which is exactly the ×30 Sunset Mesa pays; by ~100
+	-- the wall is ~900× and Frostbite Pass picks it up. Levels 50 and 100
+	-- are where moving worlds should FEEL necessary, and the world gates
+	-- below sit on the same numbers.
+	PowerUpgradeBaseCost = 40,
+	PowerUpgradeCostGrowth = 1.22,
 
 	-- ----- What stars buy -----
 	-- The squishy collection's second job. Each star adds a fraction to
@@ -163,20 +170,15 @@ local Config = {
 	LaunchMaxStarMagnet = 1.5,
 
 	-- ----- Pickups -----
-	-- TNT, coins and gems strung along the flight path, laid out fresh after
-	-- every shot. The server places them, decides which ones the path actually
-	-- passed close enough to, and pays for them; the client only draws them.
+	-- Cash strung along the flight path, laid out fresh after every shot.
+	-- The server places it, decides what the path actually passed close
+	-- enough to, and pays for it; the client only draws it. One currency on
+	-- purpose: everything a shot earns competes for the same wallet, so
+	-- upgrading the cannon and buying steamers are a real choice.
 	LaunchPickupCount = 26,
 
-	-- Odds a given pickup is each kind. TNT is the common one because it is
-	-- what buys the next power level; gems are the rare treat.
-	PickupGemChance = 0.07,
-	PickupCoinChance = 0.33, -- the rest are TNT
-
-	-- Base value of one pickup of each kind, before rebirth and pet bonuses.
-	PickupTntValue = 3,
-	PickupCoinValue = 12,
-	PickupGemValue = 1,
+	-- Base value of one pickup, before every bonus.
+	PickupCoinValue = 15,
 
 	-- Pickups further down the track are worth more, by this fraction of
 	-- their base value per 1000 studs out. Without it, a 50,000-stud run pays
@@ -216,19 +218,19 @@ local Config = {
 	VipZoneDensityMultiplier = 3,
 
 	-- ----- Milestones -----
-	-- Signs down the track. Passing one for the FIRST time pays its gem
-	-- bounty once, which is the main early source of gems.
+	-- Signs down the track. Passing one for the FIRST time pays its Cash
+	-- bounty once — a fat one-off on top of ordinary track income.
 	DistanceMilestones = {
-		{ at = 100, name = "100", gems = 1 },
-		{ at = 1000, name = "1K", gems = 3 },
-		{ at = 10000, name = "10K", gems = 10 },
-		{ at = 100000, name = "100K", gems = 40 },
-		{ at = 1000000, name = "1M", gems = 150 },
+		{ at = 100, name = "100", cash = 250 },
+		{ at = 1000, name = "1K", cash = 2500 },
+		{ at = 10000, name = "10K", cash = 25000 },
+		{ at = 100000, name = "100K", cash = 250000 },
+		{ at = 1000000, name = "1M", cash = 2500000 },
 	},
 
 	-- ===== Rebirth =====
 	-- Spends everything the cannon has earned for a permanent multiplier.
-	-- Coins, TNT and the power level all reset; gems, squishies and the distance
+	-- Cash and the power level reset; squishies, milestones and the distance
 	-- record do not.
 
 	-- Distance needed for the first rebirth, multiplied by this growth for
@@ -237,14 +239,13 @@ local Config = {
 	RebirthRequirementGrowth = 6,
 
 	-- What each rebirth permanently adds, as a fraction. Distance is the
-	-- headline; the other two stop the reset feeling like a step backwards.
+	-- headline; the Cash bonus stops the reset feeling like a step backwards.
 	RebirthDistanceBonus = 0.4,
 	RebirthCoinBonus = 0.6,
-	RebirthTntBonus = 0.5,
 
-	-- ===== Rain TNT (the active boost) =====
-	-- A button that floods the next shot's track with extra TNT. Short, loud
-	-- and on a long cooldown, so it is a decision rather than a rotation.
+	-- ===== Cash Rain (the active boost) =====
+	-- A button that floods the next shot's track with extra Cash. Short,
+	-- loud and on a long cooldown, so it is a decision rather than a rotation.
 	BoostSeconds = 20,
 	BoostCooldownSeconds = 120,
 	BoostPickupMultiplier = 3,
@@ -283,14 +284,17 @@ local Config = {
 	-- ===== Worlds =====
 	-- Retunes of the same valley rather than separate maps: a world changes
 	-- the palette of the ground and the canyon and multiplies what the track
-	-- pays, and is unlocked by rebirths. One table drives both the Worlds
-	-- panel and the colours the stage paints itself, so adding an entry here
-	-- is the whole job.
+	-- pays, and is unlocked by CANNON LEVEL. The gates sit exactly on the
+	-- upgrade curve's walls (see PowerUpgradeCostGrowth): the ×30 and ×900
+	-- are sized to cancel how far costs have outrun income by the time each
+	-- gate opens, so a new world makes upgrades affordable again rather than
+	-- merely bigger-numbered. One table drives both the Worlds panel and the
+	-- colours the stage paints itself, so adding an entry here is the job.
 	Worlds = {
 		{
 			id = "meadow",
 			name = "Sunny Meadow",
-			rebirths = 0,
+			level = 0,
 			multiplier = 1,
 			grass = Color3.fromRGB(138, 214, 74),
 			grassDark = Color3.fromRGB(112, 190, 58),
@@ -299,8 +303,8 @@ local Config = {
 		{
 			id = "sunset",
 			name = "Sunset Mesa",
-			rebirths = 3,
-			multiplier = 1.5,
+			level = 50,
+			multiplier = 30,
 			grass = Color3.fromRGB(238, 176, 96),
 			grassDark = Color3.fromRGB(214, 148, 72),
 			canyon = Color3.fromRGB(168, 86, 148),
@@ -308,8 +312,8 @@ local Config = {
 		{
 			id = "frost",
 			name = "Frostbite Pass",
-			rebirths = 5,
-			multiplier = 2.2,
+			level = 100,
+			multiplier = 900,
 			grass = Color3.fromRGB(214, 238, 248),
 			grassDark = Color3.fromRGB(178, 214, 236),
 			canyon = Color3.fromRGB(120, 158, 206),
@@ -329,10 +333,16 @@ local Config = {
 	-- squishy a Common is, and a maxed one is nearly twice that again.
 	ActiveSquishyPowerPerRank = 0.06,
 	ActiveSquishyCoinPerRank = 0.08,
-	ActiveSquishyTntPerRank = 0.07,
 	-- Magnet is FLAT screen studs, not a fraction — see LaunchPickupMagnet.
 	ActiveSquishyMagnetPerRank = 0.12,
 	ActiveSquishyStarBonus = 0.15,
+
+	-- ===== The collection bonus =====
+	-- Every DISTINCT squishy ever discovered adds this to the Cash
+	-- multiplier, permanently — dupes feed stars, but a NEW face pays for
+	-- itself forever. This is the standing reason to keep buying steamers
+	-- long after a serviceable team exists.
+	CollectionCashPerSquishy = 0.03,
 
 	-- ===== Main-squishy abilities =====
 	-- The EQUIPPED squisher is the one that goes down the barrel, so what it
@@ -352,18 +362,18 @@ local Config = {
 	AbilityMagnetPerRank = 0.06, -- flat magnet screen studs each
 
 	-- ===== The steamer shop =====
-	-- What cash and gems are for. Both buy steamers, which is the whole point:
-	-- the launcher's currencies feed the collection, and the collection feeds
-	-- the launcher back through active squishies.
+	-- What Cash is for, besides the cannon. Steamers are the whole point:
+	-- the launcher's income feeds the collection, and the collection feeds
+	-- the launcher back through the team, abilities and collection bonus.
 
 	-- Cash price of a plain steamer, times growth for every one already
 	-- bought. Geometric, because cash income grows geometrically too.
 	SteamerCoinCost = 900,
 	SteamerCostGrowth = 1.09,
 
-	-- Gems buy a Lucky Steamer instead: same odds SHAPE, but nothing below
-	-- this rarity rank can come out of it (3 = Rare or better).
-	LuckySteamerGemCost = 18,
+	-- A Lucky Steamer costs a premium in Cash: same odds SHAPE, but nothing
+	-- below this rarity rank can come out of it (3 = Rare or better).
+	LuckySteamerCoinCost = 15000,
 	LuckySteamerMinRank = 3,
 
 	-- ===== The lobby =====

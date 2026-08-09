@@ -96,9 +96,10 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		})
 	end
 
-	local tntLabel = walletRow(1, C.tnt, Color3.fromRGB(212, 106, 40), "🧨")
-	local coinLabel = walletRow(2, C.cash, Color3.fromRGB(84, 186, 60), "💵")
-	local gemLabel = walletRow(3, C.gem, Color3.fromRGB(64, 190, 190), "💎")
+	-- ONE currency: the wallet is a single Cash row now. TNT and gems are
+	-- gone — everything a shot earns and everything the game sells meet in
+	-- this number, which is what makes spending it a decision.
+	local coinLabel = walletRow(1, C.cash, Color3.fromRGB(84, 186, 60), "💵")
 
 	-- ---------- panels ----------
 	-- Built up front and hidden; opening one is a Visible flag rather than a
@@ -283,11 +284,11 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		showOnly("shop")
 	end)
 
-	-- ---------- Rain TNT ----------
+	-- ---------- Cash Rain ----------
 	local boost = UI.button({
 		parent = column,
 		size = UDim2.new(1, 0, 0, 48),
-		text = "🧨 RAIN TNT",
+		text = "💵 CASH RAIN",
 		textSize = 17,
 		top = C.red,
 		bottom = C.redDeep,
@@ -394,7 +395,7 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	})
 
 	local rewardLabels: { TextLabel } = {}
-	for index, reward in { "💵 Cash", "🧨 TNT", "🚀 Distance" } do
+	for index, reward in { "💵 Cash", "🚀 Distance" } do
 		local card = UI.card({
 			parent = rebirthPanel.body,
 			size = UDim2.new(0, 118, 0, 78),
@@ -437,9 +438,10 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	end)
 
 	-- ---------- Worlds panel ----------
-	-- Worlds are gated on rebirths, so this doubles as a preview of what
-	-- rebirthing is FOR — which is why the locked rows still show their name
-	-- and their multiplier rather than being blanked out.
+	-- Worlds are gated on CANNON LEVEL — the gates sit exactly where the
+	-- upgrade curve walls (50 and 100), so a locked row is a preview of why
+	-- the grind is worth it. Locked rows still show their name and their
+	-- multiplier rather than being blanked out.
 	type WorldRow = { entry: UI.Button, sub: TextLabel }
 	local worldRows: { WorldRow } = {}
 	for index, world in Config.Worlds do
@@ -601,9 +603,10 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	})
 
 	-- ---------- Steamers panel ----------
-	-- What the launcher's cash and gems buy. This is the join between the two
-	-- halves of the game: launching earns the currency, the currency buys
-	-- squishies, and summoned squishies make the next launch go further.
+	-- What the launcher's Cash buys besides upgrades. This is the join
+	-- between the two halves of the game: launching earns the currency, the
+	-- currency buys squishies, and squishies pay it back — team buffs,
+	-- abilities, and the permanent collection bonus per new face.
 	local steamerCard = UI.card({
 		parent = steamersPanel.body,
 		size = UDim2.new(1, -24, 0, 96),
@@ -658,7 +661,7 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	UI.label({
 		Size = UDim2.new(1, -20, 0, 30),
 		Position = UDim2.new(0, 12, 0, 6),
-		Text = "💎 Lucky Steamer",
+		Text = "🍀 Lucky Steamer",
 		TextSize = 24,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		ZIndex = 24,
@@ -677,7 +680,7 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		ZIndex = 24,
 		Parent = luckyCard,
 	})
-	local buyGemButton = UI.button({
+	local buyLuckyButton = UI.button({
 		parent = luckyCard,
 		size = UDim2.new(1, -24, 0, 34),
 		position = UDim2.new(0, 12, 1, -42),
@@ -688,8 +691,8 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		zIndex = 24,
 		radius = 10,
 	})
-	buyGemButton.button.Activated:Connect(function()
-		buySteamer:FireServer("gem")
+	buyLuckyButton.button.Activated:Connect(function()
+		buySteamer:FireServer("lucky")
 	end)
 
 	UI.label({
@@ -781,22 +784,20 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	local boostLeft = 0
 
 	function Cannon.update(state: any)
-		tntLabel.Text = Format.abbreviate(state.tnt or 0)
 		coinLabel.Text = Format.abbreviate(state.coins or 0)
-		gemLabel.Text = Format.abbreviate(state.gems or 0)
 
 		-- ----- upgrades -----
 		local level = state.powerLevel or 0
 		local cost = state.powerCost or 0
 		local maxed = level >= Config.LaunchMaxPowerLevel
-		local affordable = (state.tnt or 0) >= cost
+		local affordable = (state.coins or 0) >= cost
 
 		powerTitle.Text = ("Launch Power  ·  Lv %d"):format(level)
 		powerStats.Text = ("Power %s   ·   Magnet %.1f\nDistance is linear in power: double it, fly twice as far."):format(
 			Format.abbreviate(math.floor(state.launchPower or 0)),
 			state.magnet or 0
 		)
-		powerBuy.button.Text = maxed and "MAXED" or ("UPGRADE  ·  %s 🧨"):format(Format.abbreviate(cost))
+		powerBuy.button.Text = maxed and "MAXED" or ("UPGRADE  ·  %s 💵"):format(Format.abbreviate(cost))
 		UI.setButtonEnabled(powerBuy, not maxed and affordable, C.green, C.greenDeep)
 
 		-- ----- rebirth -----
@@ -810,8 +811,7 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		-- What the NEXT rebirth would make each multiplier, since that is the
 		-- question the panel is actually being opened to answer.
 		rewardLabels[1].Text = ("×%.2f"):format(1 + (rebirths + 1) * Config.RebirthCoinBonus)
-		rewardLabels[2].Text = ("×%.2f"):format(1 + (rebirths + 1) * Config.RebirthTntBonus)
-		rewardLabels[3].Text = ("×%.2f"):format(1 + (rebirths + 1) * Config.RebirthDistanceBonus)
+		rewardLabels[2].Text = ("×%.2f"):format(1 + (rebirths + 1) * Config.RebirthDistanceBonus)
 
 		rebirthGo.button.Text = ("REBIRTH  (%d)"):format(rebirths)
 		UI.setButtonEnabled(rebirthGo, state.rebirthReady == true, C.green, C.greenDeep)
@@ -822,12 +822,12 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		for index, world in Config.Worlds do
 			local row = worldRows[index]
 			if row then
-				local unlocked = rebirths >= world.rebirths
+				local unlocked = (state.powerLevel or 0) >= world.level
 				local isActive = world.id == activeWorldId
 				row.sub.Text = if isActive
-					then ("✅ ACTIVE  ·  ×%.1f rewards"):format(world.multiplier)
-					elseif unlocked then ("Unlocked  ·  ×%.1f rewards"):format(world.multiplier)
-					else ("🔄 Needs Rebirth %d"):format(world.rebirths)
+					then ("✅ ACTIVE  ·  ×%g Cash"):format(world.multiplier)
+					elseif unlocked then ("Unlocked  ·  ×%g Cash"):format(world.multiplier)
+					else ("🚀 Needs Cannon Lv %d"):format(world.level)
 				UI.setButtonEnabled(
 					row.entry,
 					unlocked,
@@ -853,9 +853,9 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		local steamerPrice = math.floor(state.steamerCost or 0)
 		local luckyPrice = math.floor(state.luckySteamerCost or 0)
 		buyCoinButton.button.Text = ("BUY  ·  %s 💵"):format(Format.abbreviate(steamerPrice))
-		buyGemButton.button.Text = ("BUY  ·  %s 💎"):format(Format.abbreviate(luckyPrice))
+		buyLuckyButton.button.Text = ("BUY  ·  %s 💵"):format(Format.abbreviate(luckyPrice))
 		UI.setButtonEnabled(buyCoinButton, (state.coins or 0) >= steamerPrice, C.green, C.greenDeep)
-		UI.setButtonEnabled(buyGemButton, (state.gems or 0) >= luckyPrice, C.green, C.greenDeep)
+		UI.setButtonEnabled(buyLuckyButton, (state.coins or 0) >= luckyPrice, C.green, C.greenDeep)
 
 		-- ----- summoned squishies -----
 		-- Rebuilding the followers destroys and re-creates real models, so it
@@ -914,13 +914,13 @@ function Cannon.mount(gui: GuiObject, scene: any)
 			boostLeft = math.max(boostLeft - 0.25, 0)
 
 			if boostLeft > 0 then
-				boost.button.Text = ("🧨 RAINING %ds"):format(math.ceil(boostLeft))
+				boost.button.Text = ("💵 RAINING %ds"):format(math.ceil(boostLeft))
 				UI.setButtonEnabled(boost, false, C.red, C.redDeep)
 			elseif boostReadyIn > 0 then
-				boost.button.Text = ("🧨 %ds"):format(math.ceil(boostReadyIn))
+				boost.button.Text = ("💵 %ds"):format(math.ceil(boostReadyIn))
 				UI.setButtonEnabled(boost, false, C.red, C.redDeep)
 			else
-				boost.button.Text = "🧨 RAIN TNT"
+				boost.button.Text = "💵 CASH RAIN"
 				UI.setButtonEnabled(boost, true, C.red, C.redDeep)
 			end
 		end

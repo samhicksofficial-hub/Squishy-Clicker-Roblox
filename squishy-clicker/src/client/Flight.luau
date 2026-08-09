@@ -229,7 +229,7 @@ local currentFov = Config.ChaseFovBase
 local shakeAmp = 0
 local shakePhase = 0
 
--- Milestones this flight has yet to cross, for the "+gems" popup at the
+-- Milestones this flight has yet to cross, for the "+Cash" popup at the
 -- moment of crossing. Stocked by play() from the server's own first-time
 -- list, so the popup can never announce a milestone that didn't pay.
 local pendingMilestones: { { at: number, text: string } } = {}
@@ -270,10 +270,10 @@ windTrail.Enabled = false
 windTrail.Parent = trailPart
 
 -- ---------- pickups ----------
+-- One currency now: every pickup is Cash. The kind key survives so an old
+-- server payload can't crash the lookup — anything unknown draws as coin.
 local PICKUP_LOOK = {
-	tnt = Color3.fromRGB(232, 118, 58),
 	coin = Color3.fromRGB(252, 208, 96),
-	gem = Color3.fromRGB(126, 232, 224),
 }
 type PickupEntry = { distance: number, height: number, kind: string, value: number, vip: boolean }
 
@@ -486,7 +486,7 @@ local function layoutField()
 			and not pickupTaken[index]
 			and Config.rangeRadius(entry.distance) > muzzleRadius + 6
 		if entry and drawable then
-			prize.Color = PICKUP_LOOK[entry.kind] or PICKUP_LOOK.tnt
+			prize.Color = PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin
 			prize.Size = Vector3.one * (entry.vip and 8 or 5)
 			prize.Transparency = 0.1
 			-- Laid out against the field's own tallest, so the strung-out
@@ -695,7 +695,7 @@ function Flight.play(plan: {
 	peakHeight: number,
 	launchSpeed: number?,
 	coins: number?,
-	milestones: { { name: string, gems: number } }?,
+	milestones: { { name: string, cash: number } }?,
 	collected: { number },
 }): number
 	if not muzzle then
@@ -748,7 +748,7 @@ function Flight.play(plan: {
 			if entry.name == milestone.name then
 				table.insert(pendingMilestones, {
 					at = entry.at,
-					text = ("🏁 %s Studs!  +%d 💎"):format(milestone.name, milestone.gems),
+					text = ("🏁 %s Studs!  +%s 💵"):format(milestone.name, Format.abbreviate(milestone.cash)),
 				})
 				break
 			end
@@ -992,8 +992,7 @@ RunService.RenderStepped:Connect(function(dt)
 			local prize = pickupParts[index]
 			local entry = pickupField[index]
 			if prize and entry then
-				local icon = entry.kind == "coin" and "💵" or entry.kind == "gem" and "💎" or "🧨"
-				floatPopup(prize.Position, ("+%d %s"):format(entry.value, icon), PICKUP_LOOK[entry.kind] or PICKUP_LOOK.tnt)
+				floatPopup(prize.Position, ("+%d 💵"):format(entry.value), PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
 				prize.Transparency = 1
 			end
 			pickupTaken[index] = true

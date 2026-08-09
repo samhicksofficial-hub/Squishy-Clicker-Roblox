@@ -14,10 +14,10 @@
 --  the meter owns the skill; the server validates it like any
 --  hostile payload regardless.
 --
---  The squishy is fired, skips across the plain, sweeps up TNT,
---  cash and gems on the way and rolls to a stop. How far it got
---  is the score, and everything the run earned is read back on a
---  summary card at the end.
+--  The squishy is fired, skips across the plain, sweeps up Cash
+--  on the way and rolls to a stop. How far it got is the score,
+--  and everything the run earned is read back on a summary card
+--  at the end.
 --
 --  The client never says how far it went, what it collected or
 --  what it won. The server simulates the whole flight and sends
@@ -385,13 +385,14 @@ function Launch.mount(gui: GuiObject, scene: any)
 		})
 	end
 
-	local tntRow = rewardRow(78, C.tnt, Color3.fromRGB(212, 106, 40))
-	local coinRow = rewardRow(128, C.cash, Color3.fromRGB(84, 186, 60))
-	local gemRow = rewardRow(178, C.gem, Color3.fromRGB(64, 190, 190))
+	-- One currency now: track Cash on top, milestone bounties (the one-off
+	-- Cash for first-time signs) called out on their own row beneath.
+	local coinRow = rewardRow(78, C.cash, Color3.fromRGB(84, 186, 60))
+	local bountyRow = rewardRow(128, C.orange, C.orangeDeep)
 
 	local breakdown = UI.label({
 		Size = UDim2.new(1, -24, 0, 66),
-		Position = UDim2.new(0, 12, 0, 228),
+		Position = UDim2.new(0, 12, 0, 180),
 		Text = "",
 		TextSize = 14,
 		TextColor3 = Color3.fromRGB(252, 226, 180),
@@ -665,9 +666,12 @@ function Launch.mount(gui: GuiObject, scene: any)
 			summary.title.Text = result.record and "NEW BEST!" or "Landed!"
 			summaryDistance.Text = ("%s Studs"):format(Format.abbreviate(math.floor(result.distance or 0)))
 
-			tntRow.Text = ("🧨  +%s TNT"):format(Format.abbreviate(result.tnt or 0))
 			coinRow.Text = ("💵  +%s Cash"):format(Format.abbreviate(result.coins or 0))
-			gemRow.Text = ("💎  +%s Gems"):format(Format.abbreviate(result.gems or 0))
+			-- The label lives on a card; hiding the label alone leaves an
+			-- empty orange bar, so the CARD is what toggles.
+			local bounty = result.milestoneCash or 0
+			bountyRow.Text = ("🏁  +%s Bounty!"):format(Format.abbreviate(bounty));
+			(bountyRow.Parent :: Frame).Visible = bounty > 0
 
 			-- The multiplier breakdown: what each part of the account actually
 			-- contributed, so an upgrade's effect is visible rather than felt.
@@ -677,10 +681,10 @@ function Launch.mount(gui: GuiObject, scene: any)
 					(result.bounces or 0) == 1 and "" or "s",
 					result.rebirths or 0
 				),
-				("cash ×%.2f   ·   TNT ×%.2f"):format(result.coinMultiplier or 1, result.tntMultiplier or 1),
+				("cash ×%.2f   ·   collection ×%.2f"):format(result.coinMultiplier or 1, result.collectionBonus or 1),
 			}
 			if result.boosted then
-				table.insert(lines, "🧨 Rain TNT was running")
+				table.insert(lines, "💵 Cash Rain was running")
 			end
 			local milestones = result.milestones or {}
 			if #milestones > 0 then

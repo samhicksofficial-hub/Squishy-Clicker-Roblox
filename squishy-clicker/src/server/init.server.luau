@@ -88,8 +88,9 @@ local DoRebirth = Instance.new("RemoteEvent")
 DoRebirth.Name = "DoRebirth"
 DoRebirth.Parent = Remotes
 
--- Cash or gems for a steamer: ("coin") or ("gem"). Nothing but the kind — the
--- price and what comes out are both the server's.
+-- Cash for a steamer: ("coin") for a plain one, ("lucky") for the premium
+-- rare-or-better roll. Nothing but the kind — the price and what comes out
+-- are both the server's.
 local BuySteamer = Instance.new("RemoteEvent")
 BuySteamer.Name = "BuySteamer"
 BuySteamer.Parent = Remotes
@@ -194,17 +195,16 @@ type PlayerData = {
 	bestDistance: number,         -- furthest cannon shot ever, in studs
 	launchField: { Pickup },      -- pickups waiting for their NEXT shot
 
-	-- The cannon's own economy, separate from the steamer's.
-	tnt: number,                  -- buys launch power
-	coins: number,                -- buys steamers; reset by rebirth
-	gems: number,                 -- buys Lucky Steamers; survives rebirth
+	-- The cannon's own economy: ONE currency. Cash buys power levels,
+	-- steamers and Lucky Steamers alike, so every purchase competes.
+	coins: number,                -- reset by rebirth
 	powerLevel: number,           -- launch power upgrades bought
 	rebirths: number,             -- permanent multipliers earned
 	milestones: { [string]: boolean }, -- distance signs already paid out
 	steamersBought: number,       -- cash-bought steamers, for the price curve
 	active: { string },           -- the (at most three) squishies summoned
 	worldId: string,              -- which Config.Worlds entry pays this player
-	boostUntil: number,           -- os.clock while Rain TNT is running
+	boostUntil: number,           -- os.clock while Cash Rain is running
 	lastBoost: number,            -- os.clock of the last activation
 
 	limits: { [string]: RateLimit }, -- rate limiting, keyed by remote
@@ -413,10 +413,10 @@ end
 -- the first was, where multiplicative stacking runs away the moment somebody
 -- has three good ones. Magnet is the exception — it is flat screen studs, so
 -- it stays an addend rather than becoming a multiplier.
-type Bonuses = { power: number, coins: number, tnt: number, magnet: number }
+type Bonuses = { power: number, coins: number, magnet: number }
 
 local function squishyBonuses(data: PlayerData): Bonuses
-	local total: Bonuses = { power = 1, coins = 1, tnt = 1, magnet = 0 }
+	local total: Bonuses = { power = 1, coins = 1, magnet = 0 }
 	for _, id in data.active do
 		local squishy = Squishies.byId[id]
 		if squishy then
@@ -426,11 +426,30 @@ local function squishyBonuses(data: PlayerData): Bonuses
 			local starred = 1 + (data.stars[id] or 0) * Config.ActiveSquishyStarBonus
 			total.power += rank * Config.ActiveSquishyPowerPerRank * starred
 			total.coins += rank * Config.ActiveSquishyCoinPerRank * starred
-			total.tnt += rank * Config.ActiveSquishyTntPerRank * starred
 			total.magnet += rank * Config.ActiveSquishyMagnetPerRank * starred
 		end
 	end
 	return total
+end
+
+-- Every DISTINCT squishy ever discovered pays into the cannon, permanently.
+-- This is the standing reason a NEW face beats another dupe of an old one:
+-- dupes feed stars, but discovery feeds every shot from then on.
+local function collectionBonus(data: PlayerData): number
+	local discovered = 0
+	for _, held in data.counts do
+		if held > 0 then
+			discovered += 1
+		end
+	end
+	-- Prestige can spend a squishy down to zero copies; its stars still
+	-- prove it was discovered.
+	for id, stars in data.stars do
+		if stars > 0 and (data.counts[id] or 0) <= 0 then
+			discovered += 1
+		end
+	end
+	return 1 + discovered * Config.CollectionCashPerSquishy
 end
 
 -- The EQUIPPED squisher is the one that goes down the barrel, so what it is
@@ -489,7 +508,7 @@ local function worldFor(data: PlayerData)
 	return Config.Worlds[1]
 end
 
--- TNT cost of the player's NEXT power level.
+-- Cash cost of the player's NEXT power level.
 local function powerUpgradeCost(level: number): number
 	return math.floor(Config.PowerUpgradeBaseCost * Config.PowerUpgradeCostGrowth ^ level + 0.5)
 end
@@ -626,7 +645,7 @@ local function makeLaunchField(data: PlayerData): { Pickup }
 	local zones = makeVipZones(reach)
 	local boosted = boostActive(data)
 
-	-- Rain TNT and VIP zones both work by adding EXTRA pickups rather than
+	-- Cash Rain and VIP zones both work by adding EXTRA pickups rather than
 	-- replacing the ordinary ones, so neither can ever make a shot worse.
 	local count = Config.LaunchPickupCount
 	if boosted then
@@ -644,15 +663,8 @@ local function makeLaunchField(data: PlayerData): { Pickup }
 		local reference = simulateFlight(launchPowerFor(data) * (0.55 + rng:NextNumber() * 0.5), rng:NextNumber())
 		local height = heightAt(reference, at)
 
-		local roll = rng:NextNumber()
-		local kind, value
-		if roll < Config.PickupGemChance then
-			kind, value = "gem", Config.PickupGemValue
-		elseif roll < Config.PickupGemChance + Config.PickupCoinChance then
-			kind, value = "coin", Config.PickupCoinValue
-		else
-			kind, value = "tnt", Config.PickupTntValue
-		end
+		-- One currency now: every pickup is Cash.
+		local kind, value = "coin", Config.PickupCoinValue
 
 		-- Further out is worth more, or a six-figure run pays the same per
 		-- pickup as a five-hundred-stud one and the track stops mattering.
@@ -660,7 +672,7 @@ local function makeLaunchField(data: PlayerData): { Pickup }
 		if vip then
 			value *= Config.VipZoneValueMultiplier
 		end
-		if boosted and kind == "tnt" then
+		if boosted then
 			value *= Config.BoostPickupMultiplier
 		end
 
@@ -691,14 +703,14 @@ local function makeLaunchField(data: PlayerData): { Pickup }
 	return field
 end
 
--- Milestones the player has just passed for the first time. Paid once each,
--- and the main early source of gems.
-local function newMilestones(data: PlayerData, distance: number): { { name: string, gems: number } }
+-- Milestones the player has just passed for the first time. Paid once each —
+-- fat one-off Cash bounties on top of ordinary track income.
+local function newMilestones(data: PlayerData, distance: number): { { name: string, cash: number } }
 	local reached = {}
 	for _, milestone in Config.DistanceMilestones do
 		if distance >= milestone.at and not data.milestones[milestone.name] then
 			data.milestones[milestone.name] = true
-			table.insert(reached, { name = milestone.name, gems = milestone.gems })
+			table.insert(reached, { name = milestone.name, cash = milestone.cash })
 		end
 	end
 	return reached
@@ -740,9 +752,7 @@ local function sync(player: Player)
 		-- The cannon's economy. Prices and totals are computed HERE and sent
 		-- as finished numbers: the client showing a different price from the
 		-- one the server charges is the classic way these two drift apart.
-		tnt = data.tnt,
 		coins = data.coins,
-		gems = data.gems,
 		powerLevel = data.powerLevel,
 		powerCost = powerUpgradeCost(data.powerLevel),
 		launchPower = launchPowerFor(data),
@@ -752,7 +762,10 @@ local function sync(player: Player)
 		rebirthReady = data.bestDistance >= rebirthRequirement(data.rebirths),
 		active = data.active,
 		steamerCost = steamerCost(data.steamersBought),
-		luckySteamerCost = Config.LuckySteamerGemCost,
+		luckySteamerCost = Config.LuckySteamerCoinCost,
+		-- The collection's permanent cash bonus, as a finished multiplier —
+		-- the market menu shows it as the reason to keep meeting new faces.
+		collectionBonus = collectionBonus(data),
 		-- The active world and what it pays, as finished numbers: the Worlds
 		-- panel and the island repaint both key off these.
 		worldId = data.worldId,
@@ -836,9 +849,10 @@ local function loadData(player: Player): PlayerData
 		-- Laid out in onPlayerAdded, once the stars this reads are in place.
 		launchField = {},
 
-		tnt = loaded and loaded.tnt or 0,
-		coins = loaded and loaded.coins or 0,
-		gems = loaded and loaded.gems or 0,
+		-- ONE currency now. Old saves carried tnt and gems as well — folded
+		-- into Cash here (gems generously, they were the rare one) rather
+		-- than silently deleted, so nobody logs in poorer than they left.
+		coins = (loaded and loaded.coins or 0) + (loaded and loaded.tnt or 0) + (loaded and loaded.gems or 0) * 50,
 		powerLevel = loaded and loaded.powerLevel or 0,
 		rebirths = loaded and loaded.rebirths or 0,
 		milestones = loaded and loaded.milestones or {},
@@ -866,11 +880,12 @@ local function loadData(player: Player): PlayerData
 	end
 	data.active = active
 
-	-- A saved world has to still exist AND still be earned: rebirths never
-	-- decrease, so this only ever catches a save edited by hand or a world
-	-- whose unlock requirement was raised since.
+	-- A saved world has to still exist AND still be earned. Worlds gate on
+	-- CANNON LEVEL now — and the level resets at rebirth, so a rebirthed
+	-- player also drops back to the first world until they climb again,
+	-- which is exactly the loop the multipliers are sized around.
 	local savedWorld = worldFor(data)
-	data.worldId = (data.rebirths >= savedWorld.rebirths) and savedWorld.id or Config.Worlds[1].id
+	data.worldId = (data.powerLevel >= savedWorld.level) and savedWorld.id or Config.Worlds[1].id
 
 	-- Starter gift: the squisher IS the main clicker, so nobody may start
 	-- without one. Everyone gets a Red Dumpling; players who never picked a
@@ -899,9 +914,7 @@ local function saveData(player: Player)
 			unopened = data.unopened,
 			clickerId = data.clickerId,
 			bestDistance = data.bestDistance,
-			tnt = data.tnt,
 			coins = data.coins,
-			gems = data.gems,
 			powerLevel = data.powerLevel,
 			rebirths = data.rebirths,
 			milestones = data.milestones,
@@ -1068,49 +1081,37 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 	-- further AND hoovers up more on the way past.
 	local magnet = effectiveMagnet(data) + mods.magnetBonus
 	local bonuses = squishyBonuses(data)
-	-- The active world multiplies cash and TNT — not gems, which stay the
-	-- un-buffable prize currency, and not the milestone bounties, which are
-	-- one-off achievements rather than track income.
+	-- The full cash stack: team bonus, main-squishy ability, the collection
+	-- bonus (every distinct squishy ever discovered), rebirths and the
+	-- world. Milestone bounties stay OUTSIDE the stack — they are one-off
+	-- achievements, not track income.
 	local world = worldFor(data)
+	local collection = collectionBonus(data)
+	local cashMultiplier = bonuses.coins
+		* mods.cashMult
+		* collection
+		* rebirthMultiplier(data, Config.RebirthCoinBonus)
+		* world.multiplier
 
 	local collected: { number } = {}
-	local earnedTnt, earnedCoins, earnedGems = 0, 0, 0
+	local earnedCoins = 0
 	for index, pickup in data.launchField do
 		if pickup.distance <= distance and math.abs(heightAt(flight, pickup.distance) - pickup.height) <= magnet then
 			table.insert(collected, index)
-			if pickup.kind == "coin" then
-				earnedCoins += pickup.value
-					* bonuses.coins
-					* mods.cashMult
-					* rebirthMultiplier(data, Config.RebirthCoinBonus)
-					* world.multiplier
-			elseif pickup.kind == "gem" then
-				-- Gems are deliberately UNBUFFED. Summons boost power, cash,
-				-- TNT and magnet; letting them boost gems too would devalue
-				-- the milestone bounties, which are meant to be the reason
-				-- gems feel like a prize. (This line used to multiply by a
-				-- pet bonus that no longer exists — hence the nil.)
-				earnedGems += pickup.value
-			else
-				earnedTnt += pickup.value * bonuses.tnt * rebirthMultiplier(data, Config.RebirthTntBonus) * world.multiplier
-			end
+			earnedCoins += pickup.value * cashMultiplier
 		end
 	end
 
-	earnedTnt = math.floor(earnedTnt)
 	earnedCoins = math.floor(earnedCoins)
-	earnedGems = math.floor(earnedGems)
 
-	-- Distance milestones pay their gem bounty the first time only.
+	-- Distance milestones pay their Cash bounty the first time only.
 	local milestones = newMilestones(data, distance)
-	local milestoneGems = 0
+	local milestoneCash = 0
 	for _, milestone in milestones do
-		milestoneGems += milestone.gems
+		milestoneCash += milestone.cash
 	end
 
-	data.tnt += earnedTnt
-	data.coins += earnedCoins
-	data.gems += earnedGems + milestoneGems
+	data.coins += earnedCoins + milestoneCash
 
 	-- The two halves of the game still touch: distance nudges the steamer bar
 	-- along too, at a rate small enough that nobody launches to fill it.
@@ -1133,9 +1134,8 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 		seconds = flight.seconds,
 		bounces = #flight.arcs - 1,
 		collected = collected,
-		tnt = earnedTnt,
 		coins = earnedCoins,
-		gems = earnedGems + milestoneGems,
+		milestoneCash = milestoneCash,
 		milestones = milestones,
 		steamerBonus = steamerBonus,
 		best = data.bestDistance,
@@ -1143,8 +1143,8 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 		-- Shown as the summary's multiplier breakdown, so the player can see
 		-- what each part of their account is actually contributing.
 		rebirths = data.rebirths,
-		coinMultiplier = bonuses.coins * rebirthMultiplier(data, Config.RebirthCoinBonus) * world.multiplier,
-		tntMultiplier = bonuses.tnt * rebirthMultiplier(data, Config.RebirthTntBonus) * world.multiplier,
+		coinMultiplier = cashMultiplier,
+		collectionBonus = collection,
 		worldMultiplier = world.multiplier,
 		boosted = boostActive(data),
 	})
@@ -1184,11 +1184,11 @@ BuyPower.OnServerEvent:Connect(function(player)
 	end
 
 	local cost = powerUpgradeCost(data.powerLevel)
-	if data.tnt < cost then
+	if data.coins < cost then
 		return -- server says no
 	end
 
-	data.tnt -= cost
+	data.coins -= cost
 	data.powerLevel += 1
 
 	-- Reach just grew, so the track's pickups belong further out.
@@ -1199,7 +1199,7 @@ end)
 
 -- Rebirth: spend the cannon's whole run for a permanent multiplier. Gated on
 -- the distance RECORD rather than on a currency, so it is earned by playing
--- the game rather than by sitting on a pile of TNT.
+-- the game rather than by sitting on a pile of Cash.
 DoRebirth.OnServerEvent:Connect(function(player)
 	local data = dataByPlayer[player]
 	if not data or overRate(data, "rebirth", 4) then
@@ -1210,12 +1210,14 @@ DoRebirth.OnServerEvent:Connect(function(player)
 	end
 
 	data.rebirths += 1
-	-- What resets, and what deliberately does not: gems, squishies and the
-	-- milestone record all survive, or a rebirth would cost more than it pays.
-	data.tnt = 0
+	-- What resets, and what deliberately does not: squishies and the
+	-- milestone record survive, or a rebirth would cost more than it pays.
+	-- The power level resetting also drops the player back to the first
+	-- world (worlds gate on level), which is the climb the multipliers pay.
 	data.coins = 0
 	data.powerLevel = 0
 	data.bestDistance = 0
+	data.worldId = Config.Worlds[1].id
 
 	data.launchField = makeLaunchField(data)
 	LaunchField:FireClient(player, data.launchField)
@@ -1224,9 +1226,10 @@ DoRebirth.OnServerEvent:Connect(function(player)
 end)
 
 -- ---------- The steamer shop ----------
--- What the launcher's cash and gems are FOR. Both buy steamers, which is the
--- join between the two halves of the game: launching earns the currency,
--- the currency buys squishies, and squishies make the next launch go further.
+-- What the launcher's Cash is FOR, besides the cannon. Steamers are the join
+-- between the two halves of the game: launching earns the currency, the
+-- currency buys squishies, and squishies make the next launch go further —
+-- through the team, the main-squishy ability, and the collection bonus.
 
 BuySteamer.OnServerEvent:Connect(function(player, kind)
 	local data = dataByPlayer[player]
@@ -1237,11 +1240,13 @@ BuySteamer.OnServerEvent:Connect(function(player, kind)
 		return
 	end
 
-	if kind == "gem" then
-		if data.gems < Config.LuckySteamerGemCost then
+	-- "gem" still accepted as an alias: it is what older clients call the
+	-- premium roll, and the name of a button is not worth a version split.
+	if kind == "lucky" or kind == "gem" then
+		if data.coins < Config.LuckySteamerCoinCost then
 			return -- server says no
 		end
-		data.gems -= Config.LuckySteamerGemCost
+		data.coins -= Config.LuckySteamerCoinCost
 		-- A Lucky Steamer is opened on the spot rather than banked: the
 		-- guaranteed rarity is the whole product, and making the player go and
 		-- unbox it separately would only hide it.
@@ -1283,7 +1288,7 @@ SetWorld.OnServerEvent:Connect(function(player, worldId)
 
 	for _, world in Config.Worlds do
 		if world.id == worldId then
-			if data.rebirths < world.rebirths then
+			if data.powerLevel < world.level then
 				return -- not earned yet; the UI shows the lock, this enforces it
 			end
 			data.worldId = world.id
@@ -1337,7 +1342,7 @@ SetActive.OnServerEvent:Connect(function(player, squishyId, shouldActivate)
 	sync(player)
 end)
 
--- ---------- Rain TNT ----------
+-- ---------- Cash Rain ----------
 
 ActivateBoost.OnServerEvent:Connect(function(player)
 	local data = dataByPlayer[player]
@@ -1353,7 +1358,7 @@ ActivateBoost.OnServerEvent:Connect(function(player)
 	data.boostUntil = now + Config.BoostSeconds
 
 	-- Relay the field immediately: the whole point of the button is seeing the
-	-- track fill up with TNT the moment it is pressed.
+	-- track fill up with Cash the moment it is pressed.
 	data.launchField = makeLaunchField(data)
 	LaunchField:FireClient(player, data.launchField)
 	sync(player)
@@ -1506,10 +1511,8 @@ if DebugAction then
 			local yaw = Island.rotateCannons()
 			print(("[SquishyClicker] Cannons at yaw %d — write it into CANNON_YAW_DEGREES in Island.luau."):format(yaw))
 		elseif action == "richCannon" then
-			-- Enough of everything to reach every screen the cannon has.
-			data.tnt += 1000000
-			data.coins += 1000000
-			data.gems += 500
+			-- Enough Cash to reach every screen the cannon has.
+			data.coins += 10000000
 		elseif action == "powerUp" then
 			local levels = (typeof(argument) == "number") and argument or 10
 			data.powerLevel = math.min(data.powerLevel + levels, Config.LaunchMaxPowerLevel)
@@ -1526,9 +1529,7 @@ if DebugAction then
 			data.unopened = 0
 			data.clickerId = "red"
 			data.bestDistance = 0
-			data.tnt = 0
 			data.coins = 0
-			data.gems = 0
 			data.powerLevel = 0
 			data.rebirths = 0
 			data.milestones = {}

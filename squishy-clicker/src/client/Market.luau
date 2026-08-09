@@ -134,7 +134,7 @@ function Market.mount(gui: GuiObject)
 	})
 
 	local teamStrip = UI.make("Frame", {
-		Size = UDim2.new(0, 3 * 104 + 2 * 18, 0, 104),
+		Size = UDim2.new(0, 3 * 96 + 2 * 18, 0, 96),
 		Position = UDim2.new(0.5, 0, 0, 34),
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 1,
@@ -166,7 +166,7 @@ function Market.mount(gui: GuiObject)
 			local squishy = id and Squishies.byId[id]
 
 			local square = UI.make("TextButton", {
-				Size = UDim2.new(0, 104, 0, 104),
+				Size = UDim2.new(0, 96, 0, 96),
 				BackgroundColor3 = squishy and squishy.color or LOCKED,
 				AutoButtonColor = squishy ~= nil,
 				ClipsDescendants = true,
@@ -312,6 +312,18 @@ function Market.mount(gui: GuiObject)
 			end
 		end
 	end)
+
+	-- The collection's permanent cash bonus, right where new squishies are
+	-- browsed: the standing answer to "why buy another steamer".
+	local collectionLabel = UI.label({
+		Size = UDim2.new(1, -16, 0, 14),
+		Position = UDim2.new(0, 8, 0, 132),
+		Text = "",
+		TextSize = 13,
+		TextColor3 = Color3.fromRGB(198, 244, 158),
+		ZIndex = Z + 2,
+		Parent = panel.body,
+	})
 
 	-- ---------- category tabs ----------
 	local tabRow = UI.make("Frame", {
@@ -557,7 +569,6 @@ function Market.mount(gui: GuiObject)
 		local effects = {
 			("🚀 Launch Power +%d%%"):format(percent(Config.ActiveSquishyPowerPerRank)),
 			("💵 Cash Earned +%d%%"):format(percent(Config.ActiveSquishyCoinPerRank)),
-			("🧨 TNT Earned +%d%%"):format(percent(Config.ActiveSquishyTntPerRank)),
 			("🧲 Pickup Magnet +%.2f"):format(rank * Config.ActiveSquishyMagnetPerRank * starred),
 		}
 		for _, line in effects do
@@ -758,6 +769,27 @@ function Market.mount(gui: GuiObject)
 		rebuildTeam()
 		rebuildGrid()
 		renderDetail()
+
+		-- The server sends the finished multiplier; the discovered count is
+		-- derived here purely for the wording.
+		local discovered = 0
+		for _, held in (latest.counts or {}) :: { [string]: number } do
+			if held > 0 then
+				discovered += 1
+			end
+		end
+		for id, stars in (latest.stars or {}) :: { [string]: number } do
+			if stars > 0 and ((latest.counts or {})[id] or 0) <= 0 then
+				discovered += 1
+			end
+		end
+		local bonus = math.floor(((latest.collectionBonus or 1) - 1) * 100 + 0.5)
+		collectionLabel.Text = ("🎁 Collection bonus: +%d%% Cash on every shot — %d / %d found, each new squishy adds +%d%%"):format(
+			bonus,
+			discovered,
+			#Squishies.list,
+			Config.CollectionCashPerSquishy * 100
+		)
 	end
 end
 
