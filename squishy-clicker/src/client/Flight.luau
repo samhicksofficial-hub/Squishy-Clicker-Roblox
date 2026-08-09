@@ -291,7 +291,7 @@ end
 -- with YOU — trailing the character, not decorating some stage. They used to
 -- be built as followers of the clicker on the hidden diorama, which meant
 -- pressing Summon visibly did nothing at all.
-type Follower = { model: Models.SquishyModel, scale: number, position: Vector3, velocity: Vector3 }
+type Follower = { model: Models.SquishyModel, scale: number, radius: number, position: Vector3, velocity: Vector3 }
 local followers: { Follower } = {}
 
 -- Soft and underdamped on purpose: pets that keep up perfectly look welded
@@ -316,6 +316,10 @@ function Flight.setActiveSquishies(list: { { shape: string?, color: Color3, spar
 		table.insert(followers, {
 			model = Models.buildSquishy(stage, spec.shape, spec.color, spec.sparkle, spec.sizeScale),
 			scale = spec.sizeScale or 1,
+			-- Personal space, in studs at the applied summon scale: how close
+			-- another summon's centre may come before the two are clipping.
+			-- The formation and the separation pass below both read this.
+			radius = 2.4 * (spec.sizeScale or 1),
 			-- Seeded at the player so a fresh summon walks out from them
 			-- rather than sprinting in from the world origin.
 			position = seed - Vector3.new(index * 3, 0, 0),
@@ -971,13 +975,45 @@ RunService.RenderStepped:Connect(function(dt)
 		local hip = humanoid and humanoid.HipHeight or 2
 		local groundY = characterRoot.Position.Y - characterRoot.Size.Y * 0.5 - hip
 
+		-- The wedge is spaced for the BIGGEST summon that is out: the old
+		-- fixed offsets put three Giants in the same three studs and the
+		-- team read as one fused blob.
+		local spread = 0
+		for _, follower in followers do
+			spread = math.max(spread, follower.radius)
+		end
+
 		for index, follower in followers do
 			local sideAmount = index == 2 and -1 or index == 3 and 1 or 0
-			local target = characterRoot.Position - flatLook * (5 + index) + right * (sideAmount * 4)
+			local target = characterRoot.Position
+				- flatLook * (5 + index * (1 + spread * 0.5))
+				+ right * (sideAmount * (2.5 + spread * 1.6))
 			local pull = (target - follower.position) * FOLLOW_STIFFNESS - follower.velocity * FOLLOW_DAMPING
 			follower.velocity += pull * dt
 			follower.position += follower.velocity * dt
+		end
 
+		-- Formation spacing alone can't stop the melt: the springs steer all
+		-- three through the same spot on a tight turn. Any overlapping pair
+		-- is nudged apart along the line between their centres — positions
+		-- only, velocities untouched, so the springs re-form the wedge
+		-- smoothly instead of twanging off the correction.
+		for a = 1, #followers do
+			for b = a + 1, #followers do
+				local first, second = followers[a], followers[b]
+				local offset = Vector3.new(second.position.X - first.position.X, 0, second.position.Z - first.position.Z)
+				local minGap = first.radius + second.radius
+				local gap = offset.Magnitude
+				if gap < minGap then
+					local push = if gap > 0.05 then offset.Unit else flatLook
+					local correction = push * (minGap - gap) * 0.5
+					first.position -= correction
+					second.position += correction
+				end
+			end
+		end
+
+		for index, follower in followers do
 			-- Stood on its own UNDERSIDE, like the clicker on its cushion: a
 			-- model is not centred on the ground, it rests on it, and the
 			-- giant squishies were half-buried by exactly their own radius.
