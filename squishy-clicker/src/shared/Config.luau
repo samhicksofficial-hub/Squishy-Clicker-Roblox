@@ -330,13 +330,22 @@ local Config = {
 	ActiveSquishyStarBonus = 0.15,
 
 	-- ===== The sky =====
-	-- The realistic sky, owned by CODE once its texture ids are known. A Sky
-	-- instance living only in the place file kept vanishing between Studio
-	-- sessions; with the ids filled in here the server rebuilds it at every
-	-- startup and nothing can lose it again. While this is false, the server
-	-- falls back to adopting whatever Sky instance it finds — and prints
-	-- this exact line, filled in, to the Output. Paste that over this.
-	SkyTextures = false,
+	-- The realistic sky ("AtmosphericClouds2"), owned by CODE: the server
+	-- rebuilds it from these ids at every startup, so it can never vanish
+	-- with the place file again — which is how it was lost the first time.
+	-- The ids came off the adopted Sky instance's own printout, and each was
+	-- verified against the asset's face name (Ft/Rt are assigned the way the
+	-- pack's author shipped them, which is what rendered correctly).
+	SkyTextures = {
+		Bk = "http://www.roblox.com/asset/?id=150335574",
+		Dn = "http://www.roblox.com/asset/?id=150335585",
+		Ft = "http://www.roblox.com/asset/?id=150335628",
+		Lf = "http://www.roblox.com/asset/?id=150335620",
+		Rt = "http://www.roblox.com/asset/?id=150335610",
+		Up = "http://www.roblox.com/asset/?id=150335642",
+		SunAngularSize = 21,
+		MoonAngularSize = 11,
+	},
 
 	-- ===== The collection bonus =====
 	-- Every DISTINCT squishy ever discovered adds this to the Cash
