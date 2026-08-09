@@ -203,9 +203,10 @@ local Config = {
 	CollectTouchRadius = 8, -- world studs at which the flying squishy touches a pickup
 
 	-- The fraction of pickups laid dead on the centre line, where the
-	-- fire-time magnet still sweeps them passively. The rest sit out in the
-	-- lane and belong to steering.
-	PickupCentreFraction = 0.4,
+	-- fire-time magnet still sweeps them passively. The rest spread UNIFORM
+	-- across the full lane width, edges included — flying straight earns the
+	-- floor, and the sides are where the money actually lives.
+	PickupCentreFraction = 0.25,
 
 	-- Manual ground slam: SPACE (or a screen tap) dives the squishy into the
 	-- ground and bursts the cash near the impact point off the track.
@@ -216,17 +217,22 @@ local Config = {
 
 	-- ===== Boost Boots =====
 	-- Floating green up-arrows on the track. Steering through one kicks the
-	-- squishy visibly skyward and pays a Cash bonus (scaled by how far out
-	-- it sits, like every pickup, then by the full cash multiplier stack).
+	-- squishy skyward and pays a Cash bonus (scaled by how far out it sits,
+	-- like every pickup, then by the full cash multiplier stack). The kick
+	-- is a real little arc — an upward IMPULSE integrated against its own
+	-- gravity — so the ride up is smooth and the fall back is earned, never
+	-- a teleport.
 	BootCount = 2,
 	BootCash = 150,
-	BootLift = 46, -- the visual kick upward, in world studs
+	BootImpulse = 85, -- world studs/sec of upward kick on touch
+	BootGravity = 90, -- studs/sec² pulling that kick back down (~40-stud arc)
 
 	-- ===== Bombs =====
-	-- Cartoon bombs on the track. Hitting one knocks the squishy down and
-	-- cuts the flight bonus — every hit multiplies the claim by (1 - this).
-	-- Dodging is the point: the cash clusters near them on purpose.
-	BombCount = 4,
+	-- Cartoon bombs. Hitting one knocks the squishy down and cuts the
+	-- flight bonus — every hit multiplies the claim by (1 - this). Half of
+	-- them anchor beside cash so greed and danger share an address; the
+	-- other half scatter the WHOLE range so no line is ever carefree.
+	BombCount = 10,
 	BombClaimPenalty = 0.2,
 
 	-- How near the path has to pass to sweep a pickup up — quoted in the units

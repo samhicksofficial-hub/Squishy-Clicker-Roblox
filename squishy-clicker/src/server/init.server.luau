@@ -672,11 +672,11 @@ local function makeLaunchField(data: PlayerData): { Pickup }
 		end
 
 		-- Some pickups ride the centre line for the fire-time magnet; the
-		-- rest sit out in the steering lane and belong to the mid-air game.
+		-- rest spread UNIFORM across the full lane, edge to edge, so the
+		-- sides of the player's space are always worth steering to.
 		local lane = 0
 		if rng:NextNumber() > Config.PickupCentreFraction then
-			local direction = rng:NextNumber() < 0.5 and -1 or 1
-			lane = direction * (3 + rng:NextNumber() * (Config.SteerHalfWidth - 3))
+			lane = (rng:NextNumber() * 2 - 1) * Config.SteerHalfWidth
 		end
 
 		table.insert(field, {
@@ -728,12 +728,17 @@ local function makeTrackExtras(data: PlayerData, field: { Pickup }): ({ TrackBoo
 	end
 
 	for index = 1, Config.BombCount do
-		-- Anchor each bomb to a real pickup when one exists, offset a touch,
-		-- so greed and danger share an address.
-		local anchor = field[((index * 7) % math.max(#field, 1)) + 1]
-		local at = anchor and anchor.distance * (0.92 + rng:NextNumber() * 0.16)
-			or reach * (0.25 + rng:NextNumber() * 0.6)
-		local lane = (anchor and anchor.lane or 0) + (rng:NextNumber() * 2 - 1) * 5
+		-- Half the bombs anchor beside a real pickup, offset a touch, so
+		-- greed and danger share an address. The other half scatter across
+		-- the WHOLE range — any lane, any distance — so no line through the
+		-- field is ever carefree.
+		local anchor = if index % 2 == 0 then field[((index * 7) % math.max(#field, 1)) + 1] else nil
+		local at = if anchor
+			then anchor.distance * (0.92 + rng:NextNumber() * 0.16)
+			else reach * (0.12 + rng:NextNumber() * 0.85)
+		local lane = if anchor
+			then anchor.lane + (rng:NextNumber() * 2 - 1) * 5
+			else (rng:NextNumber() * 2 - 1) * Config.SteerHalfWidth
 		table.insert(bombs, {
 			distance = math.max(at, 1),
 			height = rng:NextNumber() < 0.4 and 2 or 6 + rng:NextNumber() * 24,

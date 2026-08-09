@@ -367,7 +367,7 @@ local bombParts: { BasePart } = {}
 for _ = 1, 4 do
 	table.insert(bootParts, makeExtraPart(Enum.PartType.Block, 4.5, Color3.fromRGB(88, 232, 96), Enum.Material.Neon, "⬆️", 4))
 end
-for _ = 1, 8 do
+for _ = 1, 14 do
 	table.insert(bombParts, makeExtraPart(Enum.PartType.Ball, 5, Color3.fromRGB(52, 52, 58), Enum.Material.SmoothPlastic, "💣", 3.6))
 end
 
@@ -397,7 +397,8 @@ local slamsUsed = 0
 local slamActive = false
 local slamDrop = 0 -- 0 riding the arc, 1 pressed to the ground
 local slamCollectAt: { distance: number, lane: number }? = nil
-local extraLift = 0 -- the boots' upward kick, decaying
+local extraLift = 0 -- the boots' kick, integrated as a real mini-arc
+local liftVel = 0 -- its vertical velocity, fought by BootGravity
 local flightEvents: { { [string]: any } } = {}
 local flightSerial = 0
 local claimSent = true
@@ -965,6 +966,9 @@ local function beginSlam(manual: boolean)
 	else
 		slamCollectAt = nil
 	end
+	-- A dive cancels whatever a boot was still carrying.
+	extraLift = 0
+	liftVel = 0
 	slamActive = true
 end
 
@@ -1083,6 +1087,7 @@ function Flight.play(plan: {
 	slamDrop = 0
 	slamCollectAt = nil
 	extraLift = 0
+	liftVel = 0
 	touchAt = nil
 
 	-- ...and the boots and bombs re-seat ON this flight's own visual arc, so
@@ -1285,7 +1290,17 @@ RunService.RenderStepped:Connect(function(dt)
 	elseif slamDrop > 0 then
 		slamDrop = math.max(slamDrop - dt * 2.2, 0)
 	end
-	extraLift *= math.exp(-dt * 1.5)
+
+	-- The boots' kick, integrated: an impulse rises against its own gravity
+	-- and falls back to the server's arc — a smooth little bounce on top of
+	-- the flight, not a teleport up and an ooze down.
+	if extraLift > 0 or liftVel > 0 then
+		liftVel -= Config.BootGravity * dt
+		extraLift = math.max(extraLift + liftVel * dt, 0)
+		if extraLift == 0 and liftVel < 0 then
+			liftVel = 0
+		end
+	end
 
 	-- Where the squishy actually draws: the server's arc, dived by any slam,
 	-- kicked by any boot, and steered sideways across the lane.
@@ -1320,7 +1335,9 @@ RunService.RenderStepped:Connect(function(dt)
 				if glyph then
 					glyph.Enabled = false
 				end
-				extraLift = Config.BootLift
+				-- An impulse, not a position set: the loop's integrator turns
+				-- it into the smooth rise. Chained boots keep the stronger kick.
+				liftVel = math.max(liftVel, Config.BootImpulse)
 				bootSound.PlaybackSpeed = 1 + 0.12 * index
 				bootSound:Play()
 				floatPopup(base, "+BOOST!", Color3.fromRGB(120, 244, 128))
@@ -1384,7 +1401,10 @@ RunService.RenderStepped:Connect(function(dt)
 	windTrail.Enabled = flying and impactStrength > Config.WindTrailMinSpeedFraction
 
 	if toy then
-		local applied = 5 * modelSpec.scale
+		-- Much smaller than the old 5×: the squishy is a projectile, not a
+		-- parade float, and at this size the lane, the pickups and the
+		-- obstacles all read around it instead of underneath it.
+		local applied = 2.6 * modelSpec.scale
 		-- Tumbling about the axis PERPENDICULAR to the direction of travel
 		-- (the outer `side`), so it somersaults forward whichever way the
 		-- plot faces.
