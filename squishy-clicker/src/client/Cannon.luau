@@ -48,11 +48,11 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	-- moment the window was short — a list cannot overlap itself.
 	local column = UI.make("Frame", {
 		Name = "RightColumn",
-		-- Sized to its CONTENT (one wallet row + two buttons + padding), not
-		-- a guess with slack: the collection panel below positions itself off
-		-- this frame's real rendered bottom, so an oversized frame here is an
-		-- empty moat there.
-		Size = UDim2.new(0, 210, 0, 156),
+		-- Just the wallet now — Rebirth and Shop moved to the nav rail. As
+		-- wide as the collection panel below, so the whole right side reads
+		-- as one aligned stack. Sized to CONTENT: the collection panel
+		-- positions itself off this frame's real rendered bottom.
+		Size = UDim2.new(0, 300, 0, 40),
 		Position = UDim2.new(1, -18, 0, 16),
 		AnchorPoint = Vector2.new(1, 0),
 		BackgroundTransparency = 1,
@@ -177,7 +177,10 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	-- game, and the squisher and the steamer are two places you can visit.
 	local rail = UI.make("Frame", {
 		Name = "NavRail",
-		Size = UDim2.new(0, 92, 0, 470),
+		-- Exactly the seven buttons' worth (7 × 66 + 6 × 8): the frame is
+		-- centre-anchored, so content height == frame height is what makes
+		-- the list actually sit centred instead of hanging from a guess.
+		Size = UDim2.new(0, 92, 0, 510),
 		Position = UDim2.new(0, 16, 0.5, 0),
 		AnchorPoint = Vector2.new(0, 0.5),
 		BackgroundTransparency = 1,
@@ -190,7 +193,16 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		Parent = rail,
 	})
 
-	local function railButton(order: number, icon: string, caption: string, top: Color3, bottom: Color3, onClick: () -> ())
+	-- Returns the caption label as well: Rebirth lives on the rail now and
+	-- its caption changes with the server's numbers.
+	local function railButton(
+		order: number,
+		icon: string,
+		caption: string,
+		top: Color3,
+		bottom: Color3,
+		onClick: () -> ()
+	): (UI.Button, TextLabel)
 		local entry = UI.button({
 			parent = rail,
 			size = UDim2.new(1, 0, 0, 66),
@@ -210,7 +222,7 @@ function Cannon.mount(gui: GuiObject, scene: any)
 			ZIndex = 6,
 			Parent = entry.button,
 		})
-		UI.label({
+		local captionLabel = UI.label({
 			Size = UDim2.new(1, -6, 0, 20),
 			Position = UDim2.new(0, 3, 1, -24),
 			Text = caption,
@@ -219,7 +231,7 @@ function Cannon.mount(gui: GuiObject, scene: any)
 			Parent = entry.button,
 		})
 		entry.button.Activated:Connect(onClick)
-		return entry
+		return entry, captionLabel
 	end
 
 	railButton(1, "🚀", "LAUNCH", C.green, C.greenDeep, function()
@@ -234,40 +246,20 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		showOnly(nil)
 		scene.setView("unbox")
 	end)
-	railButton(4, "🚀", "UPGRADE", C.orange, C.orangeDeep, function()
+	railButton(4, "⬆️", "UPGRADE", C.orange, C.orangeDeep, function()
 		showOnly("upgrades")
 	end)
 	railButton(5, "🌍", "WORLDS", C.blue, C.blueDeep, function()
 		showOnly("worlds")
 	end)
 
-	-- Rebirth and the shop sit apart from the rail, the way the mockups put
-	-- them: the two things the game most wants noticed.
-	local rebirthOpen = UI.button({
-		parent = column,
-		size = UDim2.new(1, 0, 0, 48),
-		text = "🔄 REBIRTH",
-		textSize = 18,
-		top = C.pink,
-		bottom = C.pinkDeep,
-		zIndex = 5,
-	})
-	rebirthOpen.button.LayoutOrder = 4
-	rebirthOpen.button.Activated:Connect(function()
+	-- Rebirth and the shop live on the rail with everything else now — they
+	-- used to stand under the wallet, where they crowded the collection
+	-- panel on every screen size that wasn't the design one.
+	local _, rebirthCaption = railButton(6, "🔄", "REBIRTH", C.pink, C.pinkDeep, function()
 		showOnly("rebirth")
 	end)
-
-	local shopOpen = UI.button({
-		parent = column,
-		size = UDim2.new(1, 0, 0, 48),
-		text = "🧺 SHOP",
-		textSize = 18,
-		top = C.orange,
-		bottom = C.orangeDeep,
-		zIndex = 5,
-	})
-	shopOpen.button.LayoutOrder = 5
-	shopOpen.button.Activated:Connect(function()
+	railButton(7, "🧺", "SHOP", C.orange, C.orangeDeep, function()
 		showOnly("shop")
 	end)
 
@@ -678,7 +670,7 @@ function Cannon.mount(gui: GuiObject, scene: any)
 
 		rebirthGo.button.Text = ("REBIRTH  (%d)"):format(rebirths)
 		UI.setButtonEnabled(rebirthGo, state.rebirthReady == true, C.green, C.greenDeep)
-		rebirthOpen.button.Text = state.rebirthReady and "🔄 REBIRTH!" or ("🔄 REBIRTH %d"):format(rebirths)
+		rebirthCaption.Text = state.rebirthReady and "REBIRTH!" or ("REBIRTH %d"):format(rebirths)
 
 		-- ----- worlds -----
 		local activeWorldId = state.worldId or Config.Worlds[1].id
@@ -743,8 +735,9 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	-- The launcher's own controls belong to the valley. At the toy shop they
 	-- come down and the steamer half's HUD goes up in the same corners, so the
 	-- two never compete for the screen. The wallet and the rail stay up
-	-- throughout: they are how you read the game and how you move around it.
-	local valleyHud = { rebirthOpen.button, shopOpen.button, feed }
+	-- throughout — Rebirth and Shop ride the rail now, so the feed is the
+	-- only valley-only element left.
+	local valleyHud = { feed }
 
 	scene.onViewChanged(function(atValley)
 		for _, element in valleyHud do
