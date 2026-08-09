@@ -23,7 +23,9 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local Format = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Format"))
@@ -280,7 +282,9 @@ local PICKUP_LOOK = {
 	coin = Color3.fromRGB(96, 210, 100),
 }
 local VIP_GOLD = Color3.fromRGB(240, 190, 70)
-type PickupEntry = { distance: number, height: number, kind: string, value: number, vip: boolean }
+type PickupEntry = { distance: number, height: number, kind: string, value: number, vip: boolean, lane: number? }
+type BootEntry = { distance: number, height: number, lane: number, cash: number }
+type BombEntry = { distance: number, height: number, lane: number }
 
 local pickupParts: { BasePart } = {}
 local pickupField: { PickupEntry } = {}
@@ -325,6 +329,84 @@ for _ = 1, POOL do
 
 	table.insert(pickupParts, prize)
 end
+
+-- ---------- the steerable extras ----------
+-- Boost boots and bombs ride the same track as the cash, out in the lane
+-- where only steering reaches. Same house style as the pickups: a shaped
+-- part with a stud-sized emoji billboard, which reads at any distance.
+local function makeExtraPart(shape: Enum.PartType, size: number, color: Color3, material: Enum.Material, glyph: string, glyphSize: number): BasePart
+	local part = Instance.new("Part")
+	part.Shape = shape
+	part.Size = Vector3.one * size
+	part.Color = color
+	part.Material = material
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Transparency = 1
+	part.Parent = stage
+
+	local icon = Instance.new("BillboardGui")
+	icon.Name = "Glyph"
+	icon.Size = UDim2.new(glyphSize, 0, glyphSize, 0)
+	icon.LightInfluence = 0
+	icon.Enabled = false
+	icon.Parent = part
+	local face = Instance.new("TextLabel")
+	face.Size = UDim2.fromScale(1, 1)
+	face.BackgroundTransparency = 1
+	face.Text = glyph
+	face.TextScaled = true
+	face.Parent = icon
+	return part
+end
+
+local bootParts: { BasePart } = {}
+local bombParts: { BasePart } = {}
+for _ = 1, 4 do
+	table.insert(bootParts, makeExtraPart(Enum.PartType.Block, 4.5, Color3.fromRGB(88, 232, 96), Enum.Material.Neon, "⬆️", 4))
+end
+for _ = 1, 8 do
+	table.insert(bombParts, makeExtraPart(Enum.PartType.Ball, 5, Color3.fromRGB(52, 52, 58), Enum.Material.SmoothPlastic, "💣", 3.6))
+end
+
+local bootField: { BootEntry } = {}
+local bombField: { BombEntry } = {}
+local bootBase: { [number]: Vector3 } = {}
+local bombBase: { [number]: Vector3 } = {}
+local bootTaken: { [number]: boolean } = {}
+local bombHit: { [number]: boolean } = {}
+
+-- The ascending ping for flying through a boot.
+local bootSound = Instance.new("Sound")
+bootSound.SoundId = "rbxasset://sounds/electronicpingshort.wav"
+bootSound.Volume = 0.6
+bootSound.Parent = SoundService
+
+-- ---------- the mid-air game's state ----------
+-- Steering and slamming change NOTHING the server has decided — distance,
+-- the arc and the fire-time payout are already settled. What they change is
+-- which off-lane things the replay touches, and that list is sent back as a
+-- claim for the server to validate and price (see ClaimFlight server-side).
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local ClaimFlightRemote = Remotes:WaitForChild("ClaimFlight") :: RemoteEvent
+
+local steerPos = 0
+local slamsUsed = 0
+local slamActive = false
+local slamDrop = 0 -- 0 riding the arc, 1 pressed to the ground
+local slamCollectAt: { distance: number, lane: number }? = nil
+local extraLift = 0 -- the boots' upward kick, decaying
+local flightEvents: { { [string]: any } } = {}
+local flightSerial = 0
+local claimSent = true
+local pendingBundle: any = nil
+
+-- Touch: horizontal drag steers, a short tap slams.
+local touchAt: number? = nil
+local touchTravel = 0
+local touchBegan = 0
 
 -- ---------- summoned squishies ----------
 -- The squishies ARE the pets, and summoning one means it walks the island
@@ -493,10 +575,56 @@ end
 -- it out from a nil origin scattered glowing crates over the plaza — the
 -- "something in the sky" hanging above spawn. Defined above setPlot because
 -- both setPlot and setField call it, whichever order the two race in.
+-- The lane's sideways direction in the world, for this plot's bearing.
+local function laneSide(): Vector3
+	return Vector3.new(-outward.Z, 0, outward.X)
+end
+
+-- Lay the boots and bombs along the track. Before a shot they preview at a
+-- modest hover; during one, play() re-lays them ON the flight's own visual
+-- arc, so steering laterally is genuinely the way to hit or dodge them.
+local function layoutExtras(heightFor: ((distance: number) -> number)?)
+	if not muzzle then
+		return
+	end
+	local side = laneSide()
+
+	local function seat(parts: { BasePart }, entries: { any }, bases: { [number]: Vector3 }, dead: { [number]: boolean })
+		for index, part in parts do
+			local entry = entries[index]
+			local drawable = entry ~= nil
+				and not dead[index]
+				and Config.rangeRadius(entry.distance) > muzzleRadius + 6
+			local icon = part:FindFirstChild("Glyph") :: BillboardGui?
+			if entry and drawable then
+				local lift = if heightFor then heightFor(entry.distance) else 14
+				bases[index] = worldAt(entry.distance, 0)
+					+ Vector3.new(0, math.max(lift, 6), 0)
+					+ side * entry.lane
+				part.Position = bases[index] :: Vector3
+				part.Transparency = 0
+				if icon then
+					icon.Enabled = true
+				end
+			else
+				bases[index] = nil
+				part.Transparency = 1
+				if icon then
+					icon.Enabled = false
+				end
+			end
+		end
+	end
+
+	seat(bootParts, bootField :: { any }, bootBase, bootTaken)
+	seat(bombParts, bombField :: { any }, bombBase, bombHit)
+end
+
 local function layoutField()
 	if not muzzle then
 		return
 	end
+	local side = laneSide()
 
 	local tallest = 1
 	for _, entry in pickupField do
@@ -520,9 +648,12 @@ local function layoutField()
 			prize.Size = Vector3.one * (entry.vip and 6.5 or 4)
 			prize.Transparency = 0.1
 			-- Laid out against the field's own tallest, so the strung-out
-			-- pickups sit at a readable height whatever the power level.
+			-- pickups sit at a readable height whatever the power level —
+			-- and out at their LANE offset, where the steering game lives.
 			local lift = entry.height / tallest * 90
-			pickupBase[index] = worldAt(entry.distance, 0) + Vector3.new(0, lift, 0)
+			pickupBase[index] = worldAt(entry.distance, 0)
+				+ Vector3.new(0, lift, 0)
+				+ side * (entry.lane or 0)
 			prize.Position = pickupBase[index] :: Vector3
 
 			local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
@@ -565,8 +696,10 @@ function Flight.setPlot(centre: Vector3)
 	-- the plot centre — the same spot Island.luau builds the pod.
 	stationAnchor.Position = centre - flat.Unit * STATION_BACK + Vector3.new(0, CAPSULE_ICON_HEIGHT, 0)
 
-	-- A field may have arrived before the plot did — lay it out now.
+	-- A field may have arrived before the plot did — lay it out now, the
+	-- boots and bombs with it.
 	layoutField()
+	layoutExtras(nil)
 end
 
 function Flight.setSquishy(shape: string?, color: Color3, sparkle: boolean, sizeScale: number?)
@@ -583,17 +716,40 @@ function Flight.setSquishy(shape: string?, color: Color3, sparkle: boolean, size
 	refreshStationIcon()
 end
 
-function Flight.setField(field: { PickupEntry })
-	pickupField = field
+local function applyFieldBundle(bundle: any)
+	-- The server sends { pickups, boots, bombs } now; a bare array is an old
+	-- shape and still works as pickups-only rather than crashing.
+	local pickups = bundle.pickups or bundle
+	pickupField = pickups
+	bootField = bundle.boots or {}
+	bombField = bundle.bombs or {}
 	pickupTaken = {}
 	pickupCollecting = {}
+	bootTaken = {}
+	bombHit = {}
 	for index, entry in pickupParts do
-		if not field[index] then
+		if not pickupField[index] then
 			pickupTaken[index] = true
 			entry.Transparency = 1
 		end
 	end
 	layoutField()
+	layoutExtras(nil)
+end
+
+function Flight.setField(bundle: any)
+	if typeof(bundle) ~= "table" then
+		return
+	end
+	-- The NEXT shot's track lands while this one is still flying (the server
+	-- lays it the instant it scores). Swapping mid-replay would yank the
+	-- steering game's targets out from underneath it — hold the new track
+	-- until the landing settles the claim.
+	if shot.active then
+		pendingBundle = bundle
+		return
+	end
+	applyFieldBundle(bundle)
 end
 
 -- ---------- impact FX ----------
@@ -733,7 +889,139 @@ local function payoutPopup(at: Vector3, distance: number, coins: number)
 	end)
 end
 
+-- The visual arc height at `x`, same parabola family the server draws from.
+local function simHeightAt(arcs: { Arc }, x: number): number
+	for _, arc in arcs do
+		if x <= arc.toX then
+			local span = arc.toX - arc.fromX
+			if arc.rolling or span <= 0 then
+				return 0
+			end
+			local along = (x - arc.fromX) / span
+			return arc.peak * 4 * along * (1 - along)
+		end
+	end
+	return 0
+end
+
+-- A pickup visually taken by the mid-air game (steer-through or slam
+-- burst). Payment is the server's — the claim covers it — this is only the
+-- pop the eye needs at the moment of touch.
+local function takePickupVisual(index: number, entry: PickupEntry)
+	pickupTaken[index] = true
+	pickupCollecting[index] = nil
+	local prize = pickupParts[index]
+	if prize then
+		floatPopup(prize.Position, ("+$%d"):format(entry.value), PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
+		prize.Transparency = 1
+		pickupBase[index] = nil
+		local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
+		if icon then
+			icon.Enabled = false
+		end
+	end
+end
+
+-- A quick dark puff for a bomb connecting.
+local function boomFx(at: Vector3)
+	local anchor = Instance.new("Part")
+	anchor.Size = Vector3.one
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Position = at
+	anchor.Parent = stage
+
+	local smoke = Instance.new("ParticleEmitter")
+	smoke.Texture = "rbxasset://textures/particles/smoke_main.dds"
+	smoke.Color = ColorSequence.new(Color3.fromRGB(70, 66, 62))
+	smoke.Lifetime = NumberRange.new(0.4, 0.8)
+	smoke.Speed = NumberRange.new(10, 22)
+	smoke.SpreadAngle = Vector2.new(180, 180)
+	smoke.Size = NumberSequence.new(3, 7)
+	smoke.Enabled = false
+	smoke.Parent = anchor
+	smoke:Emit(24)
+	task.delay(1.4, function()
+		anchor:Destroy()
+	end)
+end
+
+-- The dive. Manual slams spend a limited stock and burst nearby cash on
+-- impact; bomb knock-downs are the same dive with no reward attached.
+local function beginSlam(manual: boolean)
+	if slamActive or not shot.active then
+		return
+	end
+	if manual then
+		if slamsUsed >= Config.SlamMaxPerFlight then
+			return
+		end
+		slamsUsed += 1
+		slamCollectAt = { distance = shot.flown, lane = steerPos }
+		table.insert(flightEvents, { kind = "slam", distance = shot.flown, lane = steerPos })
+	else
+		slamCollectAt = nil
+	end
+	slamActive = true
+end
+
+-- What a slam's burst reaches, mirrored from the server's own formula so
+-- what pops here is exactly what the claim will pay there.
+local function slamBurst(at: { distance: number, lane: number })
+	local radius = math.max(shot.distance * Config.SlamRadiusFraction, Config.SlamRadiusMin)
+	for index, entry in pickupField do
+		if
+			not pickupTaken[index]
+			and pickupBase[index]
+			and math.abs(entry.distance - at.distance) <= radius
+			and math.abs((entry.lane or 0) - at.lane) <= Config.SlamLaneRadius
+		then
+			takePickupVisual(index, entry)
+		end
+	end
+end
+
+-- ---------- mid-air input ----------
+-- Keyboard steering is read per-frame in the loop; these are the taps.
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then
+		return
+	end
+	if input.KeyCode == Enum.KeyCode.Space and shot.active then
+		beginSlam(true)
+	elseif input.UserInputType == Enum.UserInputType.Touch and shot.active then
+		touchAt = input.Position.X
+		touchTravel = 0
+		touchBegan = os.clock()
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.Touch or touchAt == nil then
+		return
+	end
+	local dx = input.Position.X - (touchAt :: number)
+	touchAt = input.Position.X
+	touchTravel += math.abs(dx)
+	steerPos = math.clamp(steerPos + dx * 0.06, -Config.SteerHalfWidth, Config.SteerHalfWidth)
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.Touch or touchAt == nil then
+		return
+	end
+	touchAt = nil
+	-- A press that never travelled is a tap, and a tap is a slam.
+	if touchTravel < 10 and os.clock() - touchBegan < 0.35 then
+		beginSlam(true)
+	end
+end)
+
 function Flight.play(plan: {
+	serial: number?,
 	distance: number,
 	arcs: { Arc },
 	seconds: number,
@@ -784,6 +1072,25 @@ function Flight.play(plan: {
 	spinRate = math.pi * 5 * math.clamp(shot.launchSpeed / 260, 0.7, 1.8)
 	squash = 0
 	lastShotAt = nil
+
+	-- The mid-air game resets with the shot...
+	flightSerial = plan.serial or 0
+	flightEvents = {}
+	claimSent = false
+	steerPos = 0
+	slamsUsed = 0
+	slamActive = false
+	slamDrop = 0
+	slamCollectAt = nil
+	extraLift = 0
+	touchAt = nil
+
+	-- ...and the boots and bombs re-seat ON this flight's own visual arc, so
+	-- the path runs straight through them and steering sideways is genuinely
+	-- how they are hit or dodged.
+	layoutExtras(function(distance: number)
+		return simHeightAt(shot.arcs, distance) * shot.heightScale
+	end)
 
 	-- The milestones this shot crosses for the first time, positioned from
 	-- Config by name so the popup fires at the sign it belongs to.
@@ -910,12 +1217,24 @@ end
 RunService.RenderStepped:Connect(function(dt)
 	local toy = model
 	local flying = shot.progress < 1
+	local side = laneSide()
 
 	if shot.active then
 		shot.progress += dt / shot.seconds
 		if shot.progress >= 1 then
 			shot.progress = 1
 			shot.active = false
+			-- The replay is over: settle the mid-air game. One claim per
+			-- shot, and the held-back next track can finally land.
+			if not claimSent then
+				claimSent = true
+				ClaimFlightRemote:FireServer(flightSerial, flightEvents)
+			end
+			if pendingBundle then
+				local bundle = pendingBundle
+				pendingBundle = nil
+				applyFieldBundle(bundle)
+			end
 		end
 	end
 
@@ -929,9 +1248,108 @@ RunService.RenderStepped:Connect(function(dt)
 			end
 		end
 		shot.bounced = skips
+
+		-- Keyboard steering, read fresh each frame: A / D or the arrows.
+		local steerInput = 0
+		if UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.Left) then
+			steerInput -= 1
+		end
+		if UserInputService:IsKeyDown(Enum.KeyCode.D) or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
+			steerInput += 1
+		end
+		steerPos = math.clamp(
+			steerPos + steerInput * Config.SteerSpeed * dt,
+			-Config.SteerHalfWidth,
+			Config.SteerHalfWidth
+		)
 	end
 
-	local at = worldAt(shot.flown, shot.height)
+	-- The slam's dive and recovery. The arc itself never changes — the dive
+	-- scales the drawn height down to the ground and eases it back after.
+	if slamActive then
+		slamDrop = math.min(slamDrop + dt * 5, 1)
+		if slamDrop >= 1 then
+			slamActive = false
+			local ground = worldAt(shot.flown, 0) + side * steerPos
+			splat(ground, Config.LaunchSplatRadius * 0.9)
+			squash = 1
+			shakeAmp = Config.ImpactShakeMagnitude
+			shakePhase = 0
+			fovKick = 1
+			if slamCollectAt then
+				floatPopup(ground + Vector3.new(0, 8, 0), "💥 SLAM!", Color3.fromRGB(255, 214, 120))
+				slamBurst(slamCollectAt :: { distance: number, lane: number })
+				slamCollectAt = nil
+			end
+		end
+	elseif slamDrop > 0 then
+		slamDrop = math.max(slamDrop - dt * 2.2, 0)
+	end
+	extraLift *= math.exp(-dt * 1.5)
+
+	-- Where the squishy actually draws: the server's arc, dived by any slam,
+	-- kicked by any boot, and steered sideways across the lane.
+	local arcAt = worldAt(shot.flown, shot.height)
+	local groundLevel = worldAt(shot.flown, 0).Y
+	local at = Vector3.new(
+		arcAt.X,
+		groundLevel + (arcAt.Y - groundLevel) * (1 - slamDrop) + extraLift,
+		arcAt.Z
+	) + side * steerPos
+
+	-- Steering through things: whatever the drawn squishy touches, the claim
+	-- remembers. The server re-prices all of it; these are the visuals.
+	if flying and toy then
+		local touchRadius = Config.CollectTouchRadius
+		for index, entry in pickupField do
+			local base = pickupBase[index]
+			if base and not pickupTaken[index] and pickupCollecting[index] == nil then
+				if (base - at).Magnitude <= touchRadius + (entry.vip and 3 or 2) then
+					takePickupVisual(index, entry)
+					table.insert(flightEvents, { kind = "pickup", index = index })
+				end
+			end
+		end
+		for index in bootField do
+			local base = bootBase[index]
+			if base and not bootTaken[index] and (base - at).Magnitude <= touchRadius + 2 then
+				bootTaken[index] = true
+				bootBase[index] = nil
+				bootParts[index].Transparency = 1
+				local glyph = bootParts[index]:FindFirstChild("Glyph") :: BillboardGui?
+				if glyph then
+					glyph.Enabled = false
+				end
+				extraLift = Config.BootLift
+				bootSound.PlaybackSpeed = 1 + 0.12 * index
+				bootSound:Play()
+				floatPopup(base, "+BOOST!", Color3.fromRGB(120, 244, 128))
+				table.insert(flightEvents, { kind = "boot", index = index })
+			end
+		end
+		for index in bombField do
+			local base = bombBase[index]
+			if base and not bombHit[index] and (base - at).Magnitude <= touchRadius + 2.5 then
+				bombHit[index] = true
+				bombBase[index] = nil
+				bombParts[index].Transparency = 1
+				local glyph = bombParts[index]:FindFirstChild("Glyph") :: BillboardGui?
+				if glyph then
+					glyph.Enabled = false
+				end
+				boomFx(base)
+				floatPopup(base, "-BOOM!", Color3.fromRGB(255, 110, 92))
+				-- The hit reads in the body: spin knocked down, and a forced
+				-- dive with no burst attached.
+				spinRate *= 0.55
+				beginSlam(false)
+				fovKick = 1
+				shakeAmp = Config.ImpactShakeMagnitude
+				shakePhase = 0
+				table.insert(flightEvents, { kind = "bomb", index = index })
+			end
+		end
+	end
 
 	-- Impact FX. A splat per skip and a snap of the camera's FOV; a bigger
 	-- splat plus the payout popup once, at the point of rest. landingDone
@@ -940,7 +1358,7 @@ RunService.RenderStepped:Connect(function(dt)
 	if flying and shot.bounced > lastBounceSeen then
 		lastBounceSeen = shot.bounced
 		fovKick = 1
-		splat(worldAt(shot.flown, 0), Config.LaunchSplatRadius * 0.7)
+		splat(worldAt(shot.flown, 0) + side * steerPos, Config.LaunchSplatRadius * 0.7)
 		-- Re-kick the shake oscillator, scaled by how fast the hit was.
 		shakeAmp = Config.ImpactShakeMagnitude * (0.4 + 0.6 * impactStrength)
 		shakePhase = 0
@@ -952,7 +1370,7 @@ RunService.RenderStepped:Connect(function(dt)
 		fovKick = 1
 		shakeAmp = Config.ImpactShakeMagnitude
 		shakePhase = 0
-		local ground = worldAt(shot.distance, 0)
+		local ground = worldAt(shot.distance, 0) + side * steerPos
 		splat(ground, Config.LaunchSplatRadius)
 		payoutPopup(ground, shot.distance, shot.earnedCoins)
 		-- The full pancake, for the full stop.
@@ -967,19 +1385,19 @@ RunService.RenderStepped:Connect(function(dt)
 
 	if toy then
 		local applied = 5 * modelSpec.scale
-		-- Tumbling about the axis PERPENDICULAR to the direction of travel,
-		-- so it somersaults forward whichever way the plot faces. A fixed
-		-- world axis only looks right on two of the eight bearings; on the
-		-- others it reads as a sideways barrel roll.
-		local side = Vector3.new(-outward.Z, 0, outward.X)
-
-		-- Impact squash relaxes on its own clock, and eases sharply so the
-		-- pancake pops back rather than oozing. Volume roughly conserved:
-		-- what the height loses, the width gains.
+		-- Tumbling about the axis PERPENDICULAR to the direction of travel
+		-- (the outer `side`), so it somersaults forward whichever way the
+		-- plot faces.
+		--
+		-- Impact deformation runs pancake THEN rebound: the damped cosine
+		-- takes the shape from squashed flat through an overshoot into a
+		-- tall stretch and back to rest — the rubbery plush read, in one
+		-- curve instead of chained tweens. Volume roughly conserved either
+		-- way: what the height loses or gains, the width gives back.
 		squash = math.max(squash - dt * 5, 0)
-		local pop = squash * squash
+		local deform = squash ^ 1.4 * math.cos((1 - squash) * 5)
 		local scaleVec =
-			Vector3.new(applied * (1 + 0.3 * pop), applied * (1 - 0.42 * pop), applied * (1 + 0.3 * pop))
+			Vector3.new(applied * (1 + 0.3 * deform), applied * (1 - 0.42 * deform), applied * (1 + 0.3 * deform))
 
 		-- Stood on its UNDERSIDE like the summons — measured on the SQUASHED
 		-- height, so a pancaked hit presses into the ground it is denting
@@ -1059,6 +1477,20 @@ RunService.RenderStepped:Connect(function(dt)
 		if base and prize.Transparency < 1 then
 			prize.CFrame = CFrame.new(base + Vector3.new(0, math.sin(idleClock * 2.2 + index) * 0.7, 0))
 				* CFrame.Angles(0, idleClock * 1.4 + index, 0)
+		end
+	end
+	for index, part in bootParts do
+		local base = bootBase[index]
+		if base and part.Transparency < 1 then
+			part.CFrame = CFrame.new(base + Vector3.new(0, math.sin(idleClock * 2.6 + index * 2) * 0.9, 0))
+				* CFrame.Angles(0, idleClock * 1.8 + index, 0)
+		end
+	end
+	for index, part in bombParts do
+		local base = bombBase[index]
+		if base and part.Transparency < 1 then
+			part.CFrame = CFrame.new(base + Vector3.new(0, math.sin(idleClock * 1.6 + index * 3) * 0.5, 0))
+				* CFrame.Angles(0, idleClock * 0.8 + index, 0)
 		end
 	end
 
@@ -1184,10 +1616,10 @@ RunService.RenderStepped:Connect(function(dt)
 		if camera.CameraType ~= Enum.CameraType.Scriptable then
 			camera.CameraType = Enum.CameraType.Scriptable
 		end
-		local side = Vector3.new(-outward.Z, 0, outward.X)
 		-- The damped harmonic shake: an exponentially decaying sine, kicked
 		-- by every impact, riding the eye in view space so it reads as the
-		-- CAMERA being jolted rather than the world wobbling.
+		-- CAMERA being jolted rather than the world wobbling. (`side` is the
+		-- loop-level lane direction, shared with the steering.)
 		local wobble = shakeAmp * math.exp(-Config.ImpactShakeDamping * shakePhase)
 			* math.sin(shakePhase * math.pi * 2 * Config.ImpactShakeHz)
 		local shakeOffset = Vector3.new(0, wobble, 0) + side * wobble * 0.4

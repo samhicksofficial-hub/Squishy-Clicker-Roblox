@@ -188,6 +188,47 @@ local Config = {
 	-- the same per pickup as a 500-stud one and the track stops mattering.
 	PickupValuePer1kStuds = 0.35,
 
+	-- ===== Mid-air controls =====
+	-- The flight itself never changed hands: distance, the arc and the
+	-- fire-time magnet sweep are still the server's closed-form arithmetic.
+	-- What steering adds is a LATERAL game on top — pickups sit across a
+	-- lane now, the player steers the replay through them (and away from
+	-- bombs), and the claims are settled AFTER landing, validated against
+	-- what the steering speed could physically have reached in the time the
+	-- flight allowed. A claim the physics couldn't make is simply not paid.
+	SteerHalfWidth = 15, -- studs either side of the lane's centre line
+	SteerSpeed = 26, -- lateral studs/sec — the client's control AND the server's reachability check
+	ClaimLaneSlack = 6, -- forgiveness in that check, so honest play never loses a claim to rounding
+	ClaimHeightWindow = 60, -- vertical generosity when validating a claimed pickup against the arc
+	CollectTouchRadius = 8, -- world studs at which the flying squishy touches a pickup
+
+	-- The fraction of pickups laid dead on the centre line, where the
+	-- fire-time magnet still sweeps them passively. The rest sit out in the
+	-- lane and belong to steering.
+	PickupCentreFraction = 0.4,
+
+	-- Manual ground slam: SPACE (or a screen tap) dives the squishy into the
+	-- ground and bursts the cash near the impact point off the track.
+	SlamMaxPerFlight = 3,
+	SlamRadiusFraction = 0.05, -- of the shot's distance...
+	SlamRadiusMin = 12, -- ...but never tighter than this, in sim studs
+	SlamLaneRadius = 14,
+
+	-- ===== Boost Boots =====
+	-- Floating green up-arrows on the track. Steering through one kicks the
+	-- squishy visibly skyward and pays a Cash bonus (scaled by how far out
+	-- it sits, like every pickup, then by the full cash multiplier stack).
+	BootCount = 2,
+	BootCash = 150,
+	BootLift = 46, -- the visual kick upward, in world studs
+
+	-- ===== Bombs =====
+	-- Cartoon bombs on the track. Hitting one knocks the squishy down and
+	-- cuts the flight bonus — every hit multiplies the claim by (1 - this).
+	-- Dodging is the point: the cash clusters near them on purpose.
+	BombCount = 4,
+	BombClaimPenalty = 0.2,
+
 	-- How near the path has to pass to sweep a pickup up — quoted in the units
 	-- the player actually SEES, not in game studs.
 	--

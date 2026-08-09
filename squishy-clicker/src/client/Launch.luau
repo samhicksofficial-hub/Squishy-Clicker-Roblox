@@ -66,6 +66,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 	local remotes = ReplicatedStorage:WaitForChild("Remotes")
 	local shotRemote = remotes:WaitForChild("LaunchShot") :: RemoteEvent
 	local resultRemote = remotes:WaitForChild("LaunchResult") :: RemoteEvent
+	local bonusRemote = remotes:WaitForChild("FlightBonus") :: RemoteEvent
 	local fieldRemote = remotes:WaitForChild("LaunchField") :: RemoteEvent
 
 	local stage: Stage = "idle"
@@ -308,7 +309,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 	-- has to be legible at a glance on a phone.
 	local flightHud = UI.make("Frame", {
 		Name = "FlightHud",
-		Size = UDim2.new(0, 460, 0, 140),
+		Size = UDim2.new(0, 460, 0, 158),
 		Position = UDim2.new(0.5, 0, 0, 20),
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 1,
@@ -339,6 +340,15 @@ function Launch.mount(gui: GuiObject, scene: any)
 		Position = UDim2.new(0, 0, 0, 104),
 		Text = "",
 		TextSize = 19,
+		ZIndex = 21,
+		Parent = flightHud,
+	})
+	UI.label({
+		Size = UDim2.new(1, 0, 0, 20),
+		Position = UDim2.new(0, 0, 0, 134),
+		Text = "◀ A / D ▶ steer   ·   SPACE or tap to SLAM",
+		TextSize = 15,
+		TextColor3 = Color3.fromRGB(220, 240, 255),
 		ZIndex = 21,
 		Parent = flightHud,
 	})
@@ -388,14 +398,16 @@ function Launch.mount(gui: GuiObject, scene: any)
 		})
 	end
 
-	-- One currency now: track Cash on top, milestone bounties (the one-off
-	-- Cash for first-time signs) called out on their own row beneath.
+	-- One currency now: track Cash on top, milestone bounties beneath, and
+	-- the mid-air game's settled claim (steered pickups, boots, slams, less
+	-- bombs) on its own row once the server prices it.
 	local coinRow = rewardRow(78, C.cash, Color3.fromRGB(84, 186, 60))
 	local bountyRow = rewardRow(128, C.orange, C.orangeDeep)
+	local skillRow = rewardRow(178, C.purple, C.purpleDeep)
 
 	local breakdown = UI.label({
 		Size = UDim2.new(1, -24, 0, 66),
-		Position = UDim2.new(0, 12, 0, 180),
+		Position = UDim2.new(0, 12, 0, 228),
 		Text = "",
 		TextSize = 14,
 		TextColor3 = Color3.fromRGB(252, 226, 180),
@@ -635,11 +647,41 @@ function Launch.mount(gui: GuiObject, scene: any)
 		precisionLabel.TextColor3 = Color3.fromHSV(precision * 0.33, 0.72, 1)
 	end)
 
+	-- ---------- the mid-air claim's settlement ----------
+	-- Arrives around the moment the replay lands — usually just BEFORE the
+	-- summary card, which is why the value is held rather than only drawn:
+	-- whichever of the two shows up second paints the row.
+	local latestBonus: any = nil
+	local function paintSkillRow()
+		local bonus = latestBonus
+		local card = skillRow.Parent :: Frame
+		if bonus and (bonus.cash or 0) > 0 then
+			skillRow.Text = ("🎮  +%s Flight Bonus!"):format(Format.abbreviate(bonus.cash))
+			card.Visible = true
+		else
+			card.Visible = false
+		end
+	end
+
+	bonusRemote.OnClientEvent:Connect(function(bonus)
+		if typeof(bonus) ~= "table" then
+			return
+		end
+		latestBonus = bonus
+		paintSkillRow()
+		if (bonus.cash or 0) > 0 then
+			-- The steered cash flies home just like the fire-time cash did.
+			Cannon.collectCash(bonus.cash)
+		end
+	end)
+
 	-- ---------- the server's verdict ----------
 	resultRemote.OnClientEvent:Connect(function(result)
 		if typeof(result) ~= "table" then
 			return
 		end
+		-- A fresh shot voids the previous shot's settled bonus display.
+		latestBonus = nil
 
 		-- A refusal. The server tells us why rather than dropping the request,
 		-- so the screen comes straight back with a reason on it.
@@ -675,6 +717,8 @@ function Launch.mount(gui: GuiObject, scene: any)
 			local bounty = result.milestoneCash or 0
 			bountyRow.Text = ("🏁  +%s Bounty!"):format(Format.abbreviate(bounty));
 			(bountyRow.Parent :: Frame).Visible = bounty > 0
+			-- The claim may already have settled while the shot flew.
+			paintSkillRow()
 
 			-- The multiplier breakdown: what each part of the account actually
 			-- contributed, so an upgrade's effect is visible rather than felt.
