@@ -683,9 +683,6 @@ function Launch.mount(gui: GuiObject, scene: any)
 				),
 				("cash ×%.2f   ·   collection ×%.2f"):format(result.coinMultiplier or 1, result.collectionBonus or 1),
 			}
-			if result.boosted then
-				table.insert(lines, "💵 Cash Rain was running")
-			end
 			local milestones = result.milestones or {}
 			if #milestones > 0 then
 				local names = {}

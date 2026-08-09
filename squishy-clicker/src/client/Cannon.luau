@@ -1,7 +1,7 @@
 --!strict
 -- ============================================================
 --  CANNON HUD  —  the wallet, the nav rail, the lobby feed, and
---  every panel behind them: Upgrades, Rebirth, Worlds, Steamers
+--  every panel behind them: Upgrades, Rebirth, Worlds
 --  and the Game Shop.
 --
 --  The launcher is the main game, so this owns most of what is on
@@ -38,9 +38,7 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	local remotes = ReplicatedStorage:WaitForChild("Remotes")
 	local buyPower = remotes:WaitForChild("BuyPower") :: RemoteEvent
 	local doRebirth = remotes:WaitForChild("DoRebirth") :: RemoteEvent
-	local buySteamer = remotes:WaitForChild("BuySteamer") :: RemoteEvent
 	local setWorldRemote = remotes:WaitForChild("SetWorld") :: RemoteEvent
-	local activateBoost = remotes:WaitForChild("ActivateBoost") :: RemoteEvent
 	local launchBroadcast = remotes:WaitForChild("LaunchBroadcast") :: RemoteEvent
 
 	-- ---------- the wallet ----------
@@ -157,18 +155,6 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	})
 	panels.worlds = worldsPanel
 
-	local steamersPanel = UI.panel({
-		parent = gui,
-		name = "SteamersPanel",
-		size = UDim2.new(0, 420, 0, 350),
-		position = UDim2.fromScale(0.5, 0.5),
-		icon = "🥡",
-		title = "Steamers",
-		top = C.purple,
-		bottom = C.purpleDeep,
-	})
-	panels.steamers = steamersPanel
-
 	local shopPanel = UI.panel({
 		parent = gui,
 		name = "ShopPanel",
@@ -240,17 +226,14 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		showOnly(nil)
 		scene.setView("clicker")
 	end)
-	railButton(3, "🥡", "STEAMER", C.blue, C.blueDeep, function()
+	railButton(3, "📦", "UNBOX", C.blue, C.blueDeep, function()
 		showOnly(nil)
 		scene.setView("unbox")
 	end)
-	railButton(4, "🧨", "UPGRADE", C.orange, C.orangeDeep, function()
+	railButton(4, "🚀", "UPGRADE", C.orange, C.orangeDeep, function()
 		showOnly("upgrades")
 	end)
-	railButton(5, "🥡", "STEAMERS", C.purple, C.purpleDeep, function()
-		showOnly("steamers")
-	end)
-	railButton(6, "🌍", "WORLDS", C.blue, C.blueDeep, function()
+	railButton(5, "🌍", "WORLDS", C.blue, C.blueDeep, function()
 		showOnly("worlds")
 	end)
 
@@ -282,21 +265,6 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	shopOpen.button.LayoutOrder = 5
 	shopOpen.button.Activated:Connect(function()
 		showOnly("shop")
-	end)
-
-	-- ---------- Cash Rain ----------
-	local boost = UI.button({
-		parent = column,
-		size = UDim2.new(1, 0, 0, 48),
-		text = "💵 CASH RAIN",
-		textSize = 17,
-		top = C.red,
-		bottom = C.redDeep,
-		zIndex = 5,
-	})
-	boost.button.LayoutOrder = 6
-	boost.button.Activated:Connect(function()
-		activateBoost:FireServer()
 	end)
 
 	-- ---------- Upgrades panel ----------
@@ -602,113 +570,6 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		Parent = shopPanel.body,
 	})
 
-	-- ---------- Steamers panel ----------
-	-- What the launcher's Cash buys besides upgrades. This is the join
-	-- between the two halves of the game: launching earns the currency, the
-	-- currency buys squishies, and squishies pay it back — team buffs,
-	-- abilities, and the permanent collection bonus per new face.
-	local steamerCard = UI.card({
-		parent = steamersPanel.body,
-		size = UDim2.new(1, -24, 0, 96),
-		position = UDim2.new(0, 12, 0, 10),
-		top = C.cash,
-		bottom = Color3.fromRGB(84, 186, 60),
-		zIndex = 23,
-	})
-	UI.label({
-		Size = UDim2.new(1, -20, 0, 30),
-		Position = UDim2.new(0, 12, 0, 6),
-		Text = "🥡 Steamer",
-		TextSize = 24,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 24,
-		Parent = steamerCard,
-	})
-	UI.label({
-		Size = UDim2.new(1, -20, 0, 22),
-		Position = UDim2.new(0, 12, 0, 34),
-		Text = "Banked straight into your Unbox tray.",
-		TextSize = 14,
-		TextColor3 = Color3.fromRGB(240, 252, 220),
-		TextXAlignment = Enum.TextXAlignment.Left,
-		StrokeThickness = 1.5,
-		ZIndex = 24,
-		Parent = steamerCard,
-	})
-	local buyCoinButton = UI.button({
-		parent = steamerCard,
-		size = UDim2.new(1, -24, 0, 34),
-		position = UDim2.new(0, 12, 1, -42),
-		text = "BUY",
-		textSize = 18,
-		top = C.green,
-		bottom = C.greenDeep,
-		zIndex = 24,
-		radius = 10,
-	})
-	buyCoinButton.button.Activated:Connect(function()
-		buySteamer:FireServer("coin")
-	end)
-
-	local luckyCard = UI.card({
-		parent = steamersPanel.body,
-		size = UDim2.new(1, -24, 0, 96),
-		position = UDim2.new(0, 12, 0, 116),
-		top = C.gem,
-		bottom = Color3.fromRGB(64, 190, 190),
-		zIndex = 23,
-	})
-	UI.label({
-		Size = UDim2.new(1, -20, 0, 30),
-		Position = UDim2.new(0, 12, 0, 6),
-		Text = "🍀 Lucky Steamer",
-		TextSize = 24,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 24,
-		Parent = luckyCard,
-	})
-	UI.label({
-		Size = UDim2.new(1, -20, 0, 22),
-		Position = UDim2.new(0, 12, 0, 34),
-		Text = ("Opens on the spot. %s or better, guaranteed."):format(
-			Squishies.rarities[Config.LuckySteamerMinRank].name
-		),
-		TextSize = 14,
-		TextColor3 = Color3.fromRGB(226, 252, 250),
-		TextXAlignment = Enum.TextXAlignment.Left,
-		StrokeThickness = 1.5,
-		ZIndex = 24,
-		Parent = luckyCard,
-	})
-	local buyLuckyButton = UI.button({
-		parent = luckyCard,
-		size = UDim2.new(1, -24, 0, 34),
-		position = UDim2.new(0, 12, 1, -42),
-		text = "BUY",
-		textSize = 18,
-		top = C.green,
-		bottom = C.greenDeep,
-		zIndex = 24,
-		radius = 10,
-	})
-	buyLuckyButton.button.Activated:Connect(function()
-		buySteamer:FireServer("lucky")
-	end)
-
-	UI.label({
-		Size = UDim2.new(1, -24, 0, 44),
-		Position = UDim2.new(0, 12, 0, 220),
-		Text = "Summon squishies from My Squishies — up to "
-			.. Config.MaxActiveSquishies
-			.. " at once. Rarer and more starred means a bigger buff.",
-		TextSize = 14,
-		TextColor3 = Color3.fromRGB(252, 226, 180),
-		TextWrapped = true,
-		StrokeThickness = 1.5,
-		ZIndex = 23,
-		Parent = steamersPanel.body,
-	})
-
 	-- ---------- the lobby feed ----------
 	-- Bottom-left CORNER, beside the nav rail: x starts at 124 because the
 	-- rail spans 16..108, so the two can never share a pixel however short
@@ -780,8 +641,6 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	-- ---------- redraw from the server's numbers ----------
 	local lastActiveSignature = ""
 	local lastWorldId = ""
-	local boostReadyIn = 0
-	local boostLeft = 0
 
 	function Cannon.update(state: any)
 		coinLabel.Text = Format.abbreviate(state.coins or 0)
@@ -849,14 +708,6 @@ function Cannon.mount(gui: GuiObject, scene: any)
 			end
 		end
 
-		-- ----- steamer shop -----
-		local steamerPrice = math.floor(state.steamerCost or 0)
-		local luckyPrice = math.floor(state.luckySteamerCost or 0)
-		buyCoinButton.button.Text = ("BUY  ·  %s 💵"):format(Format.abbreviate(steamerPrice))
-		buyLuckyButton.button.Text = ("BUY  ·  %s 💵"):format(Format.abbreviate(luckyPrice))
-		UI.setButtonEnabled(buyCoinButton, (state.coins or 0) >= steamerPrice, C.green, C.greenDeep)
-		UI.setButtonEnabled(buyLuckyButton, (state.coins or 0) >= luckyPrice, C.green, C.greenDeep)
-
 		-- ----- summoned squishies -----
 		-- Rebuilding the followers destroys and re-creates real models, so it
 		-- only happens when the summoned set actually changed — not on every
@@ -882,9 +733,6 @@ function Cannon.mount(gui: GuiObject, scene: any)
 			-- with the character, not decorating the hidden stage.
 			Flight.setActiveSquishies(specs)
 		end
-
-		boostReadyIn = state.boostReadyIn or 0
-		boostLeft = state.boostLeft or 0
 	end
 
 	-- ---------- one HUD per view ----------
@@ -892,7 +740,7 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	-- come down and the steamer half's HUD goes up in the same corners, so the
 	-- two never compete for the screen. The wallet and the rail stay up
 	-- throughout: they are how you read the game and how you move around it.
-	local valleyHud = { rebirthOpen.button, shopOpen.button, boost.button, feed }
+	local valleyHud = { rebirthOpen.button, shopOpen.button, feed }
 
 	scene.onViewChanged(function(atValley)
 		for _, element in valleyHud do
@@ -902,27 +750,6 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		-- the next screen.
 		if not atValley then
 			showOnly(nil)
-		end
-	end)
-
-	-- The two boost timers tick locally between syncs, so the button counts
-	-- down smoothly instead of jumping whenever a click happens to sync.
-	task.spawn(function()
-		while true do
-			task.wait(0.25)
-			boostReadyIn = math.max(boostReadyIn - 0.25, 0)
-			boostLeft = math.max(boostLeft - 0.25, 0)
-
-			if boostLeft > 0 then
-				boost.button.Text = ("💵 RAINING %ds"):format(math.ceil(boostLeft))
-				UI.setButtonEnabled(boost, false, C.red, C.redDeep)
-			elseif boostReadyIn > 0 then
-				boost.button.Text = ("💵 %ds"):format(math.ceil(boostReadyIn))
-				UI.setButtonEnabled(boost, false, C.red, C.redDeep)
-			else
-				boost.button.Text = "💵 CASH RAIN"
-				UI.setButtonEnabled(boost, true, C.red, C.redDeep)
-			end
 		end
 	end)
 end

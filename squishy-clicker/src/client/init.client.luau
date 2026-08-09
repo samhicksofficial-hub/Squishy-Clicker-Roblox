@@ -83,11 +83,7 @@ local state = {
 	rebirthAt = Config.RebirthBaseRequirement,
 	rebirthReady = false,
 	active = {} :: { string },
-	steamerCost = Config.SteamerCoinCost,
-	luckySteamerCost = Config.LuckySteamerCoinCost,
 	collectionBonus = 1,
-	boostReadyIn = 0,
-	boostLeft = 0,
 }
 
 -- Rarity rank (Common = 1 ... Mythical = 6). The reveal scales off this.
@@ -416,7 +412,7 @@ local unboxButton = make("TextButton", {
 	BackgroundColor3 = COLOR.locked,
 	AutoButtonColor = false,
 	Font = Enum.Font.FredokaOne,
-	Text = "🥡 Unbox (0)",
+	Text = "📦 Unbox (0)",
 	TextColor3 = COLOR.text,
 	TextSize = 18,
 	ZIndex = 2,
@@ -457,13 +453,13 @@ local costLabel = make("TextLabel", {
 })
 
 -- ---------- inventory / collection (right side) ----------
--- Starts BELOW the whole right column — wallet, Rebirth, Shop, Cash Rain end
--- at y 230 now that the wallet is a single Cash row — so the two can never
--- share a pixel. They used to: the panel began at 170 and slid under the
--- buttons, which then floated on top of the list like they owned it.
+-- Starts BELOW the whole right column — wallet, Rebirth and Shop end at
+-- y 172 now that the wallet is one Cash row and Cash Rain is gone — so the
+-- two can never share a pixel. They used to: the panel began at 170 and
+-- slid under the buttons, which floated on top of the list like they owned it.
 local panel = make("Frame", {
-	Size = UDim2.new(0, 300, 1, -260),
-	Position = UDim2.new(1, -18, 0, 244),
+	Size = UDim2.new(0, 300, 1, -202),
+	Position = UDim2.new(1, -18, 0, 186),
 	AnchorPoint = Vector2.new(1, 0),
 	BackgroundColor3 = COLOR.panel,
 	BackgroundTransparency = 0.08,
@@ -845,7 +841,7 @@ local function showBanked()
 		Position = UDim2.new(0, 436, 1, -110),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.FredokaOne,
-		Text = "🥡 steamer banked!",
+		Text = "📦 box banked!",
 		TextColor3 = COLOR.mint,
 		TextSize = 18,
 		TextXAlignment = Enum.TextXAlignment.Left,
@@ -875,7 +871,7 @@ local function refresh()
 	Cannon.update(state)
 	Market.update(state)
 
-	unboxButton.Text = ("🥡 Unbox (%d)"):format(state.unopened)
+	unboxButton.Text = ("📦 Unbox (%d)"):format(state.unopened)
 	unboxButton.BackgroundColor3 = state.unopened > 0 and COLOR.mint or COLOR.locked
 	unboxButton.AutoButtonColor = state.unopened > 0
 

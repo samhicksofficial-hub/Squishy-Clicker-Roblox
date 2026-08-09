@@ -88,13 +88,6 @@ local DoRebirth = Instance.new("RemoteEvent")
 DoRebirth.Name = "DoRebirth"
 DoRebirth.Parent = Remotes
 
--- Cash for a steamer: ("coin") for a plain one, ("lucky") for the premium
--- rare-or-better roll. Nothing but the kind — the price and what comes out
--- are both the server's.
-local BuySteamer = Instance.new("RemoteEvent")
-BuySteamer.Name = "BuySteamer"
-BuySteamer.Parent = Remotes
-
 -- Summon or dismiss a squishy: (squishyId, shouldBeActive). The server owns
 -- the three-slot limit and the "do you even own it" check, not the UI.
 local SetActive = Instance.new("RemoteEvent")
@@ -106,10 +99,6 @@ SetActive.Parent = Remotes
 local SetWorld = Instance.new("RemoteEvent")
 SetWorld.Name = "SetWorld"
 SetWorld.Parent = Remotes
-
-local ActivateBoost = Instance.new("RemoteEvent")
-ActivateBoost.Name = "ActivateBoost"
-ActivateBoost.Parent = Remotes
 
 -- Somebody launched. Goes to EVERY client so the lobby can watch the shot fly
 -- and list it in the feed. Carries the shape of the flight and a name, and
@@ -201,11 +190,11 @@ type PlayerData = {
 	powerLevel: number,           -- launch power upgrades bought
 	rebirths: number,             -- permanent multipliers earned
 	milestones: { [string]: boolean }, -- distance signs already paid out
+	-- Kept in the save even though the shop is gone for now, so bringing it
+	-- back later finds everyone's price curve where they left it.
 	steamersBought: number,       -- cash-bought steamers, for the price curve
 	active: { string },           -- the (at most three) squishies summoned
 	worldId: string,              -- which Config.Worlds entry pays this player
-	boostUntil: number,           -- os.clock while Cash Rain is running
-	lastBoost: number,            -- os.clock of the last activation
 
 	limits: { [string]: RateLimit }, -- rate limiting, keyed by remote
 }
@@ -513,52 +502,6 @@ local function powerUpgradeCost(level: number): number
 	return math.floor(Config.PowerUpgradeBaseCost * Config.PowerUpgradeCostGrowth ^ level + 0.5)
 end
 
--- Cash cost of the player's NEXT bought steamer. Geometric, because cash
--- income grows geometrically too — a flat price would be meaningful for an
--- hour and then free forever.
-local function steamerCost(bought: number): number
-	return math.floor(Config.SteamerCoinCost * Config.SteamerCostGrowth ^ bought + 0.5)
-end
-
--- A Lucky Steamer's roll: the real odds, but with everything below the
--- minimum rank removed. Keeping the SHAPE of the table matters — a Mythical
--- should still be far rarer than a Rare inside a Lucky Steamer, which a flat
--- pick from everything that qualifies would throw away.
-local function rollAtLeastRank(minRank: number): Squishies.Squishy
-	local pool = {}
-	local total = 0
-	for _, rarity in Squishies.rarities do
-		if (rarityRank[rarity.name] or 0) >= minRank then
-			total += rarity.weight
-			table.insert(pool, rarity)
-		end
-	end
-	if total <= 0 then
-		return Squishies.roll(rng) -- nothing qualifies; fall back to normal odds
-	end
-
-	local ticket = rng:NextNumber() * total
-	local chosen = pool[#pool]
-	for _, rarity in pool do
-		ticket -= rarity.weight
-		if ticket <= 0 then
-			chosen = rarity
-			break
-		end
-	end
-
-	local members = {}
-	for _, squishy in Squishies.list do
-		if squishy.rarity == chosen.name then
-			table.insert(members, squishy)
-		end
-	end
-	if #members == 0 then
-		return Squishies.roll(rng)
-	end
-	return members[rng:NextInteger(1, #members)]
-end
-
 -- Everything that makes a shot go further, gathered in one place so the
 -- upgrade screen and the shot itself can never disagree about the total.
 local function launchPowerFor(data: PlayerData): number
@@ -587,10 +530,6 @@ local function effectiveMagnet(data: PlayerData): number
 		tallest = math.max(tallest, pickup.height)
 	end
 	return magnetFor(data) * tallest / Config.MagnetReferenceHeight
-end
-
-local function boostActive(data: PlayerData): boolean
-	return os.clock() < data.boostUntil
 end
 
 -- Distance needed for the player's next rebirth.
@@ -643,14 +582,8 @@ local function makeLaunchField(data: PlayerData): { Pickup }
 	local reach = expectedReach(data)
 	local spread = Config.LaunchPickupFarFraction - Config.LaunchPickupNearFraction
 	local zones = makeVipZones(reach)
-	local boosted = boostActive(data)
 
-	-- Cash Rain and VIP zones both work by adding EXTRA pickups rather than
-	-- replacing the ordinary ones, so neither can ever make a shot worse.
 	local count = Config.LaunchPickupCount
-	if boosted then
-		count = math.floor(count * Config.BoostDensityMultiplier)
-	end
 
 	local field: { Pickup } = {}
 	local function place(at: number, forceVip: boolean)
@@ -671,9 +604,6 @@ local function makeLaunchField(data: PlayerData): { Pickup }
 		value *= 1 + (at / 1000) * Config.PickupValuePer1kStuds
 		if vip then
 			value *= Config.VipZoneValueMultiplier
-		end
-		if boosted then
-			value *= Config.BoostPickupMultiplier
 		end
 
 		table.insert(field, {
@@ -761,8 +691,6 @@ local function sync(player: Player)
 		rebirthAt = rebirthRequirement(data.rebirths),
 		rebirthReady = data.bestDistance >= rebirthRequirement(data.rebirths),
 		active = data.active,
-		steamerCost = steamerCost(data.steamersBought),
-		luckySteamerCost = Config.LuckySteamerCoinCost,
 		-- The collection's permanent cash bonus, as a finished multiplier —
 		-- the market menu shows it as the reason to keep meeting new faces.
 		collectionBonus = collectionBonus(data),
@@ -770,8 +698,6 @@ local function sync(player: Player)
 		-- panel and the island repaint both key off these.
 		worldId = data.worldId,
 		worldMultiplier = worldFor(data).multiplier,
-		boostReadyIn = math.max(Config.BoostCooldownSeconds - (os.clock() - data.lastBoost), 0),
-		boostLeft = math.max(data.boostUntil - os.clock(), 0),
 	})
 end
 
@@ -859,9 +785,6 @@ local function loadData(player: Player): PlayerData
 		steamersBought = loaded and loaded.steamersBought or 0,
 		active = loaded and loaded.active or {},
 		worldId = loaded and loaded.worldId or Config.Worlds[1].id,
-		-- Not persisted, and -inf for the same reason as lastLaunch above.
-		boostUntil = 0,
-		lastBoost = -math.huge,
 
 		limits = {},
 	}
@@ -1146,7 +1069,6 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 		coinMultiplier = cashMultiplier,
 		collectionBonus = collection,
 		worldMultiplier = world.multiplier,
-		boosted = boostActive(data),
 	})
 
 	-- Everyone in the lobby watches the shot fly. Deliberately carries the
@@ -1225,53 +1147,6 @@ DoRebirth.OnServerEvent:Connect(function(player)
 	print(("[SquishyClicker] %s rebirthed to %d"):format(player.Name, data.rebirths))
 end)
 
--- ---------- The steamer shop ----------
--- What the launcher's Cash is FOR, besides the cannon. Steamers are the join
--- between the two halves of the game: launching earns the currency, the
--- currency buys squishies, and squishies make the next launch go further —
--- through the team, the main-squishy ability, and the collection bonus.
-
-BuySteamer.OnServerEvent:Connect(function(player, kind)
-	local data = dataByPlayer[player]
-	if not data or overRate(data, "buySteamer", 6) then
-		return
-	end
-	if typeof(kind) ~= "string" then
-		return
-	end
-
-	-- "gem" still accepted as an alias: it is what older clients call the
-	-- premium roll, and the name of a button is not worth a version split.
-	if kind == "lucky" or kind == "gem" then
-		if data.coins < Config.LuckySteamerCoinCost then
-			return -- server says no
-		end
-		data.coins -= Config.LuckySteamerCoinCost
-		-- A Lucky Steamer is opened on the spot rather than banked: the
-		-- guaranteed rarity is the whole product, and making the player go and
-		-- unbox it separately would only hide it.
-		local squishy = rollAtLeastRank(Config.LuckySteamerMinRank)
-		data.counts[squishy.id] = (data.counts[squishy.id] or 0) + 1
-		data.totalOpens += 1
-		SteamerOpened:FireClient(player, squishy.id)
-		updateLeaderstats(player)
-	elseif kind == "coin" then
-		local cost = steamerCost(data.steamersBought)
-		if data.coins < cost then
-			return
-		end
-		data.coins -= cost
-		data.steamersBought += 1
-		-- Banked rather than opened, so a bought steamer behaves exactly like
-		-- an earned one and the Unbox tray stays the only place they open.
-		data.unopened += 1
-	else
-		return -- unknown kind
-	end
-
-	sync(player)
-end)
-
 -- ---------- Worlds ----------
 -- Picking a world is picking a payout multiplier, so the unlock gate lives
 -- here and nowhere else. The client's island repaint is cosmetic and local;
@@ -1340,39 +1215,6 @@ SetActive.OnServerEvent:Connect(function(player, squishyId, shouldActivate)
 	data.launchField = makeLaunchField(data)
 	LaunchField:FireClient(player, data.launchField)
 	sync(player)
-end)
-
--- ---------- Cash Rain ----------
-
-ActivateBoost.OnServerEvent:Connect(function(player)
-	local data = dataByPlayer[player]
-	if not data or overRate(data, "boost", 4) then
-		return
-	end
-
-	local now = os.clock()
-	if now - data.lastBoost < Config.BoostCooldownSeconds then
-		return
-	end
-	data.lastBoost = now
-	data.boostUntil = now + Config.BoostSeconds
-
-	-- Relay the field immediately: the whole point of the button is seeing the
-	-- track fill up with Cash the moment it is pressed.
-	data.launchField = makeLaunchField(data)
-	LaunchField:FireClient(player, data.launchField)
-	sync(player)
-
-	-- And put it back to normal when it runs out, so the track visibly empties
-	-- again rather than staying rich until the next shot.
-	task.delay(Config.BoostSeconds, function()
-		local current = dataByPlayer[player]
-		if current == data and not boostActive(data) then
-			data.launchField = makeLaunchField(data)
-			LaunchField:FireClient(player, data.launchField)
-			sync(player)
-		end
-	end)
 end)
 
 -- ---------- unboxing a banked steamer ----------
@@ -1505,7 +1347,6 @@ if DebugAction then
 			-- these are compared against os.clock(), which starts near zero on
 			-- a fresh server, so 0 would leave the cooldown still running.
 			data.lastLaunch = -math.huge
-			data.lastBoost = -math.huge
 		elseif action == "rotateCannons" then
 			-- Dial the imported model's facing in by eye, then make it stick.
 			local yaw = Island.rotateCannons()

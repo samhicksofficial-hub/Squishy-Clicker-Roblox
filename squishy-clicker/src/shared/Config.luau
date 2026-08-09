@@ -243,14 +243,6 @@ local Config = {
 	RebirthDistanceBonus = 0.4,
 	RebirthCoinBonus = 0.6,
 
-	-- ===== Cash Rain (the active boost) =====
-	-- A button that floods the next shot's track with extra Cash. Short,
-	-- loud and on a long cooldown, so it is a decision rather than a rotation.
-	BoostSeconds = 20,
-	BoostCooldownSeconds = 120,
-	BoostPickupMultiplier = 3,
-	BoostDensityMultiplier = 2,
-
 	-- ===== The range on the ground =====
 	-- The rainbow bands painted across the plain, and the mapping that puts a
 	-- flight on them. Both the island (which builds the rings) and the flight
@@ -360,21 +352,6 @@ local Config = {
 	AbilityPowerPerRank = 0.02, -- launch power +2% each
 	AbilityWealthPerRank = 0.04, -- shot Cash +4% each
 	AbilityMagnetPerRank = 0.06, -- flat magnet screen studs each
-
-	-- ===== The steamer shop =====
-	-- What Cash is for, besides the cannon. Steamers are the whole point:
-	-- the launcher's income feeds the collection, and the collection feeds
-	-- the launcher back through the team, abilities and collection bonus.
-
-	-- Cash price of a plain steamer, times growth for every one already
-	-- bought. Geometric, because cash income grows geometrically too.
-	SteamerCoinCost = 900,
-	SteamerCostGrowth = 1.09,
-
-	-- A Lucky Steamer costs a premium in Cash: same odds SHAPE, but nothing
-	-- below this rarity rank can come out of it (3 = Rare or better).
-	LuckySteamerCoinCost = 15000,
-	LuckySteamerMinRank = 3,
 
 	-- ===== The lobby =====
 	-- Every launch is broadcast to the whole server so everyone at the cannon
