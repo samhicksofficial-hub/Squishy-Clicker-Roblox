@@ -219,9 +219,15 @@ local function fitHud()
 	-- the collection list, the stacked wallet. Width only gets a vote when the
 	-- window is genuinely narrow — that is what the multiplier is for, so a
 	-- merely wide-ish window isn't treated as if it were cramped.
+	--
+	-- Capped at 1: the HUD SHRINKS to fit small windows but never grows past
+	-- its design size. The old 1.1 ceiling inflated every button on a big
+	-- monitor and pushed the right column's bottom onto the collection
+	-- panel's title — independently-scaled neighbours can't share assumed
+	-- pixel offsets.
 	local byHeight = viewport.Y / DESIGN_HEIGHT
 	local byWidth = (viewport.X / DESIGN_WIDTH) * 1.5
-	hudScale = math.clamp(math.min(byHeight, byWidth), 0.5, 1.1)
+	hudScale = math.clamp(math.min(byHeight, byWidth), 0.5, 1)
 
 	for _, scale in panelScales do
 		scale.Scale = hudScale
@@ -453,10 +459,10 @@ local costLabel = make("TextLabel", {
 })
 
 -- ---------- inventory / collection (right side) ----------
--- Starts BELOW the whole right column — wallet, Rebirth and Shop end at
--- y 172 now that the wallet is one Cash row and Cash Rain is gone — so the
--- two can never share a pixel. They used to: the panel began at 170 and
--- slid under the buttons, which floated on top of the list like they owned it.
+-- Starts BELOW the whole right column — wallet, Rebirth, Shop. The top is
+-- MEASURED off the column's rendered bottom (see the watcher below), not
+-- assumed: the column wears a UIScale and this panel doesn't, and every
+-- overlap bug in this corner came from one side assuming the other's scale.
 local panel = make("Frame", {
 	Size = UDim2.new(0, 300, 1, -202),
 	Position = UDim2.new(1, -18, 0, 186),
@@ -468,6 +474,25 @@ local panel = make("Frame", {
 	Parent = gui,
 })
 corner(20, panel)
+
+-- Pin the panel's top to the column's real rendered bottom, at every HUD
+-- scale and window size. The column is built by Cannon.mount on another
+-- thread, so this waits for it; until then the panel keeps its build-time
+-- guess, which is correct at scale 1.
+task.spawn(function()
+	local column = gui:WaitForChild("RightColumn", 10)
+	if not column or not column:IsA("GuiObject") then
+		return
+	end
+	local function fit()
+		local top = math.floor(column.AbsolutePosition.Y + column.AbsoluteSize.Y + 14 + 0.5)
+		panel.Position = UDim2.new(1, -18, 0, top)
+		panel.Size = UDim2.new(0, 300, 1, -(top + 16))
+	end
+	column:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
+	column:GetPropertyChangedSignal("AbsolutePosition"):Connect(fit)
+	fit()
+end)
 
 make("TextLabel", {
 	Size = UDim2.new(1, 0, 0, 32),

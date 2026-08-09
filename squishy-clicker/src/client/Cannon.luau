@@ -48,7 +48,11 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	-- moment the window was short — a list cannot overlap itself.
 	local column = UI.make("Frame", {
 		Name = "RightColumn",
-		Size = UDim2.new(0, 210, 0, 420),
+		-- Sized to its CONTENT (one wallet row + two buttons + padding), not
+		-- a guess with slack: the collection panel below positions itself off
+		-- this frame's real rendered bottom, so an oversized frame here is an
+		-- empty moat there.
+		Size = UDim2.new(0, 210, 0, 156),
 		Position = UDim2.new(1, -18, 0, 16),
 		AnchorPoint = Vector2.new(1, 0),
 		BackgroundTransparency = 1,
