@@ -207,6 +207,17 @@ local lastBounceSeen = 0
 local landingDone = true
 local fovKick = 0
 
+-- The shot's visible physics. The server still decides every number that
+-- matters; these only make the replay OBEY the story those numbers tell:
+-- spin is set by the launch and bled off by every bounce (the same friction
+-- that slows the ground speed slows the tumble), squash is re-kicked by
+-- each impact and relaxes on its own, and the roll turns at whatever rate
+-- the ground drawn underneath is actually passing.
+local spinAngle = 0
+local spinRate = 0
+local squash = 0
+local lastShotAt: Vector3? = nil
+
 -- The FOV eases toward its target rather than being set from speed directly:
 -- bounces change speed in a single frame, and an FOV that jumps with it reads
 -- as a glitch where an FOV that surges reads as acceleration.
@@ -723,6 +734,12 @@ function Flight.play(plan: {
 	fovKick = 0
 	shakeAmp = 0
 
+	-- Spin leaves the barrel with the shot: a harder launch tumbles faster.
+	spinAngle = 0
+	spinRate = math.pi * 5 * math.clamp(shot.launchSpeed / 260, 0.7, 1.8)
+	squash = 0
+	lastShotAt = nil
+
 	-- The milestones this shot crosses for the first time, positioned from
 	-- Config by name so the popup fires at the sign it belongs to.
 	pendingMilestones = {}
@@ -882,6 +899,9 @@ RunService.RenderStepped:Connect(function(dt)
 		-- Re-kick the shake oscillator, scaled by how fast the hit was.
 		shakeAmp = Config.ImpactShakeMagnitude * (0.4 + 0.6 * impactStrength)
 		shakePhase = 0
+		-- The hit costs spin (bounce friction, made visible) and buys squash.
+		spinRate *= 0.78
+		squash = 0.5 + 0.5 * impactStrength
 	elseif not flying and not landingDone then
 		landingDone = true
 		fovKick = 1
@@ -890,6 +910,8 @@ RunService.RenderStepped:Connect(function(dt)
 		local ground = worldAt(shot.distance, 0)
 		splat(ground, Config.LaunchSplatRadius)
 		payoutPopup(ground, shot.distance, shot.earnedCoins)
+		-- The full pancake, for the full stop.
+		squash = 1
 	end
 	fovKick = math.max(fovKick - dt * 3, 0)
 	shakePhase += dt
@@ -899,23 +921,57 @@ RunService.RenderStepped:Connect(function(dt)
 	windTrail.Enabled = flying and impactStrength > Config.WindTrailMinSpeedFraction
 
 	if toy then
+		local applied = 5 * modelSpec.scale
+		-- Tumbling about the axis PERPENDICULAR to the direction of travel,
+		-- so it somersaults forward whichever way the plot faces. A fixed
+		-- world axis only looks right on two of the eight bearings; on the
+		-- others it reads as a sideways barrel roll.
+		local side = Vector3.new(-outward.Z, 0, outward.X)
+
+		-- Impact squash relaxes on its own clock, and eases sharply so the
+		-- pancake pops back rather than oozing. Volume roughly conserved:
+		-- what the height loses, the width gains.
+		squash = math.max(squash - dt * 5, 0)
+		local pop = squash * squash
+		local scaleVec =
+			Vector3.new(applied * (1 + 0.3 * pop), applied * (1 - 0.42 * pop), applied * (1 + 0.3 * pop))
+
+		-- Stood on its UNDERSIDE like the summons — measured on the SQUASHED
+		-- height, so a pancaked hit presses into the ground it is denting
+		-- instead of hovering over it.
+		local lift = -toy.lowestY * scaleVec.Y
+
 		if flying then
-			-- Tumbling about the axis PERPENDICULAR to the direction of
-			-- travel, so it somersaults forward whichever way the plot faces.
-			-- A fixed world axis only looks right on two of the eight
-			-- bearings; on the others it reads as a sideways barrel roll.
-			--
-			-- Stood on its UNDERSIDE like the summons: worldAt tracks the
-			-- ground beneath the arc, and a model doesn't centre on the
-			-- ground, it rests on it — without the lift every bounce and the
-			-- whole landing slide ran waist-deep through the plain.
-			local applied = 5 * modelSpec.scale
-			local lift = -toy.lowestY * applied
-			local side = Vector3.new(-outward.Z, 0, outward.X)
+			-- The somersault runs at the spin the LAUNCH gave it, not on a
+			-- timer — each bounce has already bled some off above — and once
+			-- the shot is down in its final roll, the turn rate locks to the
+			-- ground actually drawn passing underneath, like a wheel. That
+			-- coupling is measured on screen positions, so the log-compressed
+			-- far range rolls exactly as fast as it appears to move.
+			local radiusWorld = math.max(-toy.lowestY * applied, 0.5)
+			local lastArc = shot.arcs[#shot.arcs]
+			local rollingNow = lastArc and lastArc.rolling and shot.flown >= lastArc.fromX
+			if rollingNow and lastShotAt and dt > 0 then
+				local step = at - lastShotAt
+				spinRate = Vector3.new(step.X, 0, step.Z).Magnitude / dt / radiusWorld
+			end
+			lastShotAt = at
+			spinAngle += spinRate * dt
+
 			Models.apply(
 				toy.rig,
-				CFrame.new(at + Vector3.new(0, lift, 0)) * CFrame.fromAxisAngle(side, -shot.progress * math.pi * 9),
-				Vector3.one * applied
+				CFrame.new(at + Vector3.new(0, lift, 0)) * CFrame.fromAxisAngle(side, -spinAngle),
+				scaleVec
+			)
+		elseif os.clock() < shot.holdUntil then
+			-- Landed, camera still lingering: the squishy SITS where it
+			-- stopped — pancaked from the landing, easing back to shape —
+			-- instead of blinking out the frame the flight ends.
+			local ground = worldAt(shot.distance, 0)
+			Models.apply(
+				toy.rig,
+				CFrame.new(ground + Vector3.new(0, lift, 0)) * CFrame.fromAxisAngle(side, -spinAngle),
+				scaleVec
 			)
 		else
 			-- Parked between shots. The squishy briefly sat loaded on the
