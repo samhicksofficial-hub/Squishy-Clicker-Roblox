@@ -352,11 +352,13 @@ local Config = {
 	},
 
 	-- ===== The collection bonus =====
-	-- Every DISTINCT squishy ever discovered adds this to the Cash
-	-- multiplier, permanently — dupes feed stars, but a NEW face pays for
-	-- itself forever. This is the standing reason to keep buying steamers
-	-- long after a serviceable team exists.
-	CollectionCashPerSquishy = 0.03,
+	-- Discovering squishies pays a permanent Cash bonus that grows with how
+	-- much of the CATALOG has been met, topping out at this with every
+	-- squishy found. A fraction of the catalog rather than per-head, so
+	-- adding squishies later never inflates the cap — each face is just
+	-- worth a little less of the same +50%. Dupes feed stars; a NEW face
+	-- feeds this, forever.
+	CollectionCashMax = 0.5,
 
 	-- ===== Main-squishy abilities =====
 	-- The EQUIPPED squisher is the one that goes down the barrel, so what it

@@ -438,7 +438,9 @@ local function collectionBonus(data: PlayerData): number
 			discovered += 1
 		end
 	end
-	return 1 + discovered * Config.CollectionCashPerSquishy
+	-- Scaled by the fraction of the catalog met: the full set is exactly
+	-- +CollectionCashMax, however many squishies the catalog grows to hold.
+	return 1 + (discovered / #Squishies.list) * Config.CollectionCashMax
 end
 
 -- The EQUIPPED squisher is the one that goes down the barrel, so what it is
