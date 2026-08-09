@@ -334,6 +334,23 @@ local Config = {
 	ActiveSquishyMagnetPerRank = 0.12,
 	ActiveSquishyStarBonus = 0.15,
 
+	-- ===== Main-squishy abilities =====
+	-- The EQUIPPED squisher is the one that goes down the barrel, so what it
+	-- is shapes the shot (which ability each squishy has lives in
+	-- Squishies.luau). Every ability scales off the same strength:
+	--   strength = rarity rank * (1 + its stars * AbilityStarBonus)
+	-- so a Common butter slides a little and a starred Legendary butter is a
+	-- bar of soap. Rates are per point of strength (Mythical rank 6, five
+	-- stars ≈ strength 10.5).
+	AbilityStarBonus = 0.15,
+	AbilitySlidePerRank = 0.15, -- landing roll distance +15% each
+	AbilityBouncePerRank = 0.01, -- restitution +0.01 each, capped below
+	AbilityBounceCap = 0.82, -- past this the shot barely comes down
+	AbilityFloatPerRank = 0.03, -- gravity divided by (1 + this * strength)
+	AbilityPowerPerRank = 0.02, -- launch power +2% each
+	AbilityWealthPerRank = 0.04, -- shot Cash +4% each
+	AbilityMagnetPerRank = 0.06, -- flat magnet screen studs each
+
 	-- ===== The steamer shop =====
 	-- What cash and gems are for. Both buy steamers, which is the whole point:
 	-- the launcher's currencies feed the collection, and the collection feeds

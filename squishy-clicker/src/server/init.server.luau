@@ -326,7 +326,22 @@ local function launchSpeedFor(power: number): number
 	return math.sqrt(math.max(power, 1) * Config.LaunchGravity * Config.LaunchStudsPerPower)
 end
 
-local function simulateFlight(power: number, angleFraction: number): Flight
+-- What the equipped squishy's ability does to the physics of this one shot.
+-- Optional everywhere: estimates and ghost flights use the plain defaults.
+type AbilityMods = {
+	restitution: number,
+	rollDeceleration: number,
+	gravity: number,
+	powerMult: number,
+	cashMult: number,
+	magnetBonus: number,
+}
+
+local function simulateFlight(power: number, angleFraction: number, mods: AbilityMods?): Flight
+	local gravity = if mods then mods.gravity else Config.LaunchGravity
+	local restitution = if mods then mods.restitution else Config.LaunchRestitution
+	local rollDeceleration = if mods then mods.rollDeceleration else Config.LaunchRollDeceleration
+
 	local speed = launchSpeedFor(power)
 	local radians = math.rad(Config.LaunchMinAngle + (Config.LaunchMaxAngle - Config.LaunchMinAngle) * angleFraction)
 	local vx = speed * math.cos(radians)
@@ -342,8 +357,8 @@ local function simulateFlight(power: number, angleFraction: number): Flight
 			break
 		end
 		-- Up and back down to the same height, so one hop is 2v/g.
-		local hang = 2 * vy / Config.LaunchGravity
-		local peak = vy * vy / (2 * Config.LaunchGravity)
+		local hang = 2 * vy / gravity
+		local peak = vy * vy / (2 * gravity)
 		local span = vx * hang
 
 		table.insert(arcs, { fromX = x, toX = x + span, peak = peak, seconds = hang, rolling = false })
@@ -351,13 +366,13 @@ local function simulateFlight(power: number, angleFraction: number): Flight
 		seconds += hang
 		peakHeight = math.max(peakHeight, peak)
 
-		vy *= Config.LaunchRestitution
+		vy *= restitution
 		vx *= Config.LaunchBounceFriction
 	end
 
 	-- Whatever forward speed survived the last skip is spent rolling.
-	local rollSpan = vx * vx / (2 * Config.LaunchRollDeceleration)
-	local rollSeconds = vx / Config.LaunchRollDeceleration
+	local rollSpan = vx * vx / (2 * rollDeceleration)
+	local rollSeconds = vx / rollDeceleration
 	table.insert(arcs, { fromX = x, toX = x + rollSpan, peak = 0, seconds = rollSeconds, rolling = true })
 
 	return {
@@ -416,6 +431,46 @@ local function squishyBonuses(data: PlayerData): Bonuses
 		end
 	end
 	return total
+end
+
+-- The EQUIPPED squisher is the one that goes down the barrel, so what it is
+-- shapes the shot: butter slides, cubes bounce, clouds float. Which story
+-- each squishy tells lives in Squishies.luau; the strength here mirrors the
+-- summon bonuses — rarity rank, scaled by the squishy's own stars.
+local function abilityModsFor(data: PlayerData): AbilityMods
+	local mods: AbilityMods = {
+		restitution = Config.LaunchRestitution,
+		rollDeceleration = Config.LaunchRollDeceleration,
+		gravity = Config.LaunchGravity,
+		powerMult = 1,
+		cashMult = 1,
+		magnetBonus = 0,
+	}
+	local squishy = Squishies.byId[data.clickerId or ""]
+	if not squishy then
+		return mods
+	end
+
+	local rank = rarityRank[squishy.rarity] or 1
+	local strength = rank * (1 + (data.stars[squishy.id] or 0) * Config.AbilityStarBonus)
+	local ability = squishy.ability
+
+	if ability == "slide" then
+		-- Halving the deceleration doubles the roll: distance is v²/2a.
+		mods.rollDeceleration = Config.LaunchRollDeceleration / (1 + Config.AbilitySlidePerRank * strength)
+	elseif ability == "bounce" then
+		mods.restitution =
+			math.min(Config.LaunchRestitution + Config.AbilityBouncePerRank * strength, Config.AbilityBounceCap)
+	elseif ability == "float" then
+		mods.gravity = Config.LaunchGravity / (1 + Config.AbilityFloatPerRank * strength)
+	elseif ability == "power" then
+		mods.powerMult = 1 + Config.AbilityPowerPerRank * strength
+	elseif ability == "wealth" then
+		mods.cashMult = 1 + Config.AbilityWealthPerRank * strength
+	elseif ability == "magnet" then
+		mods.magnetBonus = Config.AbilityMagnetPerRank * strength
+	end
+	return mods
 end
 
 local function rebirthMultiplier(data: PlayerData, per: number): number
@@ -998,16 +1053,20 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 	data.lastLaunch = now
 
 	-- Charge maps onto a fraction of full power, so even a badly timed tap
-	-- still flies — it just doesn't fly far.
+	-- still flies — it just doesn't fly far. The equipped squishy's ability
+	-- shapes the whole shot from here: its physics ride into the simulation,
+	-- its cash and magnet sides join the payout maths below.
+	local mods = abilityModsFor(data)
 	local charged = launchPowerFor(data)
 		* (Config.LaunchMinPowerFraction + (1 - Config.LaunchMinPowerFraction) * power)
-	local flight = simulateFlight(charged, angle)
+		* mods.powerMult
+	local flight = simulateFlight(charged, angle, mods)
 	local distance = flight.distance
 
 	-- Sweep up everything the path passed close enough to. The magnet is the
 	-- other half of what stars and summons buy: a built-up account both flies
 	-- further AND hoovers up more on the way past.
-	local magnet = effectiveMagnet(data)
+	local magnet = effectiveMagnet(data) + mods.magnetBonus
 	local bonuses = squishyBonuses(data)
 	-- The active world multiplies cash and TNT — not gems, which stay the
 	-- un-buffable prize currency, and not the milestone bounties, which are
@@ -1020,7 +1079,11 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 		if pickup.distance <= distance and math.abs(heightAt(flight, pickup.distance) - pickup.height) <= magnet then
 			table.insert(collected, index)
 			if pickup.kind == "coin" then
-				earnedCoins += pickup.value * bonuses.coins * rebirthMultiplier(data, Config.RebirthCoinBonus) * world.multiplier
+				earnedCoins += pickup.value
+					* bonuses.coins
+					* mods.cashMult
+					* rebirthMultiplier(data, Config.RebirthCoinBonus)
+					* world.multiplier
 			elseif pickup.kind == "gem" then
 				-- Gems are deliberately UNBUFFED. Summons boost power, cash,
 				-- TNT and magnet; letting them boost gems too would devalue

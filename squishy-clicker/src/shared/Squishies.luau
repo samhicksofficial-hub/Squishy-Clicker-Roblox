@@ -34,6 +34,10 @@ export type Squishy = {
 	-- Which drawer of the market menu this files under. Stamped from the
 	-- category map below the list, so it is never nil after module load.
 	category: string?,
+	-- The cannon ability it grants as the MAIN equipped squisher — themed to
+	-- what it IS (butter slides, cubes bounce, clouds float). Stamped from
+	-- the ability map below the list; the server applies it to the flight.
+	ability: string?,
 }
 
 -- Order matters only for display (least → most rare).
@@ -158,6 +162,47 @@ local categoryById: { [string]: string } = {
 
 for _, squishy in list do
 	squishy.category = categoryById[squishy.id] or "Oddities"
+end
+
+-- ---------- abilities ----------
+-- What firing this squishy DOES, themed to what it is. The equipped main
+-- squisher is the one that goes down the barrel, so its nature shapes the
+-- shot: butter slides after landing, cubes bounce harder, clouds hang in
+-- the air. The server owns the numbers (Config.Ability*); this map only
+-- says which story each squishy tells. Anything unmapped is a cannonball.
+--
+--   power  : flat launch power boost (the classic cannonball)
+--   wealth : extra Cash from everything the shot collects
+--   slide  : the landing roll carries further
+--   bounce : bounces keep more height
+--   float  : less gravity, longer hangs
+--   magnet : wider pickup magnet
+local abilityById: { [string]: string } = {
+	-- Dumplings fly true: pure cannonballs, every one.
+	red = "power", pink = "power", blue = "power", green = "power",
+	white = "power", purple = "power", teal = "power",
+	skyglit = "power", oliveglit = "power",
+	confetti = "power", rainbow = "power", gold = "power",
+	opal = "power", giantopal = "power",
+	coconut = "power", -- the roundest thing in the shop
+
+	banana = "wealth", plainstrawberry = "wealth", strawberry = "wealth",
+	giantbanana = "wealth", cake = "wealth", glowdonut = "wealth",
+
+	butter = "slide", rainbutter = "slide", giantbutter = "slide",
+	giantrainbutter = "slide", cheese = "slide", blobfish = "slide",
+	icecube = "slide",
+
+	jellycube = "bounce", swirlcube = "bounce", snowcube = "bounce",
+	glitcube = "bounce", twotone = "bounce", pug = "bounce",
+
+	cloud = "float", sparkledrop = "float", sugarbaby = "float",
+
+	brain = "magnet", -- psychic pull
+}
+
+for _, squishy in list do
+	squishy.ability = abilityById[squishy.id] or "power"
 end
 
 -- ---------- lookups (built once) ----------

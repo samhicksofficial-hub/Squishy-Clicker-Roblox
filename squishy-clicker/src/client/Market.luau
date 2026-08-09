@@ -503,6 +503,53 @@ function Market.mount(gui: GuiObject)
 		})
 
 		local rank = rarityRank[squishy.rarity] or 1
+
+		-- The ability it grants as the MAIN squisher — the one that actually
+		-- goes down the barrel. Same strength math the server uses.
+		local strength = rank * (1 + star * Config.AbilityStarBonus)
+		local function pct(perRank: number): number
+			return math.floor(perRank * strength * 100 + 0.5)
+		end
+		local ability = squishy.ability
+		local abilityText
+		if ability == "slide" then
+			abilityText = ("🧈 Slippery — shots slide %d%% further"):format(pct(Config.AbilitySlidePerRank))
+		elseif ability == "bounce" then
+			abilityText = ("🏀 Bouncy — bounces keep %d%% more height"):format(
+				math.floor(Config.AbilityBouncePerRank * strength / Config.LaunchRestitution * 100 + 0.5)
+			)
+		elseif ability == "float" then
+			abilityText = ("☁️ Floaty — %d%% less gravity in flight"):format(
+				math.floor((1 - 1 / (1 + Config.AbilityFloatPerRank * strength)) * 100 + 0.5)
+			)
+		elseif ability == "wealth" then
+			abilityText = ("🍰 Sweet — shot Cash +%d%%"):format(pct(Config.AbilityWealthPerRank))
+		elseif ability == "magnet" then
+			abilityText = ("🧠 Magnetic — pickup magnet +%.2f"):format(Config.AbilityMagnetPerRank * strength)
+		else
+			abilityText = ("💥 Cannonball — launch power +%d%%"):format(pct(Config.AbilityPowerPerRank))
+		end
+		inkLabel({
+			Size = UDim2.new(1, -20, 0, 18),
+			Text = abilityText,
+			TextColor3 = GOLD,
+			TextSize = 13,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			LayoutOrder = nextOrder(),
+			ZIndex = Z + 3,
+			Parent = detail,
+		})
+		inkLabel({
+			Size = UDim2.new(1, -20, 0, 12),
+			Text = "when equipped as your main squisher",
+			TextColor3 = INK_SOFT,
+			TextSize = 10,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			LayoutOrder = nextOrder(),
+			ZIndex = Z + 3,
+			Parent = detail,
+		})
+
 		local starred = 1 + star * Config.ActiveSquishyStarBonus
 		local function percent(perRank: number): number
 			return math.floor(rank * perRank * starred * 100 + 0.5)
