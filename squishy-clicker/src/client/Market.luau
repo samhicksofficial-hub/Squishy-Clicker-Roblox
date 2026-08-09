@@ -16,6 +16,7 @@
 -- ============================================================
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local UI = require(script.Parent:WaitForChild("UI"))
@@ -72,6 +73,19 @@ function Market.mount(gui: GuiObject)
 
 	local selectedCategory: string = Squishies.categories[1]
 	local selectedId: string? = nil
+
+	-- The detail stage's spin — the squishy sits on a cushion you can grab
+	-- and turn, same toy language as the squisher on its cushion. Persistent
+	-- across re-renders so a server sync doesn't snap it back to front-face.
+	local spin = {
+		angle = 0,
+		velocity = 0.6,
+		dragging = false,
+		lastX = 0,
+		model = nil :: any,
+		lift = 0,
+		scale = 1,
+	}
 
 	-- The squishy's real 3D model in a round swatch — one recipe for the team
 	-- squares, the grid cards and the detail portrait.
@@ -277,6 +291,24 @@ function Market.mount(gui: GuiObject)
 		paintSlotTargets(x, y)
 	end)
 
+	-- The idle turn, the drag's momentum, and the ease back to idle — one
+	-- loop drives whichever stage model is currently up.
+	RunService.RenderStepped:Connect(function(dt)
+		local model = spin.model
+		if not model then
+			return
+		end
+		if not spin.dragging then
+			spin.velocity += (0.6 - spin.velocity) * math.min(dt * 1.2, 1)
+			spin.angle += spin.velocity * dt
+		end
+		Models.apply(
+			model.rig,
+			CFrame.new(0, spin.lift, 0) * CFrame.Angles(0, spin.angle, 0),
+			Vector3.one * spin.scale
+		)
+	end)
+
 	UserInputService.InputEnded:Connect(function(input)
 		if
 			input.UserInputType ~= Enum.UserInputType.MouseButton1
@@ -284,6 +316,8 @@ function Market.mount(gui: GuiObject)
 		then
 			return
 		end
+		-- Every release lets go of the cushion too.
+		spin.dragging = false
 		local drag = dragState
 		dragState = nil
 		if not drag then
@@ -319,7 +353,7 @@ function Market.mount(gui: GuiObject)
 		Size = UDim2.new(1, -16, 0, 14),
 		Position = UDim2.new(0, 8, 0, 132),
 		Text = "",
-		TextSize = 13,
+		TextSize = 14,
 		TextColor3 = Color3.fromRGB(198, 244, 158),
 		ZIndex = Z + 2,
 		Parent = panel.body,
@@ -391,6 +425,9 @@ function Market.mount(gui: GuiObject)
 	})
 
 	local function renderDetail()
+		-- The old stage is about to be destroyed with the rest of the pane;
+		-- the spin loop must not keep applying CFrames to a dead rig.
+		spin.model = nil
 		for _, child in detail:GetChildren() do
 			if not (child:IsA("UIListLayout") or child:IsA("UIPadding")) then
 				child:Destroy()
@@ -422,22 +459,102 @@ function Market.mount(gui: GuiObject)
 		local discovered = held > 0 or star > 0
 		local rarity = Squishies.rarityByName[squishy.rarity]
 
-		local portrait = UI.make("Frame", {
-			Size = UDim2.new(0, 104, 0, 104),
-			BackgroundColor3 = discovered and squishy.color or UNDISCOVERED,
-			ClipsDescendants = true,
-			LayoutOrder = nextOrder(),
-			ZIndex = Z + 3,
-			Parent = detail,
-		}) :: Frame
-		UI.make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = portrait })
-		-- The same rarity ring the grid cards wear, so the two always agree.
-		if rarity then
-			UI.stroke(portrait, 4, rarity.color)
-		end
 		if discovered then
-			buildPreview(portrait, squishy, Z + 4)
+			-- The squishy on its display cushion, LIVE: grab and drag to
+			-- spin it, let go and it keeps your spin before settling into a
+			-- lazy idle turn — the same toy language as the squisher on its
+			-- cushion in the shop.
+			local stageFrame = UI.make("ViewportFrame", {
+				Size = UDim2.new(1, -20, 0, 168),
+				BackgroundColor3 = Color3.fromRGB(250, 244, 238),
+				Ambient = Color3.fromRGB(170, 165, 160),
+				LightColor = Color3.fromRGB(255, 250, 244),
+				LightDirection = Vector3.new(-0.5, -1, -0.6),
+				Active = true, -- the drag must not scroll the pane under it
+				LayoutOrder = nextOrder(),
+				ZIndex = Z + 3,
+				Parent = detail,
+			}) :: ViewportFrame
+			UI.corner(12, stageFrame)
+			if rarity then
+				UI.stroke(stageFrame, 3, rarity.color)
+			end
+
+			local stageModels = UI.make("Folder", { Name = "Model", Parent = stageFrame })
+
+			local cushion = Instance.new("Part")
+			cushion.Shape = Enum.PartType.Cylinder
+			cushion.Size = Vector3.new(0.44, 3.9, 3.9)
+			cushion.CFrame = CFrame.new(0, -0.22, 0) * CFrame.Angles(0, 0, math.pi / 2)
+			cushion.Color = Color3.fromRGB(240, 205, 212)
+			cushion.Material = Enum.Material.Fabric
+			cushion.Anchored = true
+			cushion.Parent = stageModels
+
+			local preview = Models.buildSquishy(stageModels, squishy.shape, squishy.color, squishy.sparkle, squishy.scale)
+			spin.model = preview
+			spin.lift = -preview.lowestY * preview.sizeScale
+			spin.scale = preview.sizeScale
+			Models.apply(
+				preview.rig,
+				CFrame.new(0, spin.lift, 0) * CFrame.Angles(0, spin.angle, 0),
+				Vector3.one * preview.sizeScale
+			)
+
+			local camera = Instance.new("Camera")
+			camera.FieldOfView = 32
+			camera.CFrame = CFrame.lookAt(Vector3.new(0, 2.1, 6.4), Vector3.new(0, 0.5, 0))
+			camera.Parent = stageFrame
+			stageFrame.CurrentCamera = camera
+
+			stageFrame.InputBegan:Connect(function(input)
+				if
+					input.UserInputType == Enum.UserInputType.MouseButton1
+					or input.UserInputType == Enum.UserInputType.Touch
+				then
+					spin.dragging = true
+					spin.lastX = input.Position.X
+					spin.velocity = 0
+				end
+			end)
+			stageFrame.InputChanged:Connect(function(input)
+				if not spin.dragging then
+					return
+				end
+				if
+					input.UserInputType == Enum.UserInputType.MouseMovement
+					or input.UserInputType == Enum.UserInputType.Touch
+				then
+					local dx = input.Position.X - spin.lastX
+					spin.lastX = input.Position.X
+					spin.angle += dx * 0.012
+					-- Remembered as momentum, so a flick keeps it turning.
+					spin.velocity = dx * 0.7
+				end
+			end)
+
+			inkLabel({
+				Size = UDim2.new(1, -20, 0, 12),
+				Text = "↻ drag to spin",
+				TextColor3 = INK_SOFT,
+				TextSize = 10,
+				LayoutOrder = nextOrder(),
+				ZIndex = Z + 3,
+				Parent = detail,
+			})
 		else
+			local portrait = UI.make("Frame", {
+				Size = UDim2.new(0, 104, 0, 104),
+				BackgroundColor3 = UNDISCOVERED,
+				ClipsDescendants = true,
+				LayoutOrder = nextOrder(),
+				ZIndex = Z + 3,
+				Parent = detail,
+			}) :: Frame
+			UI.make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = portrait })
+			if rarity then
+				UI.stroke(portrait, 4, rarity.color)
+			end
 			inkLabel({
 				Size = UDim2.fromScale(1, 1),
 				Font = Enum.Font.FredokaOne,
@@ -450,9 +567,9 @@ function Market.mount(gui: GuiObject)
 		end
 
 		inkLabel({
-			Size = UDim2.new(1, -20, 0, 22),
+			Size = UDim2.new(1, -20, 0, 24),
 			Text = squishy.name,
-			TextSize = 17,
+			TextSize = 20,
 			LayoutOrder = nextOrder(),
 			ZIndex = Z + 3,
 			Parent = detail,
@@ -461,6 +578,7 @@ function Market.mount(gui: GuiObject)
 			Size = UDim2.new(1, -20, 0, 16),
 			Text = squishy.rarity,
 			TextColor3 = rarity and rarity.color or INK_SOFT,
+			TextSize = 14,
 			LayoutOrder = nextOrder(),
 			ZIndex = Z + 3,
 			Parent = detail,
@@ -475,27 +593,21 @@ function Market.mount(gui: GuiObject)
 			ZIndex = Z + 3,
 			Parent = detail,
 		})
-		inkLabel({
-			Size = UDim2.new(1, -20, 0, 16),
-			Text = ("Copies owned: x%d"):format(held),
-			TextColor3 = INK_SOFT,
-			LayoutOrder = nextOrder(),
-			ZIndex = Z + 3,
-			Parent = detail,
-		})
 
-		-- Copies toward the next star, or the ceiling if it's been reached.
-		local nextStarText
+		-- One friendly line instead of two ledger rows: what you have, and
+		-- how close that is to the next star.
+		local copiesText
 		if star >= Config.MaxStars then
-			nextStarText = "MAX stars reached!"
+			copiesText = ("You have x%d  ·  ★ MAX!"):format(held)
 		else
 			local cost = prestigeCost(squishy, star)
-			nextStarText = ("Next star: %d / %d copies"):format(math.min(held, cost), cost)
+			copiesText = ("You have x%d  ·  %d / %d to a ★"):format(held, math.min(held, cost), cost)
 		end
 		inkLabel({
-			Size = UDim2.new(1, -20, 0, 16),
-			Text = nextStarText,
+			Size = UDim2.new(1, -20, 0, 18),
+			Text = copiesText,
 			TextColor3 = INK_SOFT,
+			TextSize = 13,
 			LayoutOrder = nextOrder(),
 			ZIndex = Z + 3,
 			Parent = detail,
@@ -573,8 +685,9 @@ function Market.mount(gui: GuiObject)
 		}
 		for _, line in effects do
 			inkLabel({
-				Size = UDim2.new(1, -20, 0, 16),
+				Size = UDim2.new(1, -20, 0, 20),
 				Text = line,
+				TextSize = 14,
 				TextXAlignment = Enum.TextXAlignment.Left,
 				LayoutOrder = nextOrder(),
 				ZIndex = Z + 3,
@@ -582,11 +695,10 @@ function Market.mount(gui: GuiObject)
 			})
 		end
 		inkLabel({
-			Size = UDim2.new(1, -20, 0, 26),
-			Text = ("applies while on your team · each ★ adds +%d%%"):format(Config.ActiveSquishyStarBonus * 100),
+			Size = UDim2.new(1, -20, 0, 14),
+			Text = "team boosts work while summoned",
 			TextColor3 = INK_SOFT,
 			TextSize = 11,
-			TextWrapped = true,
 			LayoutOrder = nextOrder(),
 			ZIndex = Z + 3,
 			Parent = detail,
@@ -716,15 +828,20 @@ function Market.mount(gui: GuiObject)
 				ZIndex = Z + 4,
 				Parent = card,
 			})
-			inkLabel({
-				Size = UDim2.new(1, -6, 0, 12),
-				Position = UDim2.new(0, 3, 1, -14),
-				Text = discovered and ("x%d  %s"):format(held, star > 0 and starString(star) or "") or "not found",
-				TextColor3 = discovered and INK_SOFT or UNDISCOVERED,
-				TextSize = 10,
-				ZIndex = Z + 4,
-				Parent = card,
-			})
+			-- Only found squishies get a count line: on the unknowns the "?"
+			-- already says everything, and 38 repeats of "not found" was most
+			-- of what made the grid read as clutter.
+			if discovered then
+				inkLabel({
+					Size = UDim2.new(1, -6, 0, 12),
+					Position = UDim2.new(0, 3, 1, -14),
+					Text = ("x%d  %s"):format(held, star > 0 and starString(star) or ""),
+					TextColor3 = INK_SOFT,
+					TextSize = 10,
+					ZIndex = Z + 4,
+					Parent = card,
+				})
+			end
 
 			card.Activated:Connect(function()
 				selectedId = squishy.id
@@ -784,12 +901,7 @@ function Market.mount(gui: GuiObject)
 			end
 		end
 		local bonus = math.floor(((latest.collectionBonus or 1) - 1) * 100 + 0.5)
-		collectionLabel.Text = ("🎁 Collection bonus: +%d%% Cash on every shot — %d / %d found, each new squishy adds +%d%%"):format(
-			bonus,
-			discovered,
-			#Squishies.list,
-			Config.CollectionCashPerSquishy * 100
-		)
+		collectionLabel.Text = ("🎁 %d / %d found  ·  +%d%% Cash every shot"):format(discovered, #Squishies.list, bonus)
 	end
 end
 
