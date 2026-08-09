@@ -728,6 +728,19 @@ end
 -- Move the camera. "unbox" and "clicker" open the diorama's close-ups — the
 -- steamer nook and the squisher. Anything else hands the camera back to the
 -- character on the island.
+-- How much the close-ups pull the exposure DOWN. The diorama is an
+-- open-topped pale-plastic room six thousand studs up in clear air, and the
+-- realistic sky's bright dome pours environment light straight into it —
+-- which is why walking into the clicker visibly stepped the screen up a
+-- stop. The island reads fine, so the correction is scoped to the views
+-- that need it rather than dimming the whole game.
+local CLOSEUP_EXPOSURE = -0.35
+
+-- Relative to whatever the place ships with: if the sky pack authored its
+-- own base exposure in Studio, the close-up dims from THERE and the valley
+-- restores it, rather than both fighting a hard-coded zero.
+local baseExposure = Lighting.ExposureCompensation
+
 function Scene.setView(view: string)
 	if view == "unbox" then
 		closeUp.target = 1
@@ -745,6 +758,10 @@ function Scene.setView(view: string)
 		closeUp.value = 0
 		sceneDrivesCamera = false
 	end
+
+	-- Set, not tweened: the camera cut to the diorama is instant, and an
+	-- exposure easing behind an instant cut reads as the lights dipping.
+	Lighting.ExposureCompensation = baseExposure + (sceneDrivesCamera and CLOSEUP_EXPOSURE or 0)
 
 	local atValley = not sceneDrivesCamera
 	for _, listener in viewListeners do
