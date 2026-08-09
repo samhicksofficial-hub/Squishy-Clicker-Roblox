@@ -900,11 +900,18 @@ RunService.RenderStepped:Connect(function(dt)
 			-- travel, so it somersaults forward whichever way the plot faces.
 			-- A fixed world axis only looks right on two of the eight
 			-- bearings; on the others it reads as a sideways barrel roll.
+			--
+			-- Stood on its UNDERSIDE like the summons: worldAt tracks the
+			-- ground beneath the arc, and a model doesn't centre on the
+			-- ground, it rests on it — without the lift every bounce and the
+			-- whole landing slide ran waist-deep through the plain.
+			local applied = 5 * modelSpec.scale
+			local lift = -toy.lowestY * applied
 			local side = Vector3.new(-outward.Z, 0, outward.X)
 			Models.apply(
 				toy.rig,
-				CFrame.new(at) * CFrame.fromAxisAngle(side, -shot.progress * math.pi * 9),
-				Vector3.one * 5 * modelSpec.scale
+				CFrame.new(at + Vector3.new(0, lift, 0)) * CFrame.fromAxisAngle(side, -shot.progress * math.pi * 9),
+				Vector3.one * applied
 			)
 		else
 			-- Parked between shots. The squishy briefly sat loaded on the
