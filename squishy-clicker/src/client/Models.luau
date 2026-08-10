@@ -19,61 +19,38 @@
 --  from a catalog entry in Squishies.luau.
 -- ============================================================
 
-local MaterialService = game:GetService("MaterialService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Models = {}
 
 -- ---------- glitter ----------
--- The glittery squishies get a real sparkly surface rather than flat plastic.
--- This is the NEUTRAL "glitter" sheet on purpose: the variant's colour map
--- multiplies by each part's own Color, so one pale sheet turns gold, pink or
--- green to match its wearer. The uploads also include a pre-tinted
--- "glitter-gold" (109091097025649) — don't use it here, it would muddy
--- every non-gold squishy — and the raw "glitter-gold-source" (104559770453654).
+-- The glittery squishies get a real sparkly surface rather than flat
+-- plastic: the NEUTRAL "glitter" sheet, laid on as six tiling Texture
+-- instances per part. NOT a MaterialVariant — that was the first attempt,
+-- and it crashed the whole client the day its texture id finally landed:
+-- MaterialVariant.BaseMaterial is a PLUGIN-security property ("lacking
+-- capability Plugin"), so scripts may create the variant but never
+-- configure it. Face textures do the same job with none of the privilege:
+-- Texture.Color3 multiplies the sheet exactly like a colour map, so one
+-- pale sheet turns gold, pink or green to match its wearer. (The uploads
+-- also include a pre-tinted "glitter-gold", 109091097025649 — unused on
+-- purpose, it would muddy every non-gold squishy.)
 local GLITTER_TEXTURE = "rbxassetid://78941774209871"
 -- Roughly one tile across a squishy. Tiling any tighter and the flakes shrink
 -- below a pixel on screen, where they average back into flat grey.
 local GLITTER_STUDS_PER_TILE = 2.5
 
-local glitterVariant: MaterialVariant? = nil
-
-local function ensureGlitter(): MaterialVariant?
-	if GLITTER_TEXTURE == "" then
-		return nil
-	end
-	if glitterVariant then
-		return glitterVariant
-	end
-	-- pcall'd, and loudly: this block never ran before the texture id landed
-	-- (the empty-string guard skipped it for the project's whole life), and
-	-- it executes inside the same call chain as the HUD's sync refresh — an
-	-- unhandled throw here would kill every squishy build after it. If the
-	-- engine refuses anything, the glittery ones fall back to plain colour
-	-- and the game carries on.
-	local ok, variant = pcall(function()
-		local made = Instance.new("MaterialVariant")
-		made.Name = "SquishyGlitter"
-		made.BaseMaterial = Enum.Material.Plastic
-		made.ColorMap = GLITTER_TEXTURE
-		made.StudsPerTile = GLITTER_STUDS_PER_TILE
-		made.Parent = MaterialService
-		return made
-	end)
-	if not ok or not variant then
-		warn("[SquishyClicker] Glitter surface failed, using plain colour — " .. tostring(variant))
-		GLITTER_TEXTURE = "" -- don't retry on every build
-		return nil
-	end
-	glitterVariant = variant
-	return variant
-end
-
--- The part keeps its own Color, and a MaterialVariant's colour map multiplies
--- by it — so one gold glitter sheet becomes gold, pink or green glitter to
--- match whatever squishy is wearing it.
 local function applyGlitter(part: BasePart)
-	if not ensureGlitter() then
+	if GLITTER_TEXTURE == "" then
+		return
+	end
+	-- Imported meshes carry their own painted surface — glitter laid over
+	-- the opal's pearl or a face texture would just dirty it.
+	if part:IsA("MeshPart") then
+		return
+	end
+	local mesh = part:FindFirstChildOfClass("SpecialMesh")
+	if mesh and mesh.TextureId ~= "" then
 		return
 	end
 	-- Glass and neon are left alone: being see-through or glowing is the whole
@@ -81,8 +58,19 @@ local function applyGlitter(part: BasePart)
 	if part.Material ~= Enum.Material.SmoothPlastic and part.Material ~= Enum.Material.Plastic then
 		return
 	end
-	part.Material = Enum.Material.Plastic
-	part.MaterialVariant = "SquishyGlitter"
+	for _, face in Enum.NormalId:GetEnumItems() do
+		local sheet = Instance.new("Texture")
+		sheet.Name = "Glitter"
+		sheet.Texture = GLITTER_TEXTURE
+		sheet.Face = face :: Enum.NormalId
+		sheet.StudsPerTileU = GLITTER_STUDS_PER_TILE
+		sheet.StudsPerTileV = GLITTER_STUDS_PER_TILE
+		sheet.Color3 = part.Color
+		-- A whisper of see-through, so the part's own shading survives
+		-- underneath and the sheet reads as surface rather than sticker.
+		sheet.Transparency = 0.2
+		sheet.Parent = part
+	end
 end
 
 -- Cylinder parts run along their own X axis; this stands one upright.
