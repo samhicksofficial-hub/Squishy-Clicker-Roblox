@@ -213,18 +213,11 @@ local Config = {
 	-- bombs), and the claims are settled AFTER landing, validated against
 	-- what the steering speed could physically have reached in the time the
 	-- flight allowed. A claim the physics couldn't make is simply not paid.
-	SteerHalfWidth = 15, -- LANE UNITS either side of the centre line (see LaneVisualFraction)
+	SteerHalfWidth = 15, -- LANE UNITS either side of the centre line (see CorridorStudsPerLane)
 	SteerSpeed = 26, -- lane units/sec — the client's control AND the server's reachability check
 	ClaimLaneSlack = 6, -- forgiveness in that check, so honest play never loses a claim to rounding
 	ClaimHeightWindow = 60, -- vertical generosity when validating a claimed pickup against the arc
 	LaneTouchWidth = 3.4, -- lane units within which a crossed pickup counts as touched
-
-	-- How wide the lane DRAWS, as a fraction of the visual radius at that
-	-- distance. The lane's abstract units never change — this is only the
-	-- map from lane units to world studs, and it grows with the range's fan
-	-- so the track fills the player's whole wedge instead of bunching into
-	-- a thread down the centre line (which is exactly how it shipped first).
-	LaneVisualFraction = 0.25,
 
 	-- The fraction of pickups laid dead on the centre line, where the
 	-- fire-time magnet still sweeps them passively. The rest spread UNIFORM
@@ -272,9 +265,9 @@ local Config = {
 	-- reach that actually scores.
 	LaunchPickupMagnet = 2,
 
-	-- Must match STAGE_APEX in Scene.luau: that is what draws a flight's
-	-- envelope at a constant height on screen, and this is what converts the
-	-- magnet back out of those units. Change one and change the other.
+	-- The reference envelope height the server's effectiveMagnet normalizes
+	-- the field's tallest pickup against — what turns the screen-unit magnet
+	-- into sim studs at any power level. Server-side only.
 	MagnetReferenceHeight = 26,
 
 	-- Pickups spread between these fractions of the player's own expected
@@ -316,36 +309,6 @@ local Config = {
 	-- headline; the Cash bonus stops the reset feeling like a step backwards.
 	RebirthDistanceBonus = 0.4,
 	RebirthCoinBonus = 0.6,
-
-	-- ===== The range on the ground =====
-	-- The rainbow bands painted across the plain, and the mapping that puts a
-	-- flight on them. Both the island (which builds the rings) and the flight
-	-- animation (which flies over them) read these, so a squishy passing the
-	-- "10K Studs" band has genuinely flown ten thousand studs.
-	--
-	-- The mapping is LOGARITHMIC, and it has to be: distances run from a
-	-- couple of hundred studs to seven figures, and no linear scale shows both
-	-- ends of that. On a log scale each band is a power of ten and every
-	-- upgrade moves you a visible step, which is exactly the feedback a
-	-- simulator needs.
-	RangeNearRadius = 300, -- world studs from the island centre to the first band
-	RangeFarRadius = 2600, -- ...and to the last one, out past the far desert
-	RangeNearStuds = 100, -- the game distance the first band means
-	RangeFarStuds = 1000000, -- ...and the last
-
-	-- The bands themselves. Rainbow, near to far, so "how far did it get" is
-	-- answerable at a glance by which colour it sailed over.
-	RangeBands = {
-		{ studs = 100, name = "100" },
-		{ studs = 250, name = "250" },
-		{ studs = 500, name = "500" },
-		{ studs = 1000, name = "1K" },
-		{ studs = 5000, name = "5K" },
-		{ studs = 10000, name = "10K" },
-		{ studs = 50000, name = "50K" },
-		{ studs = 100000, name = "100K" },
-		{ studs = 1000000, name = "1M" },
-	},
 
 	-- ===== Worlds =====
 	-- Retunes of the same valley rather than separate maps: a world changes
@@ -458,12 +421,10 @@ local Config = {
 	AbilityMagnetPerRank = 0.06, -- flat magnet screen studs each
 
 	-- ===== The lobby =====
-	-- Every launch is broadcast to the whole server so everyone at the cannon
-	-- base can watch it fly. This is how many recent ones the feed lists.
+	-- Every launch is broadcast to the whole server; the feed lists this
+	-- many recent ones. Text only now — flights play in private corridors,
+	-- so the feed is the lobby's whole window onto other people's shots.
 	LobbyFeedSize = 6,
-	-- How many other players' shots may be in the air at once. Beyond this the
-	-- oldest is recycled, so a busy server can't fill the valley with ghosts.
-	LobbyMaxGhosts = 6,
 
 	-- ===== Sprinting =====
 	-- Hold Shift to run. Client-side, like all character movement; nothing
@@ -526,35 +487,5 @@ local Config = {
 	-- so we use a fresh datastore rather than colliding with old saves.
 	DataStoreName = "SquishyClicker_v2",
 }
-
--- How far out from the island centre a given game distance sits, in world
--- studs. Logarithmic — see RangeNearRadius for why.
---
--- This lives here as a function rather than as a formula copied into the
--- island and again into the flight animation, because those two agreeing is
--- the entire point: if they drift, a squishy sails over the "10K" band having
--- flown four hundred studs and the range stops meaning anything.
-function Config.rangeRadius(studs: number): number
-	local near, far = Config.RangeNearStuds, Config.RangeFarStuds
-	if studs <= 0 then
-		return 0
-	end
-	if studs < near then
-		-- Below the first band there is no room for a decade, so the last
-		-- stretch into the cannon is drawn straight.
-		return studs / near * Config.RangeNearRadius
-	end
-
-	local span = math.log(far / near, 10)
-	local along = math.clamp(math.log(studs / near, 10) / span, 0, 1)
-	-- GEOMETRIC in radius, not linear: every decade of distance multiplies
-	-- the radius by the same factor (~1.7×), instead of adding the same
-	-- slice. Linear-over-log front-loaded the whole rainbow — a 10K shot
-	-- (one percent of the way to 1M) already landed 65% of the way out, and
-	-- everything after crawled. Geometric starts shots close to the island
-	-- and keeps every order of magnitude a visible stride: 1K lands at 515,
-	-- 10K at 883, 100K at 1515, 1M at the full 2600.
-	return Config.RangeNearRadius * (Config.RangeFarRadius / Config.RangeNearRadius) ^ along
-end
 
 return Config
