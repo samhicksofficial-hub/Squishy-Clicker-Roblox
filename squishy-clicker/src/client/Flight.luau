@@ -332,6 +332,16 @@ for _ = 1, POOL do
 	face.Text = "💵"
 	face.TextScaled = true
 	face.Parent = icon
+	-- The uploaded cash-stack image, when Config carries its id. Both live
+	-- in the billboard; layoutField shows whichever applies to the entry.
+	local pic = Instance.new("ImageLabel")
+	pic.Name = "Pic"
+	pic.Size = UDim2.fromScale(1, 1)
+	pic.BackgroundTransparency = 1
+	pic.Image = Config.CashIconImage
+	pic.ScaleType = Enum.ScaleType.Fit
+	pic.Visible = false
+	pic.Parent = icon
 
 	table.insert(pickupParts, prize)
 end
@@ -726,8 +736,17 @@ local function layoutField()
 			local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
 			if icon then
 				icon.Enabled = true
+				-- The uploaded stack image for ordinary cash once its id is
+				-- in Config; the 💰 emoji stays on VIPs either way, so the
+				-- jackpot stretch keeps its own face.
+				local useImage = Config.CashIconImage ~= "" and not entry.vip
 				local face = icon:FindFirstChildOfClass("TextLabel")
+				local pic = icon:FindFirstChild("Pic") :: ImageLabel?
+				if pic then
+					pic.Visible = useImage
+				end
 				if face then
+					face.Visible = not useImage
 					face.Text = entry.vip and "💰" or "💵"
 				end
 			end

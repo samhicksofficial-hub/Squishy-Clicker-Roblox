@@ -387,6 +387,15 @@ local Config = {
 	ActiveSquishyMagnetPerRank = 0.12,
 	ActiveSquishyStarBonus = 0.15,
 
+	-- ===== The cash icon =====
+	-- The kawaii cash-stack image, everywhere Cash shows its face: the
+	-- wallet chip, the flying bills, and the pickups on the track. Upload
+	-- the PNG as a Decal on the Creator Hub and paste its asset id here as
+	-- "rbxassetid://NNNNNNN". While this is empty the 💵 emoji stands in,
+	-- so nothing breaks before the upload happens. (VIP pickups keep their
+	-- 💰 either way — the jackpot stretch is supposed to look different.)
+	CashIconImage = "",
+
 	-- ===== The sky =====
 	-- The realistic sky ("AtmosphericClouds2"), owned by CODE: the server
 	-- rebuilds it from these ids at every startup, so it can never vanish

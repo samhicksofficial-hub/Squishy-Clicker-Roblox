@@ -84,14 +84,29 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		UI.gradient(row, top, bottom)
 		UI.stroke(row)
 
-		UI.label({
-			Size = UDim2.new(0, 34, 1, 0),
-			Position = UDim2.new(0, 6, 0, 0),
-			Text = icon,
-			TextSize = 22,
-			ZIndex = 6,
-			Parent = row,
-		})
+		-- The cash chip wears the uploaded stack image once Config carries
+		-- its id; the emoji stands in until then.
+		if icon == "💵" and Config.CashIconImage ~= "" then
+			UI.make("ImageLabel", {
+				Size = UDim2.new(0, 30, 0, 30),
+				Position = UDim2.new(0, 8, 0.5, 0),
+				AnchorPoint = Vector2.new(0, 0.5),
+				BackgroundTransparency = 1,
+				Image = Config.CashIconImage,
+				ScaleType = Enum.ScaleType.Fit,
+				ZIndex = 6,
+				Parent = row,
+			})
+		else
+			UI.label({
+				Size = UDim2.new(0, 34, 1, 0),
+				Position = UDim2.new(0, 6, 0, 0),
+				Text = icon,
+				TextSize = 22,
+				ZIndex = 6,
+				Parent = row,
+			})
+		end
 		return UI.label({
 			Size = UDim2.new(1, -46, 1, 0),
 			Position = UDim2.new(0, 42, 0, 0),
@@ -115,6 +130,32 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	local cashRow = coinLabel.Parent :: Frame
 	local walletPulse = UI.make("UIScale", { Scale = 1, Parent = cashRow }) :: UIScale
 
+	-- ---------- the wallet's display ledger ----------
+	-- The SERVER's balance is always the truth, and every purchase checks
+	-- against it — but the LABEL holds increases back until the collect
+	-- animation delivers them: earned cash waits in `heldCash`, and each
+	-- arriving bill releases its share, so the number ticks up exactly as
+	-- the money visibly lands. Spending shows instantly. The idle drain
+	-- releases anything that never gets an animation (debug grants and the
+	-- like), so the display can never sit below the truth for long.
+	local serverCoins = 0
+	local heldCash = 0
+	local lastBillAt = 0
+
+	local function repaintWallet()
+		coinLabel.Text = Format.abbreviate(math.max(serverCoins - heldCash, 0))
+	end
+
+	task.spawn(function()
+		while true do
+			task.wait(0.5)
+			if heldCash > 0 and os.clock() - lastBillAt > 2.5 then
+				heldCash = 0
+				repaintWallet()
+			end
+		end
+	end)
+
 	function Cannon.collectCash(amount: number)
 		if amount <= 0 then
 			return
@@ -122,6 +163,8 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		-- More cash, more bills — logarithmically, so a jackpot is a flurry
 		-- rather than a blizzard.
 		local bills = math.clamp(3 + math.floor(math.log10(amount + 1)), 4, 9)
+		local share = amount / bills
+		lastBillAt = os.clock()
 
 		-- Root-relative target: absolute coordinates live in the inset
 		-- space, the Root's offsets don't — the same trap as the drag ghost.
@@ -133,24 +176,45 @@ function Cannon.mount(gui: GuiObject, scene: any)
 
 		for index = 1, bills do
 			task.delay((index - 1) * 0.07, function()
-				local bill = UI.label({
-					Size = UDim2.new(0, 34, 0, 34),
-					Position = UDim2.new(0.5, math.random(-100, 100), 0.6, math.random(-50, 30)),
-					AnchorPoint = Vector2.new(0.5, 0.5),
-					Text = "💵",
-					TextSize = 30,
-					Rotation = math.random(-28, 28),
-					ZIndex = 40,
-					Parent = gui,
-				})
-				local flight = TweenService:Create(
-					bill,
-					TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-					{ Position = target, Rotation = 0, TextSize = 16 }
-				)
+				local start = UDim2.new(0.5, math.random(-100, 100), 0.6, math.random(-50, 30))
+				local goal: { [string]: any } = { Position = target, Rotation = 0 }
+				local bill: GuiObject
+				if Config.CashIconImage ~= "" then
+					bill = UI.make("ImageLabel", {
+						Size = UDim2.new(0, 46, 0, 34),
+						Position = start,
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						BackgroundTransparency = 1,
+						Image = Config.CashIconImage,
+						ScaleType = Enum.ScaleType.Fit,
+						Rotation = math.random(-28, 28),
+						ZIndex = 40,
+						Parent = gui,
+					}) :: GuiObject
+					goal.Size = UDim2.new(0, 22, 0, 16)
+				else
+					bill = UI.label({
+						Size = UDim2.new(0, 34, 0, 34),
+						Position = start,
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						Text = "💵",
+						TextSize = 30,
+						Rotation = math.random(-28, 28),
+						ZIndex = 40,
+						Parent = gui,
+					})
+					goal.TextSize = 16
+				end
+				local flight =
+					TweenService:Create(bill, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In), goal)
 				flight.Completed:Connect(function()
 					bill:Destroy()
-					-- The wallet gulps: a quick pulse per arriving bill.
+					-- The wallet gulps: a pulse per bill, and the number ticks
+					-- up by this bill's share of the earnings — the money is
+					-- only COUNTED at the moment it visibly lands.
+					lastBillAt = os.clock()
+					heldCash = math.max(heldCash - share, 0)
+					repaintWallet()
 					walletPulse.Scale = 1.12
 					TweenService:Create(
 						walletPulse,
@@ -699,7 +763,17 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	local lastWorldId = ""
 
 	function Cannon.update(state: any)
-		coinLabel.Text = Format.abbreviate(state.coins or 0)
+		-- Through the display ledger, not straight onto the label: increases
+		-- wait for their bills, decreases (spending) land instantly, and a
+		-- reset (rebirth) can never leave more held than exists.
+		local coins = state.coins or 0
+		if coins > serverCoins then
+			heldCash += coins - serverCoins
+		elseif coins < serverCoins then
+			heldCash = math.min(heldCash, coins)
+		end
+		serverCoins = coins
+		repaintWallet()
 
 		-- ----- upgrades -----
 		local level = state.powerLevel or 0
