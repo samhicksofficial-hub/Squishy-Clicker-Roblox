@@ -20,7 +20,21 @@
 --  treadmill, and no two players are ever looking at the same
 --  frame of it, so replicating it would be pure cost.
 --
---  Everything here is anchored and generated once at startup.
+--  TWO WAYS the world can exist:
+--
+--   * GENERATED — no Map folder in the place: build() constructs
+--     everything at startup, exactly as always.
+--   * BAKED — run this from Studio's command bar in EDIT mode:
+--         require(game.ServerScriptService.Server.Island).build()
+--     and the world is constructed as ordinary saved parts. From
+--     then on the PLACE FILE owns the map: edit, move, delete and
+--     decorate it by hand like any Roblox game. At startup build()
+--     finds the Map folder, skips construction, and wires the plot
+--     bookkeeping onto whatever stands there — centres re-derived
+--     from each plot's pad, so hand-moved plots fire true. To
+--     return to generated mode (or re-bake after importing new
+--     models), delete the Map folder and save (then re-run the
+--     command to bake again).
 -- ============================================================
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -679,6 +693,12 @@ end
 -- number into CANNON_YAW_DEGREES above.
 function Island.rotateCannons(): number
 	cannonExtraYaw = (cannonExtraYaw + 90) % 360
+	-- In an ADOPTED (baked) world there are no placement closures — the
+	-- cannons are saved geometry, rotated by hand in Studio like anything
+	-- else — so this debug helper quietly has nothing to turn.
+	if #placedCannons == 0 then
+		warn("[SquishyClicker] Rotate Cannons does nothing in a baked world — rotate the cannon models in Studio instead.")
+	end
 	for _, place in placedCannons do
 		place(cannonExtraYaw)
 	end
@@ -772,6 +792,10 @@ local function buildPlot(index: number): Plot
 	local pad =
 		block(Vector3.new(PLOT_SIZE, 2.4, PLOT_SIZE), frame * CFrame.new(0, slabAt(Y.plotPad, 2.4), 0), COLOR.grassDark, folder)
 	studded(pad)
+	-- Named for the ADOPTION path: a baked world re-derives each plot's
+	-- centre from this pad, so a plot dragged somewhere new in Studio still
+	-- fires its flights from where it actually stands.
+	pad.Name = "PlotPad"
 
 	-- A low fence on the three sides that are not the entrance.
 	local half = PLOT_SIZE * 0.5
@@ -797,6 +821,10 @@ local function buildPlot(index: number): Plot
 	-- swapping that scenery can never break the interaction because the
 	-- interaction was never attached to it.
 	local station = Instance.new("Part")
+	-- Named for the ADOPTION path: the plot's one true prompt host, found by
+	-- name in a baked world rather than trusted to be the only prompt (an
+	-- imported model could smuggle one in).
+	station.Name = "Station"
 	station.Size = Vector3.new(4, 6, 4)
 	-- On the same STATION_BACK as the capsule, so the "hold E" hint sits at
 	-- the thing the player is actually walking up to.
@@ -830,6 +858,10 @@ local function buildPlot(index: number): Plot
 		folder,
 		32
 	)
+	-- Named for the ADOPTION path: the billboard that carries the owner's
+	-- name, found by name in a baked world.
+	local signGui = sign.Parent :: Instance
+	signGui.Name = "PlotSign"
 
 	return {
 		index = index,
@@ -1003,13 +1035,132 @@ local function adoptSkyEffects()
 	end
 end
 
+-- ---------- adopting a baked world ----------
+-- The world can be BAKED: run Island.build() once from Studio's command bar
+-- in EDIT mode, and the whole map is constructed as ordinary saved parts —
+-- editable, movable, deletable by hand like any Roblox place. At runtime,
+-- finding that Map folder already in Workspace means the place file owns
+-- the world: nothing is rebuilt, and this instead walks the plots and wires
+-- the live bookkeeping (signs, prompts, centres) onto whatever the builder
+-- left — or the builder moved, since centres re-derive from the geometry.
+local function adoptPlots(map: Folder): boolean
+	local plotsFolder = map:FindFirstChild("Plots")
+	if not plotsFolder then
+		return false
+	end
+
+	-- Every folder named PlotN counts, not a fixed 1..8: duplicating a plot
+	-- folder in Studio and renaming it Plot9 is how a hand-built island
+	-- grows a ninth cannon.
+	local found: { { index: number, folder: Folder } } = {}
+	for _, child in plotsFolder:GetChildren() do
+		local index = tonumber(child.Name:match("^Plot(%d+)$"))
+		if index and child:IsA("Folder") then
+			table.insert(found, { index = index, folder = child })
+		end
+	end
+	table.sort(found, function(a, b)
+		return a.index < b.index
+	end)
+
+	for _, entry in found do
+		local folder = entry.folder
+
+		-- The centre comes from the PAD where possible — the one honest
+		-- record of where the plot actually stands after hand edits — with
+		-- the stamped attribute as the fallback for a pad that was deleted.
+		local pad = folder:FindFirstChild("PlotPad", true)
+		local centre: Vector3? = nil
+		if pad and pad:IsA("BasePart") then
+			centre = Vector3.new(pad.Position.X, GROUND_Y, pad.Position.Z)
+		else
+			local stamped = folder:GetAttribute("PlotCenter")
+			if typeof(stamped) == "Vector3" then
+				centre = stamped
+			end
+		end
+
+		local station = folder:FindFirstChild("Station", true)
+		local prompt = station and station:FindFirstChildOfClass("ProximityPrompt")
+		local signGui = folder:FindFirstChild("PlotSign", true)
+		local sign = signGui and signGui:FindFirstChildOfClass("TextLabel")
+
+		if not (centre and prompt and sign) then
+			warn(
+				("[SquishyClicker] %s in the baked world is missing its %s — that plot is skipped. Delete the Map folder and re-bake to repair it."):format(
+					folder.Name,
+					not centre and "PlotPad" or not prompt and "Station prompt" or "PlotSign"
+				)
+			)
+			continue
+		end
+
+		local plotCentre = centre :: Vector3
+		local plotPrompt = prompt :: ProximityPrompt
+		local plotSign = sign :: TextLabel
+
+		-- Re-stamped rather than trusted: the client aims flights off this
+		-- attribute, and a hand-moved plot must fire from where it stands
+		-- now, not where the bake once put it. The session state resets too
+		-- — a place saved mid-playtest may have frozen a claimed sign or a
+		-- live prompt into the file.
+		folder:SetAttribute("PlotCenter", plotCentre)
+		folder:SetAttribute("OwnerUserId", nil)
+		plotSign.Text = "Empty Plot"
+		plotSign.TextColor3 = Color3.fromRGB(230, 226, 220)
+		plotPrompt.Enabled = false
+
+		table.insert(plots, {
+			index = entry.index,
+			folder = folder,
+			centre = plotCentre,
+			facing = math.atan2(plotCentre.Z, plotCentre.X),
+			sign = plotSign,
+			prompt = plotPrompt,
+			owner = nil,
+		})
+	end
+
+	return #plots > 0
+end
+
 function Island.build()
-	if root then
+	-- Parent-checked rather than nil-checked: Studio's command bar caches
+	-- this module, so a delete-the-Map-and-re-bake in the same session
+	-- arrives here with a stale root pointing at destroyed geometry.
+	if root and root.Parent then
 		return -- already built; this is called once from the server's startup
 	end
+	root = nil :: any
+	table.clear(plots)
+	table.clear(folders)
+	table.clear(placedCannons)
 
 	adoptSkybox()
 	adoptSkyEffects()
+
+	-- A Map folder already in Workspace is a BAKED world: the place file
+	-- owns the geometry and this run only adopts it.
+	local existing = workspace:FindFirstChild("Map")
+	if existing and existing:IsA("Folder") then
+		if adoptPlots(existing) then
+			root = existing
+			for _, child in existing:GetChildren() do
+				if child:IsA("Folder") then
+					folders[child.Name] = child
+				end
+			end
+			print(("[SquishyClicker] Adopted the baked world from the place file — %d plots wired."):format(#plots))
+			return
+		end
+		-- A Map with no usable plots would leave the game unplayable, and
+		-- building fresh INSIDE it would double the world. Stand the broken
+		-- bake aside (runtime-only — the place file is untouched) and build.
+		warn(
+			"[SquishyClicker] A Map folder exists but no plots could be adopted — it has been set aside as 'Map (unadopted)' for this session and a fresh world built. Delete the Map folder in Studio and re-bake to fix the place."
+		)
+		existing.Name = "Map (unadopted)"
+	end
 
 	-- The place file carries stowaways from the template it was made from: a
 	-- Baseplate and its SpawnLocation. The baseplate is why the painted range
@@ -1027,7 +1178,6 @@ function Island.build()
 
 	root = Instance.new("Folder")
 	root.Name = "Map"
-	root.Parent = workspace
 
 	group("Plots")
 
@@ -1040,6 +1190,11 @@ function Island.build()
 	for index = 1, Island.PLOT_COUNT do
 		table.insert(plots, buildPlot(index))
 	end
+
+	-- Parented LAST, in one step: baking from the Studio command bar runs
+	-- this exact function in edit mode, and a whole world arriving at once
+	-- is kinder to the editor than five hundred parts trickling in.
+	root.Parent = workspace
 end
 
 -- Hand a free plot to a player. Returns nil when the island is full, which the
