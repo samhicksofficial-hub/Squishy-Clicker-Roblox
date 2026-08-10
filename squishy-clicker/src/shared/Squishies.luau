@@ -110,7 +110,7 @@ local list: { Squishy } = {
 
 	-- Epics
 	{ id = "brain",      name = "Pink Brain",       rarity = "Epic",      color = Color3.fromRGB(240, 158, 170), sparkle = false, shape = "brainmesh" },
-	{ id = "blobfish",   name = "Blobfish",         rarity = "Epic",      color = Color3.fromRGB(122, 170, 230), sparkle = false, shape = "blobfish" },
+	{ id = "blobfish",   name = "Blobfish",         rarity = "Epic",      color = Color3.fromRGB(122, 170, 230), sparkle = false, shape = "blobfishmesh" },
 	{ id = "sugarbaby",  name = "Sugar Baby",       rarity = "Epic",      color = Color3.fromRGB(230, 120, 198), sparkle = true,  shape = "babymesh" },
 	{ id = "rainbutter", name = "Rainbow Butter",   rarity = "Epic",      color = Color3.fromRGB(196, 124, 220), sparkle = false, shape = "rainbuttermesh" },
 	{ id = "sparkledrop", name = "Sparkle Drop",    rarity = "Epic",      color = Color3.fromRGB(140, 226, 198), sparkle = true,  shape = "dropmesh" },

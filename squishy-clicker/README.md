@@ -346,6 +346,7 @@ Three models live in `assets/`, each needing the same one-time import:
 | `glitter-baby/` | `GlitterBaby` | Sugar Baby | one baked texture |
 | `sparkle-drop/` | `SparkleDrop` | Sparkle Drop | one baked texture |
 | `brain/` | `SquishyBrain` | Pink Brain | one baked texture |
+| `blobfish/` | `BlobfishSquishy` | Blobfish | one baked texture |
 | `cloud/` | `DoughCloud` | Dough Cloud | one baked texture |
 | `strawberry/` | `StrawberrySquishy` | Strawberry + Giant | one baked texture |
 | `ice-cube/` | `IceCubeSquishy` | Ice Cube Squishy | one baked texture |
