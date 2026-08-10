@@ -394,7 +394,7 @@ local Config = {
 	-- "rbxassetid://NNNNNNN". While this is empty the 💵 emoji stands in,
 	-- so nothing breaks before the upload happens. (VIP pickups keep their
 	-- 💰 either way — the jackpot stretch is supposed to look different.)
-	CashIconImage = "",
+	CashIconImage = "rbxassetid://131728154516680",
 
 	-- ===== The sky =====
 	-- The realistic sky ("AtmosphericClouds2"), owned by CODE: the server
