@@ -225,6 +225,12 @@ local lastShotAt: Vector3? = nil
 -- as a glitch where an FOV that surges reads as acceleration.
 local currentFov = Config.ChaseFovBase
 
+-- The chase camera's smoothed eye and aim: the toy draws exactly where the
+-- maths puts it (pickup pops must line up), but the CAMERA gliding a beat
+-- behind is what makes the whole ride read as smooth.
+local camEye: Vector3? = nil
+local camLook: Vector3? = nil
+
 -- Impact shake: a damped sine, amplitude set by each hit and decaying
 -- exponentially. One oscillator serves every impact — a second hit mid-wobble
 -- just re-kicks the amplitude, which is what a real camera would do.
@@ -393,6 +399,7 @@ local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local ClaimFlightRemote = Remotes:WaitForChild("ClaimFlight") :: RemoteEvent
 
 local steerPos = 0
+local steerVel = 0 -- eased toward the input, so direction flips glide
 local slamsUsed = 0
 local slamActive = false
 local slamDrop = 0 -- 0 riding the arc, 1 pressed to the ground
@@ -408,6 +415,29 @@ local pendingBundle: any = nil
 local touchAt: number? = nil
 local touchTravel = 0
 local touchBegan = 0
+
+-- The character's own controls, borrowed while a shot is being steered:
+-- A/D belongs to the squishy mid-flight and SPACE is a slam, not a jump —
+-- without this the character sprinted around the plot with every steer.
+-- Returned when the camera hands back, so walking resumes exactly when the
+-- view does. pcall'd because PlayerModule's internals are Roblox's to move.
+local controlsBorrowed = false
+local function borrowCharacterControls(borrow: boolean)
+	if borrow == controlsBorrowed then
+		return
+	end
+	controlsBorrowed = borrow
+	local ok, controls = pcall(function()
+		return require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule") :: any):GetControls()
+	end)
+	if ok and controls then
+		if borrow then
+			controls:Disable()
+		else
+			controls:Enable()
+		end
+	end
+end
 
 -- ---------- summoned squishies ----------
 -- The squishies ARE the pets, and summoning one means it walks the island
@@ -1019,6 +1049,9 @@ UserInputService.InputChanged:Connect(function(input)
 	local dx = input.Position.X - (touchAt :: number)
 	touchAt = input.Position.X
 	touchTravel += math.abs(dx)
+	-- The finger is a position control and already smooth; the eased
+	-- keyboard velocity stands down so the two never fight.
+	steerVel = 0
 	steerPos = math.clamp(steerPos + dx * 0.06, -Config.SteerHalfWidth, Config.SteerHalfWidth)
 end)
 
@@ -1086,11 +1119,17 @@ function Flight.play(plan: {
 	squash = 0
 	lastShotAt = nil
 
+	-- The character stands down while the squishy takes the controls.
+	borrowCharacterControls(true)
+	camEye = nil
+	camLook = nil
+
 	-- The mid-air game resets with the shot...
 	flightSerial = plan.serial or 0
 	flightEvents = {}
 	claimSent = false
 	steerPos = 0
+	steerVel = 0
 	slamsUsed = 0
 	slamActive = false
 	slamDrop = 0
@@ -1268,6 +1307,9 @@ RunService.RenderStepped:Connect(function(dt)
 		shot.bounced = skips
 
 		-- Keyboard steering, read fresh each frame: A / D or the arrows.
+		-- EASED, not instant: the velocity chases the keys, so direction
+		-- flips glide instead of kinking — which is most of what "smooth"
+		-- means at these speeds.
 		local steerInput = 0
 		if UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.Left) then
 			steerInput -= 1
@@ -1275,11 +1317,16 @@ RunService.RenderStepped:Connect(function(dt)
 		if UserInputService:IsKeyDown(Enum.KeyCode.D) or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
 			steerInput += 1
 		end
-		steerPos = math.clamp(
-			steerPos + steerInput * Config.SteerSpeed * dt,
-			-Config.SteerHalfWidth,
-			Config.SteerHalfWidth
-		)
+		local targetVel = steerInput * Config.SteerSpeed
+		steerVel += (targetVel - steerVel) * math.min(dt * 9, 1)
+		steerPos += steerVel * dt
+		if steerPos >= Config.SteerHalfWidth then
+			steerPos = Config.SteerHalfWidth
+			steerVel = math.min(steerVel, 0)
+		elseif steerPos <= -Config.SteerHalfWidth then
+			steerPos = -Config.SteerHalfWidth
+			steerVel = math.max(steerVel, 0)
+		end
 	end
 
 	-- The slam's dive and recovery. The arc itself never changes — the dive
@@ -1669,8 +1716,16 @@ RunService.RenderStepped:Connect(function(dt)
 			* math.sin(shakePhase * math.pi * 2 * Config.ImpactShakeHz)
 		local shakeOffset = Vector3.new(0, wobble, 0) + side * wobble * 0.4
 
-		local eye = at - outward * CHASE_BACK + Vector3.new(0, CHASE_UP, 0) + side * CHASE_SIDE + shakeOffset
-		camera.CFrame = CFrame.lookAt(eye, at + outward * 20)
+		-- The eye and aim GLIDE toward their targets instead of being set:
+		-- steering, boosts and slams all move the squishy sharply, and a
+		-- camera bolted straight to it re-broadcasts every kink. The shake
+		-- rides on top of the smoothing, so impacts stay punchy.
+		local targetEye = at - outward * CHASE_BACK + Vector3.new(0, CHASE_UP, 0) + side * CHASE_SIDE
+		local targetLook = at + outward * 20
+		local glide = 1 - math.exp(-dt * 10)
+		camEye = if camEye then camEye:Lerp(targetEye, glide) else targetEye
+		camLook = if camLook then camLook:Lerp(targetLook, glide) else targetLook
+		camera.CFrame = CFrame.lookAt((camEye :: Vector3) + shakeOffset, camLook :: Vector3)
 		-- FOV stretches with speed — measured against this shot's own launch
 		-- speed, so a level-1 arc and a level-80 arc both read as fast at
 		-- their own fastest — and every impact snaps it back toward base,
@@ -1692,6 +1747,12 @@ RunService.RenderStepped:Connect(function(dt)
 		camera.FieldOfView = Config.ChaseFovBase
 		currentFov = Config.ChaseFovBase
 		windTrail.Enabled = false
+		camEye = nil
+		camLook = nil
+		-- The character gets its controls back the moment it gets its
+		-- camera back — the two leaving and returning together is what
+		-- makes the borrow invisible.
+		borrowCharacterControls(false)
 		local character = player.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 		if humanoid then
