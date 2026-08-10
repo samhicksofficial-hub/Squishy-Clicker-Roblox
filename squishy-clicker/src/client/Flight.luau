@@ -569,6 +569,11 @@ local function corridorPart(size: Vector3, color: Color3, material: Enum.Materia
 	part.CanCollide = false
 	part.CanQuery = false
 	part.CanTouch = false
+	-- Parked AT the corridor's altitude from birth. A fresh Part defaults
+	-- to the world origin — which is the middle of the plaza, where the end
+	-- cap and a canyon wall stood like monoliths until the first flight's
+	-- window pass finally seated them.
+	part.CFrame = CFrame.new(CORRIDOR_ORIGIN)
 	part.Parent = corridorFolder
 	return part
 end
