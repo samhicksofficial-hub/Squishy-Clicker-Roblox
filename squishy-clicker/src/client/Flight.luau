@@ -390,6 +390,33 @@ bootSound.SoundId = "rbxasset://sounds/electronicpingshort.wav"
 bootSound.Volume = 0.6
 bootSound.Parent = SoundService
 
+-- The flight's little orchestra, all built from two stock samples pitched
+-- around: snap.wav slowed down is a thump, sped up is a knock; the ping
+-- rises with combos. Stock assets on purpose — they can never fail to load.
+local launchBoom = Instance.new("Sound")
+launchBoom.SoundId = "rbxasset://sounds/snap.wav"
+launchBoom.Volume = 0.9
+launchBoom.Parent = SoundService
+
+local bounceThock = Instance.new("Sound")
+bounceThock.SoundId = "rbxasset://sounds/snap.wav"
+bounceThock.Volume = 0.5
+bounceThock.Parent = SoundService
+
+local comboPing = Instance.new("Sound")
+comboPing.SoundId = "rbxasset://sounds/electronicpingshort.wav"
+comboPing.Volume = 0.45
+comboPing.Parent = SoundService
+
+-- Combo state: steered pickups taken in quick succession count up, and the
+-- count is worth announcing from three. Only ACTIVE collection combos —
+-- the magnet's passive sweeps stay quiet, because combos are for skill.
+local comboCount = 0
+local comboAt = 0
+
+-- Bombs the shot has already sailed close past, so "phew!" fires once each.
+local bombNear: { [number]: boolean } = {}
+
 -- ---------- the mid-air game's state ----------
 -- Steering and slamming change NOTHING the server has decided — distance,
 -- the arc and the fire-time payout are already settled. What they change is
@@ -767,6 +794,7 @@ local function applyFieldBundle(bundle: any)
 	pickupCollecting = {}
 	bootTaken = {}
 	bombHit = {}
+	bombNear = {}
 	for index, entry in pickupParts do
 		if not pickupField[index] then
 			pickupTaken[index] = true
@@ -959,6 +987,22 @@ local function takePickupVisual(index: number, entry: PickupEntry)
 		if icon then
 			icon.Enabled = false
 		end
+
+		-- The combo: quick successive grabs count up, announce from three,
+		-- and the ping climbs with them — a run through a cash line makes
+		-- a little ascending scale.
+		local now = os.clock()
+		comboCount = if now - comboAt <= 1.25 then comboCount + 1 else 1
+		comboAt = now
+		if comboCount >= 3 then
+			floatPopup(
+				prize.Position + Vector3.new(0, 6, 0),
+				("COMBO x%d!"):format(comboCount),
+				Color3.fromRGB(255, 214, 120)
+			)
+		end
+		comboPing.PlaybackSpeed = math.min(0.9 + comboCount * 0.09, 2.2)
+		comboPing:Play()
 	end
 end
 
@@ -1121,8 +1165,13 @@ function Flight.play(plan: {
 
 	-- The character stands down while the squishy takes the controls.
 	borrowCharacterControls(true)
-	camEye = nil
-	camLook = nil
+
+	-- The camera starts AT the barrel and whips back into its chase seat
+	-- through the glide — the first half-second reads as being fired WITH
+	-- the squishy rather than teleporting to a viewing position.
+	local from = muzzle :: Vector3
+	camEye = from - outward * 6 + Vector3.new(0, 5, 0)
+	camLook = from + outward * 40
 
 	-- The mid-air game resets with the shot...
 	flightSerial = plan.serial or 0
@@ -1171,7 +1220,43 @@ function Flight.play(plan: {
 	if not model then
 		model = Models.buildSquishy(stage, modelSpec.shape, modelSpec.color, modelSpec.sparkle, modelSpec.scale)
 	end
-	muzzleSmoke:Emit(18)
+
+	-- The BANG. Ignition should be the biggest frame of the whole flight:
+	-- a fat smoke wall, a flash that lights the plot, a deep thump and a
+	-- camera jolt, all in the same instant the squishy leaves.
+	comboCount = 0
+	bombNear = {}
+	muzzleSmoke:Emit(46)
+	launchBoom.PlaybackSpeed = 0.38 + math.random() * 0.08
+	launchBoom:Play()
+	shakeAmp = Config.ImpactShakeMagnitude * 0.8
+	shakePhase = 0
+
+	local flash = Instance.new("Part")
+	flash.Shape = Enum.PartType.Ball
+	flash.Size = Vector3.one * 3
+	flash.Position = from + outward * 2
+	flash.Color = Color3.fromRGB(255, 236, 160)
+	flash.Material = Enum.Material.Neon
+	flash.Anchored = true
+	flash.CanCollide = false
+	flash.CanQuery = false
+	flash.CanTouch = false
+	flash.Parent = stage
+	local glare = Instance.new("PointLight")
+	glare.Brightness = 6
+	glare.Range = 34
+	glare.Color = flash.Color
+	glare.Parent = flash
+	TweenService:Create(flash, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.one * 13,
+		Transparency = 1,
+	}):Play()
+	TweenService:Create(glare, TweenInfo.new(0.28), { Brightness = 0 }):Play()
+	task.delay(0.35, function()
+		flash:Destroy()
+	end)
+
 	return shot.seconds
 end
 
@@ -1344,6 +1429,30 @@ RunService.RenderStepped:Connect(function(dt)
 			shakeAmp = Config.ImpactShakeMagnitude
 			shakePhase = 0
 			fovKick = 1
+			bounceThock.PlaybackSpeed = 0.45
+			bounceThock:Play()
+
+			-- The shockwave: a white ring racing out from the impact, which
+			-- is what sells the slam as a HIT rather than a fast descent.
+			local ring = Instance.new("Part")
+			ring.Shape = Enum.PartType.Cylinder
+			ring.Size = Vector3.new(0.4, 6, 6)
+			ring.CFrame = CFrame.new(ground + Vector3.new(0, 0.6, 0)) * CFrame.Angles(0, 0, math.pi / 2)
+			ring.Color = Color3.fromRGB(255, 255, 255)
+			ring.Material = Enum.Material.Neon
+			ring.Anchored = true
+			ring.CanCollide = false
+			ring.CanQuery = false
+			ring.CanTouch = false
+			ring.Transparency = 0.2
+			ring.Parent = stage
+			TweenService:Create(ring, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = Vector3.new(0.4, 44, 44),
+				Transparency = 1,
+			}):Play()
+			task.delay(0.5, function()
+				ring:Destroy()
+			end)
 			if slamCollectAt then
 				floatPopup(ground + Vector3.new(0, 8, 0), "💥 SLAM!", Color3.fromRGB(255, 214, 120))
 				slamBurst(slamCollectAt :: { distance: number, lane: number })
@@ -1418,6 +1527,20 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 		for index, entry in bombField do
 			local base = bombBase[index]
+			-- Sailing close PAST a bomb earns a once-per-bomb "phew!" — the
+			-- near-miss is half of why dodging feels like anything.
+			if
+				base
+				and not bombHit[index]
+				and not bombNear[index]
+				and entry.distance > flownBefore
+				and entry.distance <= shot.flown
+				and math.abs(entry.lane - steerPos) > laneTouch
+				and math.abs(entry.lane - steerPos) <= laneTouch * 2.4
+			then
+				bombNear[index] = true
+				floatPopup(base + Vector3.new(0, 6, 0), "phew!", Color3.fromRGB(255, 240, 150))
+			end
 			if base and not bombHit[index] and crossed(entry.distance, entry.lane) and math.abs(base.Y - at.Y) <= 15 then
 				bombHit[index] = true
 				bombBase[index] = nil
@@ -1427,6 +1550,8 @@ RunService.RenderStepped:Connect(function(dt)
 					glyph.Enabled = false
 				end
 				boomFx(base)
+				bounceThock.PlaybackSpeed = 0.5
+				bounceThock:Play()
 				floatPopup(base, "-BOOM!", Color3.fromRGB(255, 110, 92))
 				-- The hit reads in the body: spin knocked down, and a forced
 				-- dive with no burst attached.
@@ -1454,6 +1579,10 @@ RunService.RenderStepped:Connect(function(dt)
 		-- The hit costs spin (bounce friction, made visible) and buys squash.
 		spinRate *= 0.78
 		squash = 0.5 + 0.5 * impactStrength
+		-- And a knock you can HEAR, pitched by how hard it landed — the
+		-- skips make a decelerating drum line down the range.
+		bounceThock.PlaybackSpeed = 0.55 + impactStrength * 0.55
+		bounceThock:Play()
 	elseif not flying and not landingDone then
 		landingDone = true
 		fovKick = 1
@@ -1462,6 +1591,38 @@ RunService.RenderStepped:Connect(function(dt)
 		local ground = worldAt(shot.distance, 0) + side * steerPos
 		splat(ground, Config.LaunchSplatRadius)
 		payoutPopup(ground, shot.distance, shot.earnedCoins)
+		bounceThock.PlaybackSpeed = 0.42
+		bounceThock:Play()
+
+		-- Confetti at the point of rest: the flight earns a little party at
+		-- the end, scaled by nothing — every landing deserves one.
+		local party = Instance.new("Part")
+		party.Size = Vector3.one
+		party.Transparency = 1
+		party.Anchored = true
+		party.CanCollide = false
+		party.CanQuery = false
+		party.CanTouch = false
+		party.Position = ground + Vector3.new(0, 4, 0)
+		party.Parent = stage
+		local confetti = Instance.new("ParticleEmitter")
+		confetti.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 120, 140)),
+			ColorSequenceKeypoint.new(0.5, Color3.fromRGB(120, 220, 130)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(120, 170, 255)),
+		})
+		confetti.Lifetime = NumberRange.new(0.7, 1.3)
+		confetti.Speed = NumberRange.new(18, 34)
+		confetti.SpreadAngle = Vector2.new(70, 70)
+		confetti.Rotation = NumberRange.new(0, 360)
+		confetti.RotSpeed = NumberRange.new(-240, 240)
+		confetti.Size = NumberSequence.new(1.4, 0.6)
+		confetti.Enabled = false
+		confetti.Parent = party
+		confetti:Emit(42)
+		task.delay(1.8, function()
+			party:Destroy()
+		end)
 		-- The full pancake, for the full stop.
 		squash = 1
 	end
