@@ -188,6 +188,23 @@ local Config = {
 	-- the same per pickup as a 500-stud one and the track stops mattering.
 	PickupValuePer1kStuds = 0.35,
 
+	-- ===== The flight corridor =====
+	-- Your own shot plays in a private, client-local walled corridor — the
+	-- lane-runner treadmill: the squishy stays near a fixed origin while
+	-- pooled floor tiles, canyon walls and distance boards scroll past at
+	-- TRUE 1:1 studs. Endless by construction: no streaming, no float
+	-- precision limits, no far edge. Every number a board shows is the real
+	-- sim distance.
+	CorridorStudsPerLane = 1.6, -- lane units → studs; FIXED (the old range scaled this with distance)
+	CorridorFloorWidth = 72, -- wall to wall; wider than the ±24-stud steer span so walls threaten, never block
+	CorridorWallHeight = 170, -- taller than the arc ceiling + camera height: the frame never sees over the rim
+	CorridorArcCeiling = 130, -- arcs draw at min(this / real peak, 1): small shots 1:1, huge ones compressed to fit
+	CorridorTileLength = 64, -- floor/wall segment length; the view window ÷ this sizes the pools
+	CorridorViewAhead = 900, -- studs drawn ahead; the fog wall sits here
+	CorridorViewBehind = 160, -- studs kept behind, so a bounce just passed doesn't visibly vanish
+	CorridorMarkerCount = 14, -- distance boards per flight; spacing snaps to a 1/2.5/5 ladder of REAL studs
+	CorridorCutDelay = 0.35, -- seconds of island ignition (smoke, flash, bang) before the hard cut to the corridor
+
 	-- ===== Mid-air controls =====
 	-- The flight itself never changed hands: distance, the arc and the
 	-- fire-time magnet sweep are still the server's closed-form arithmetic.

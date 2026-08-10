@@ -1,23 +1,24 @@
 --!strict
 -- ============================================================
---  FLIGHT  —  the shot, drawn in the real world.
+--  FLIGHT  —  the shot, drawn in a private endless corridor.
 --
---  The squishy leaves YOUR cannon, on YOUR plot, and sails out
---  over the rainbow bands painted across the plain. Which band it
---  clears is how far it went: the bands and this animation both
---  read Config.rangeRadius, so a squishy passing "10K Studs" has
---  genuinely flown ten thousand.
+--  The bang happens at YOUR cannon on YOUR plot; a beat later the
+--  camera cuts to a walled corridor that belongs to this client
+--  alone, where the flight plays as a TREADMILL: the squishy stays
+--  near a fixed origin and pooled floor tiles, canyon walls and
+--  distance boards scroll past at true one-to-one studs. A board
+--  reading "10K Studs" is ten thousand real simulated studs —
+--  no log compression anywhere, and no far edge: indices are just
+--  integers, so the corridor never ends.
 --
---  That mapping is LOGARITHMIC and has to be. Distances run from
---  a couple of hundred studs to seven figures; a linear plain long
---  enough for the top end would be a million studs across, and one
---  scaled to fit would put every early shot in the first inch of
---  it. On a log plain every power of ten is a visible step out,
---  which is the feedback the whole upgrade loop hangs on.
+--  Everything draws RELATIVE to the flown distance:
+--      corridorAt(d, h) = ORIGIN + FORWARD * (d - shot.flown) + up
+--  which is what makes a million-stud flight cost the same as a
+--  hundred-stud one — the camera never actually goes anywhere.
 --
 --  Nothing here decides anything. The server simulates the flight
 --  and sends its shape — every hop, its peak, its duration — and
---  this draws that shape onto the ground.
+--  this draws that shape onto the treadmill.
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -29,21 +30,25 @@ local UserInputService = game:GetService("UserInputService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local Format = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Format"))
-local Squishies = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Squishies"))
 local Models = require(script.Parent:WaitForChild("Models"))
 
 local Flight = {}
 
 local player = Players.LocalPlayer
 
--- How tall an arc is drawn, as a fraction of the ground it covers. Purely a
--- look: the real ratio is wild at both ends of the power curve.
-local ARC_HEIGHT_RATIO = 0.22
 -- Chase camera, in studs behind / above / to the side of the squishy.
 local CHASE_BACK = 26
 local CHASE_UP = 14
 local CHASE_SIDE = 16
 
+-- ---------- the corridor's coordinate frame ----------
+-- Private and at altitude, exactly like Scene.luau's diorama (its ORIGIN is
+-- Y 6000; this sits well above so neither world ever appears in the other's
+-- frame). Axes are FIXED and plot-independent — the corridor belongs to
+-- this client alone, so no bearing math survives from the shared-range era.
+local CORRIDOR_ORIGIN = Vector3.new(0, 9000, 0)
+local FORWARD = Vector3.xAxis
+local SIDE = Vector3.zAxis
 
 type Arc = { fromX: number, toX: number, peak: number, seconds: number, rolling: boolean }
 
@@ -51,22 +56,13 @@ local stage = Instance.new("Folder")
 stage.Name = "FlightStage"
 stage.Parent = workspace
 
--- Where the shot starts and which way it goes. Set from the player's own plot
--- the moment one is claimed for them; until then the flight has nowhere to be
--- and simply does not play.
---
--- The shot leaves the MUZZLE of the plot's own cannon — that is the whole
--- fantasy, and an earlier version that spawned it at the island's centre (so
--- distance measured from where the bands do) had it popping into existence a
--- hundred and fifty studs behind the player instead of out of their barrel.
--- The bands still line up: see worldAt.
+-- The plot's cannon muzzle: where the ignition bang plays, and where the
+-- capsule display sits. Set from the player's own plot the moment one is
+-- claimed for them; until then the flight has nowhere to bang from and
+-- simply does not play. The FLIGHT itself no longer happens here — after
+-- CorridorCutDelay seconds of smoke the camera hard-cuts to the corridor.
 local muzzle: Vector3? = nil
-local muzzleRadius = 0
 local outward = Vector3.new(1, 0, 0)
-
--- Where bounces land, just proud of the plain's top face. Must track Y.plain
--- in Island.luau, the same pairing as MagnetReferenceHeight / STAGE_APEX.
-local PLAIN_TOP = -20
 
 -- Cannon smoke, so the launch has a bang to it. Parked at the muzzle by
 -- setPlot; Emit'd by play.
@@ -218,7 +214,6 @@ local fovKick = 0
 local spinAngle = 0
 local spinRate = 0
 local squash = 0
-local lastShotAt: Vector3? = nil
 
 -- The FOV eases toward its target rather than being set from speed directly:
 -- bounces change speed in a single frame, and an FOV that jumps with it reads
@@ -242,8 +237,11 @@ local shakePhase = 0
 -- list, so the popup can never announce a milestone that didn't pay.
 local pendingMilestones: { { at: number, text: string } } = {}
 
--- The wind trail: two attachments on an invisible part that rides the shot,
--- switched on only at speed. A trail on a slow roll reads as a glitch.
+-- The wind: speed-line particles streaming BACKWARD from an invisible part
+-- riding the shot, switched on only at speed. This used to be a Trail, but
+-- a Trail draws between the subject's historical positions — and on the
+-- treadmill the squishy barely moves, so the trail collapsed to a stub.
+-- Particles carry their own velocity, so the treadmill can't starve them.
 local trailPart = Instance.new("Part")
 trailPart.Size = Vector3.one
 trailPart.Transparency = 1
@@ -253,27 +251,23 @@ trailPart.CanQuery = false
 trailPart.CanTouch = false
 trailPart.Parent = stage
 
-local trailTop = Instance.new("Attachment")
-trailTop.Position = Vector3.new(0, 2, 0)
-trailTop.Parent = trailPart
-local trailBottom = Instance.new("Attachment")
-trailBottom.Position = Vector3.new(0, -2, 0)
-trailBottom.Parent = trailPart
-
-local windTrail = Instance.new("Trail")
-windTrail.Attachment0 = trailTop
-windTrail.Attachment1 = trailBottom
-windTrail.Lifetime = 0.35
-windTrail.WidthScale = NumberSequence.new({
-	NumberSequenceKeypoint.new(0, 1),
+local windTrail = Instance.new("ParticleEmitter")
+windTrail.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+windTrail.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255))
+windTrail.Rate = 34
+windTrail.Lifetime = NumberRange.new(0.25, 0.4)
+windTrail.Speed = NumberRange.new(120, 190)
+windTrail.EmissionDirection = Enum.NormalId.Back
+windTrail.SpreadAngle = Vector2.new(8, 8)
+windTrail.Size = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 1.6),
 	NumberSequenceKeypoint.new(1, 0.2),
 })
 windTrail.Transparency = NumberSequence.new({
 	NumberSequenceKeypoint.new(0, 0.55),
 	NumberSequenceKeypoint.new(1, 1),
 })
-windTrail.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255))
-windTrail.FaceCamera = true
+windTrail.LightEmission = 0.6
 windTrail.Enabled = false
 windTrail.Parent = trailPart
 
@@ -411,7 +405,7 @@ for _ = 1, POOL do
 	face.TextScaled = true
 	face.Parent = icon
 	-- The uploaded cash-stack image, when Config carries its id. Both live
-	-- in the billboard; layoutField shows whichever applies to the entry.
+	-- in the billboard; the field cosmetics pass shows whichever applies.
 	local pic = Instance.new("ImageLabel")
 	pic.Name = "Pic"
 	pic.Size = UDim2.fromScale(1, 1)
@@ -523,6 +517,195 @@ local comboAt = 0
 -- Bombs the shot has already sailed close past, so "phew!" fires once each.
 local bombNear: { [number]: boolean } = {}
 
+-- ---------- the corridor ----------
+-- The treadmill's fixed scenery: pooled floor tiles, canyon walls with lip
+-- caps, distance boards, and a fogged end cap. Pools wrap by modulo inside
+-- the view window, so the same twenty tiles carry a hundred-stud shot and a
+-- million-stud one alike.
+
+-- Lane units → studs, FIXED. The shared range scaled this with distance;
+-- the corridor never does — which is what makes the walls honest.
+local function laneToStuds(lane: number): number
+	return lane * Config.CorridorStudsPerLane
+end
+
+-- Where sim distance `d` at sim height `h` draws, relative to the flight's
+-- current flown distance. THE treadmill equation: the squishy's own forward
+-- term is always zero, and everything else slides past it.
+local function corridorAt(d: number, simHeight: number): Vector3
+	return CORRIDOR_ORIGIN + FORWARD * (d - shot.flown) + Vector3.new(0, simHeight * shot.heightScale, 0)
+end
+
+-- Snap a raw spacing to the 1 / 2.5 / 5 × 10^k ladder, so marker numbers
+-- are always figures a person can read at speed.
+local function niceStep(raw: number): number
+	local floor10 = 10 ^ math.floor(math.log10(math.max(raw, 1)))
+	for _, mult in { 1, 2.5, 5, 10 } do
+		if raw <= floor10 * mult then
+			return math.max(floor10 * mult, 25)
+		end
+	end
+	return math.max(floor10 * 10, 25)
+end
+
+local corridorFolder = Instance.new("Folder")
+corridorFolder.Name = "Corridor"
+corridorFolder.Parent = stage
+
+-- The palette the corridor wears; Flight.setWorld repaints it. Defaults
+-- match Sunny Meadow so the first flight is right even before a sync.
+local corridorTheme = {
+	grass = Color3.fromRGB(138, 214, 74),
+	grassDark = Color3.fromRGB(112, 190, 58),
+	canyon = Color3.fromRGB(226, 118, 118),
+}
+
+local function corridorPart(size: Vector3, color: Color3, material: Enum.Material): BasePart
+	local part = Instance.new("Part")
+	part.Size = size
+	part.Color = color
+	part.Material = material
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Parent = corridorFolder
+	return part
+end
+
+type MarkerSet = { stripe: BasePart, boards: { BasePart }, labels: { TextLabel }, index: number }
+
+local corridorTiles: { BasePart } = {}
+local corridorWalls: { { left: BasePart, right: BasePart, leftLip: BasePart, rightLip: BasePart } } = {}
+local corridorMarkers: { MarkerSet } = {}
+local CORRIDOR_POOL = 20
+
+do
+	local width = Config.CorridorFloorWidth
+	local wallHeight = Config.CorridorWallHeight
+	local tileLength = Config.CorridorTileLength
+
+	for index = 1, CORRIDOR_POOL do
+		-- Floor: alternating shades, studded — the banding is most of what
+		-- conveys the treadmill actually moving.
+		local tile = corridorPart(Vector3.new(tileLength, 2, width), corridorTheme.grass, Enum.Material.Plastic)
+		tile.TopSurface = Enum.SurfaceType.Studs
+		corridorTiles[index] = tile
+
+		-- Walls with lip caps: the island's Canyon/CanyonLip recipe, so the
+		-- corridor reads as the same universe.
+		local function wallPair(sideSign: number): (BasePart, BasePart)
+			local wall = corridorPart(
+				Vector3.new(tileLength, wallHeight, 6),
+				corridorTheme.canyon,
+				Enum.Material.Sandstone
+			)
+			local lip = corridorPart(Vector3.new(tileLength, 4, 8), corridorTheme.grassDark, Enum.Material.Plastic)
+			lip.TopSurface = Enum.SurfaceType.Studs
+			-- Positioned per-frame; sideSign only decides which side later.
+			wall:SetAttribute("SideSign", sideSign)
+			lip:SetAttribute("SideSign", sideSign)
+			return wall, lip
+		end
+		local left, leftLip = wallPair(-1)
+		local right, rightLip = wallPair(1)
+		corridorWalls[index] = { left = left, right = right, leftLip = leftLip, rightLip = rightLip }
+
+		-- A marker set: a bright stripe across the floor plus a number board
+		-- on EACH wall (wall boards read at grazing angles where floor text
+		-- disappears).
+		local stripe = corridorPart(Vector3.new(3, 2.2, width), Color3.fromRGB(255, 244, 200), Enum.Material.Neon)
+		local boards: { BasePart } = {}
+		local labels: { TextLabel } = {}
+		for _, sideSign in { -1, 1 } do
+			local board = corridorPart(Vector3.new(2, 12, 30), Color3.fromRGB(56, 40, 32), Enum.Material.SmoothPlastic)
+			board:SetAttribute("SideSign", sideSign)
+			local surface = Instance.new("SurfaceGui")
+			-- The inward face: left wall shows its right face and vice
+			-- versa; both are the board's Z-normal faces after per-frame
+			-- placement, so Front/Back split the two signs.
+			surface.Face = sideSign == -1 and Enum.NormalId.Front or Enum.NormalId.Back
+			surface.PixelsPerStud = 16
+			surface.Parent = board
+			local label = Instance.new("TextLabel")
+			label.Size = UDim2.fromScale(1, 1)
+			label.BackgroundTransparency = 1
+			label.Font = Enum.Font.FredokaOne
+			label.Text = ""
+			label.TextColor3 = Color3.fromRGB(255, 255, 255)
+			label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
+			label.TextStrokeTransparency = 0
+			label.TextScaled = true
+			label.Parent = surface
+			table.insert(boards, board)
+			table.insert(labels, label)
+		end
+		corridorMarkers[index] = { stripe = stripe, boards = boards, labels = labels, index = -1 }
+	end
+end
+
+-- Depth: a solid end cap past the view window and two translucent fog
+-- planes on the way to it. GEOMETRY fog on purpose — classic Lighting fog
+-- is ignored while an Atmosphere instance exists (the sky pack ships one),
+-- and borrowing Lighting state is how systems here have fought before.
+local corridorCap: BasePart
+local corridorFog: { BasePart } = {}
+do
+	local width = Config.CorridorFloorWidth
+	local wallHeight = Config.CorridorWallHeight
+	corridorCap = corridorPart(Vector3.new(2, wallHeight, width + 16), Color3.fromRGB(196, 220, 244), Enum.Material.SmoothPlastic)
+	for _, fraction in { 0.6, 0.85 } do
+		local plane = corridorPart(Vector3.new(1, wallHeight, width + 12), Color3.fromRGB(206, 226, 246), Enum.Material.SmoothPlastic)
+		plane.Transparency = fraction == 0.6 and 0.65 or 0.45
+		plane:SetAttribute("AheadFraction", fraction)
+		table.insert(corridorFog, plane)
+	end
+end
+
+-- The corridor wears the active world's colours. Fed from Cannon.update's
+-- world-change detection, beside the island repaint.
+function Flight.setWorld(world: { grass: Color3, grassDark: Color3, canyon: Color3 })
+	corridorTheme.grass = world.grass
+	corridorTheme.grassDark = world.grassDark
+	corridorTheme.canyon = world.canyon
+	for index, tile in corridorTiles do
+		tile.Color = index % 2 == 0 and corridorTheme.grass or corridorTheme.grassDark
+		local walls = corridorWalls[index]
+		walls.left.Color = corridorTheme.canyon
+		walls.right.Color = corridorTheme.canyon
+		walls.leftLip.Color = corridorTheme.grassDark
+		walls.rightLip.Color = corridorTheme.grassDark
+	end
+end
+
+-- Ground-owned FX ride the treadmill: a splat must recede with the floor it
+-- landed on, or it appears to glide forward against the scroll. Each entry
+-- remembers its sim distance, lane and rotation; a per-frame pass reseats
+-- them and drops the dead.
+type TrackedFx = { part: BasePart, d: number, lane: number, up: number, rot: CFrame }
+local trackedFx: { TrackedFx } = {}
+
+local function trackFx(part: BasePart, d: number, lane: number, up: number)
+	table.insert(trackedFx, {
+		part = part,
+		d = d,
+		lane = lane,
+		up = up,
+		rot = part.CFrame.Rotation,
+	})
+end
+
+-- Per-flight marker spacing (the 1/2.5/5 ladder of the shot's distance) and
+-- the precomputed draw heights that seat boots/bombs ON this flight's arc.
+local markerSpacing = 100
+local bootDrawHeight: { [number]: number } = {}
+local bombDrawHeight: { [number]: number } = {}
+
+-- The ignition-to-corridor cut: the camera holds the barrel bang until this
+-- clock, then hard-cuts once (a lerp would swoop nine thousand studs).
+local cutAt = 0
+local cutDone = true
+
 -- ---------- the mid-air game's state ----------
 -- Steering and slamming change NOTHING the server has decided — distance,
 -- the arc and the fire-time payout are already settled. What they change is
@@ -548,24 +731,6 @@ local pendingBundle: any = nil
 local touchAt: number? = nil
 local touchTravel = 0
 local touchBegan = 0
-
--- ---------- the streaming escort ----------
--- With StreamingEnabled places, the world loads in around the CHARACTER —
--- who is standing back at the plot while the chase camera crosses two and a
--- half thousand studs of range. Without help, the far ground simply has not
--- streamed in by the time the shot arrives, and the flight plays over void.
--- This asks the server to stream around a point just AHEAD of the shot, so
--- the ground lands before the camera does. Fire-and-forget in its own
--- thread (the call yields), pcall'd (it can throw during teardown), and a
--- clean no-op in places with streaming off.
-local lastStreamAsk = 0
-local function askStreaming(position: Vector3)
-	task.spawn(function()
-		pcall(function()
-			player:RequestStreamAroundAsync(position, 0.1)
-		end)
-	end)
-end
 
 -- The character's own controls, borrowed while a shot is being steered:
 -- A/D belongs to the squishy mid-flight and SPACE is a slam, not a jump —
@@ -632,75 +797,6 @@ function Flight.setActiveSquishies(list: { { shape: string?, color: Color3, spar
 	end
 end
 
--- ---------- other players' shots ----------
--- The lobby spectacle: everyone's launches arc over the same plain, each one
--- rising from its owner's own plot bearing with a name over it. A pool,
--- round-robined, so a busy server recycles the oldest ghost rather than
--- queueing shots nobody is waiting for.
-type Ghost = {
-	part: BasePart,
-	label: TextLabel,
-	arcs: { Arc },
-	arcStarts: { number },
-	simSeconds: number,
-	seconds: number,
-	progress: number,
-	active: boolean,
-	distance: number,
-	origin: Vector3, -- their muzzle
-	muzzleRadius: number,
-	outward: Vector3,
-	heightScale: number,
-}
-
-local ghosts: { Ghost } = {}
-local nextGhost = 1
-for _ = 1, Config.LobbyMaxGhosts do
-	local ball = Instance.new("Part")
-	ball.Shape = Enum.PartType.Ball
-	ball.Size = Vector3.one * 6
-	ball.Material = Enum.Material.Neon
-	ball.Anchored = true
-	ball.CanCollide = false
-	ball.CanQuery = false
-	ball.CanTouch = false
-	ball.Transparency = 1
-	ball.Parent = stage
-
-	local gui = Instance.new("BillboardGui")
-	gui.Size = UDim2.new(0, 200, 0, 40)
-	gui.StudsOffset = Vector3.new(0, 7, 0)
-	gui.MaxDistance = 2500
-	gui.Parent = ball
-
-	local label = Instance.new("TextLabel")
-	label.Size = UDim2.fromScale(1, 1)
-	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.FredokaOne
-	label.Text = ""
-	label.TextColor3 = Color3.fromRGB(255, 255, 255)
-	label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
-	label.TextStrokeTransparency = 0
-	label.TextScaled = true
-	label.Parent = gui
-
-	table.insert(ghosts, {
-		part = ball,
-		label = label,
-		arcs = {},
-		arcStarts = {},
-		simSeconds = 1,
-		seconds = 1,
-		progress = 1,
-		active = false,
-		distance = 0,
-		origin = Vector3.zero,
-		muzzleRadius = 0,
-		outward = Vector3.xAxis,
-		heightScale = 1,
-	})
-end
-
 -- ---------- the curve ----------
 -- The same two-phase-per-hop curve the server scored against, reproduced to
 -- animate. Only the server's copy decides what was collected, so the two
@@ -729,71 +825,104 @@ local function sample(simTime: number): (number, number, number)
 	return sampleArcs(shot.arcs, shot.arcStarts, shot.distance, simTime)
 end
 
--- Where a game distance sits in the world, on the ray out from the plot.
---
--- Radius is clamped at the muzzle's, so the shot leaves the barrel rather
--- than teleporting to the island's centre first — and everything past the
--- muzzle is on the same circles the bands are painted on, so the landing sits
--- on exactly the band the distance says. (The first ~50 game studs compress
--- onto the muzzle as a result; they pass in a fraction of the first arc, and
--- the squishy is climbing out of the barrel while they do.)
---
--- The baseline sinks from the barrel's height down to the plain across the
--- first band, so bounces out on the range actually touch the ground instead
--- of skipping along at plateau height 22 studs in the air.
-local function worldAt(studs: number, height: number): Vector3
-	local from = muzzle or Vector3.zero
-	local radius = math.max(Config.rangeRadius(studs), muzzleRadius)
-	local blend = math.clamp((radius - muzzleRadius) / math.max(Config.RangeNearRadius - muzzleRadius, 1), 0, 1)
-	local baseY = from.Y * (1 - blend) + PLAIN_TOP * blend
-	return Vector3.new(outward.X * radius, baseY + height * shot.heightScale, outward.Z * radius)
-end
+-- ---------- drawing the track ----------
+-- Field entries stay in SIM space; the window pass below seats whatever is
+-- near the flown distance each frame and hides the rest. The *Base tables
+-- keep their old contract — "base exists = currently drawn" — which is
+-- exactly what the touch detection reads.
 
--- ---------- public ----------
-
--- Laying the field out needs a plot to lay it out FROM. Until one is adopted
--- everything stays hidden: the first field arrives from the server during the
--- join handshake, which can beat the plot attribute replicating, and laying
--- it out from a nil origin scattered glowing crates over the plaza — the
--- "something in the sky" hanging above spawn. Defined above setPlot because
--- both setPlot and setField call it, whichever order the two race in.
--- The lane's sideways direction in the world, for this plot's bearing.
-local function laneSide(): Vector3
-	return Vector3.new(-outward.Z, 0, outward.X)
-end
-
--- Lane units → world studs at a given track distance. The range fans out
--- (and the log compression bunches it), so a fixed stud width drew the
--- whole game as a thread down the centre line; scaling with the visual
--- radius spreads it across the player's wedge instead. Gameplay and the
--- server's checks stay in lane units — this is purely the drawing map.
-local function laneScaleAt(distance: number): number
-	return math.max(Config.rangeRadius(distance) * Config.LaneVisualFraction / Config.SteerHalfWidth, 1)
-end
-
--- Lay the boots and bombs along the track. Before a shot they preview at a
--- modest hover; during one, play() re-lays them ON the flight's own visual
--- arc, so steering laterally is genuinely the way to hit or dodge them.
-local function layoutExtras(heightFor: ((distance: number) -> number)?)
-	if not muzzle then
-		return
+-- Per-entry cosmetics run ONCE per field (on bundle apply), not per frame:
+-- mesh sizing, VIP tinting, and which face the cash icon wears. A real
+-- cash-stack model keeps its own paint (VIPs just come bigger) and needs no
+-- floating marker except the 💰 jackpot flag; the fallback blocks get the
+-- tint-and-resize treatment and the full billboard.
+local function setupFieldCosmetics()
+	for index, prize in pickupParts do
+		local entry = pickupField[index]
+		if entry then
+			local meshBase = prize:GetAttribute("MeshBase") :: Vector3?
+			if meshBase then
+				prize.Size = meshBase * (entry.vip and 1.6 or 1)
+			else
+				prize.Color = entry.vip and VIP_GOLD or (PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
+				prize.Size = Vector3.one * (entry.vip and 6.5 or 4)
+			end
+			local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
+			if icon then
+				local useImage = Config.CashIconImage ~= "" and not entry.vip and meshBase == nil
+				local face = icon:FindFirstChildOfClass("TextLabel")
+				local pic = icon:FindFirstChild("Pic") :: ImageLabel?
+				if pic then
+					pic.Visible = useImage
+				end
+				if face then
+					face.Visible = not useImage
+					face.Text = entry.vip and "💰" or "💵"
+				end
+			end
+		end
 	end
-	local side = laneSide()
+end
 
-	local function seat(parts: { BasePart }, entries: { any }, bases: { [number]: Vector3 }, dead: { [number]: boolean })
+-- One pass, one iteration: seat, bob and spin everything inside the view
+-- window; hide everything outside it. Only runs while a shot is flying or
+-- resting — between shots the corridor is empty and the track with it.
+local function drawTrackObjects(idleClock: number)
+	local ahead = Config.CorridorViewAhead
+	local behind = Config.CorridorViewBehind
+
+	local function inWindow(d: number): boolean
+		return d > shot.flown - behind and d < shot.flown + ahead
+	end
+
+	for index, prize in pickupParts do
+		local entry = pickupField[index]
+		local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
+		if entry and not pickupTaken[index] and inWindow(entry.distance) then
+			-- Real arc heights on the flight's own scale — the pickup sits
+			-- where the arc that placed it actually passes.
+			local lift = math.max(entry.height * shot.heightScale, 2)
+			local base = corridorAt(entry.distance, 0)
+				+ Vector3.new(0, lift, 0)
+				+ SIDE * laneToStuds(entry.lane or 0)
+			pickupBase[index] = base
+			prize.Transparency = if prize:GetAttribute("MeshBase") then 0 else 0.1
+			prize.CFrame = CFrame.new(base + Vector3.new(0, math.sin(idleClock * 2.2 + index) * 0.7, 0))
+				* CFrame.Angles(0, idleClock * 1.4 + index, 0)
+			if icon then
+				local meshy = prize:GetAttribute("MeshBase") ~= nil
+				icon.Enabled = not meshy or entry.vip == true
+			end
+		else
+			pickupBase[index] = nil
+			prize.Transparency = 1
+			if icon then
+				icon.Enabled = false
+			end
+		end
+	end
+
+	local function seatExtras(
+		parts: { BasePart },
+		entries: { any },
+		bases: { [number]: Vector3 },
+		dead: { [number]: boolean },
+		heights: { [number]: number },
+		spinSpeed: number,
+		bobSpeed: number
+	)
 		for index, part in parts do
 			local entry = entries[index]
-			local drawable = entry ~= nil
-				and not dead[index]
-				and Config.rangeRadius(entry.distance) > muzzleRadius + 6
 			local icon = part:FindFirstChild("Glyph") :: BillboardGui?
-			if entry and drawable then
-				local lift = if heightFor then heightFor(entry.distance) else 14
-				bases[index] = worldAt(entry.distance, 0)
-					+ Vector3.new(0, math.max(lift, 6), 0)
-					+ side * (entry.lane * laneScaleAt(entry.distance))
-				part.Position = bases[index] :: Vector3
+			if entry and not dead[index] and inWindow(entry.distance) then
+				local lift = math.max(heights[index] or 10, 4)
+				local base = corridorAt(entry.distance, 0)
+					+ Vector3.new(0, lift, 0)
+					+ SIDE * laneToStuds(entry.lane)
+				bases[index] = base
 				part.Transparency = 0
+				part.CFrame = CFrame.new(base + Vector3.new(0, math.sin(idleClock * bobSpeed + index * 2) * 0.8, 0))
+					* CFrame.Angles(0, idleClock * spinSpeed + index, 0)
 				if icon then
 					icon.Enabled = true
 				end
@@ -807,84 +936,11 @@ local function layoutExtras(heightFor: ((distance: number) -> number)?)
 		end
 	end
 
-	seat(bootParts, bootField :: { any }, bootBase, bootTaken)
-	seat(bombParts, bombField :: { any }, bombBase, bombHit)
+	seatExtras(bootParts, bootField :: { any }, bootBase, bootTaken, bootDrawHeight, 1.8, 2.6)
+	seatExtras(bombParts, bombField :: { any }, bombBase, bombHit, bombDrawHeight, 0.8, 1.6)
 end
 
-local function layoutField()
-	if not muzzle then
-		return
-	end
-	local side = laneSide()
-
-	local tallest = 1
-	for _, entry in pickupField do
-		tallest = math.max(tallest, entry.height)
-	end
-
-	for index, prize in pickupParts do
-		local entry = pickupField[index]
-		-- Skip the ones the radius clamp would pile onto the muzzle: worldAt
-		-- floors every radius at the muzzle's, so the near end of the field
-		-- compressed onto one spot and stacked its neon crates into a glowing
-		-- pillar over the cannon — the "beacon" in the sky. They still exist
-		-- to the server, which sweeps them in the first instant of a shot;
-		-- they are just not worth drawing on top of each other.
-		local drawable = entry ~= nil
-			and not pickupTaken[index]
-			and Config.rangeRadius(entry.distance) > muzzleRadius + 6
-		if entry and drawable then
-			-- A real cash-stack model keeps its own paint and proportions —
-			-- VIPs just come bigger. The fallback blocks get the tint-and-
-			-- resize treatment as before.
-			local meshBase = prize:GetAttribute("MeshBase") :: Vector3?
-			if meshBase then
-				prize.Size = meshBase * (entry.vip and 1.6 or 1)
-				prize.Transparency = 0
-			else
-				prize.Color = entry.vip and VIP_GOLD or (PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
-				prize.Size = Vector3.one * (entry.vip and 6.5 or 4)
-				prize.Transparency = 0.1
-			end
-			-- Laid out against the field's own tallest, so the strung-out
-			-- pickups sit at a readable height whatever the power level —
-			-- and out at their LANE offset, where the steering game lives.
-			local lift = entry.height / tallest * 90
-			pickupBase[index] = worldAt(entry.distance, 0)
-				+ Vector3.new(0, lift, 0)
-				+ side * ((entry.lane or 0) * laneScaleAt(entry.distance))
-			prize.Position = pickupBase[index] :: Vector3
-
-			local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
-			if icon then
-				-- A real model needs no floating marker — the geometry IS
-				-- the marker — except the 💰 on VIPs, which stays as the
-				-- jackpot flag. The fallback blocks keep the full billboard
-				-- treatment: the uploaded image for ordinary cash when its
-				-- id is in Config, emoji otherwise.
-				local meshy = prize:GetAttribute("MeshBase") ~= nil
-				icon.Enabled = not meshy or entry.vip
-				local useImage = Config.CashIconImage ~= "" and not entry.vip and not meshy
-				local face = icon:FindFirstChildOfClass("TextLabel")
-				local pic = icon:FindFirstChild("Pic") :: ImageLabel?
-				if pic then
-					pic.Visible = useImage
-				end
-				if face then
-					face.Visible = not useImage
-					face.Text = entry.vip and "💰" or "💵"
-				end
-			end
-		else
-			prize.Transparency = 1
-			pickupBase[index] = nil
-			local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
-			if icon then
-				icon.Enabled = false
-			end
-		end
-	end
-end
+-- ---------- public ----------
 
 -- The plot to fire from. The direction is straight out from the island's
 -- centre, which is the way every plot's cannon already points.
@@ -900,17 +956,13 @@ function Flight.setPlot(centre: Vector3)
 	-- enough at cannon scale and keeps this file ignorant of how Island.luau
 	-- happens to assemble its cannons.
 	muzzle = centre + flat.Unit * 9 + Vector3.new(0, 13, 0)
-	muzzleRadius = flat.Magnitude + 9
 	smokeAnchor.Position = muzzle :: Vector3
 
 	-- The capsule display floats over the station, STATION_BACK inward of
-	-- the plot centre — the same spot Island.luau builds the pod.
+	-- the plot centre — the same spot Island.luau builds the pod. (The old
+	-- field layout call is gone: the track only draws inside the corridor
+	-- window mid-flight now, so there is nothing to lay out from a plot.)
 	stationAnchor.Position = centre - flat.Unit * STATION_BACK + Vector3.new(0, CAPSULE_ICON_HEIGHT, 0)
-
-	-- A field may have arrived before the plot did — lay it out now, the
-	-- boots and bombs with it.
-	layoutField()
-	layoutExtras(nil)
 end
 
 function Flight.setSquishy(shape: string?, color: Color3, sparkle: boolean, sizeScale: number?)
@@ -945,8 +997,7 @@ local function applyFieldBundle(bundle: any)
 			entry.Transparency = 1
 		end
 	end
-	layoutField()
-	layoutExtras(nil)
+	setupFieldCosmetics()
 end
 
 function Flight.setField(bundle: any)
@@ -969,7 +1020,8 @@ end
 -- A paint splat where the squishy hit, tinted its own colour, spreading and
 -- fading off the grass. Created per impact rather than pooled: a flight makes
 -- at most a dozen, and each destroys itself.
-local function splat(at: Vector3, radius: number)
+-- Returns the disc, so callers can hand it to the treadmill tracker.
+local function splat(at: Vector3, radius: number): BasePart
 	local disc = Instance.new("Part")
 	disc.Shape = Enum.PartType.Cylinder
 	disc.Size = Vector3.new(0.3, radius, radius)
@@ -990,6 +1042,7 @@ local function splat(at: Vector3, radius: number)
 	task.delay(Config.LaunchSplatFadeSeconds + 0.1, function()
 		disc:Destroy()
 	end)
+	return disc
 end
 
 -- A small floating number: pops in with a scale bounce, drifts up four studs
@@ -1151,7 +1204,8 @@ local function takePickupVisual(index: number, entry: PickupEntry)
 end
 
 -- A quick dark puff for a bomb connecting.
-local function boomFx(at: Vector3)
+-- Returns the anchor, so the treadmill tracker can carry the puff along.
+local function boomFx(at: Vector3): BasePart
 	local anchor = Instance.new("Part")
 	anchor.Size = Vector3.one
 	anchor.Transparency = 1
@@ -1175,6 +1229,7 @@ local function boomFx(at: Vector3)
 	task.delay(1.4, function()
 		anchor:Destroy()
 	end)
+	return anchor
 end
 
 -- The dive. Manual slams spend a limited stock and burst nearby cash on
@@ -1283,11 +1338,10 @@ function Flight.play(plan: {
 		running += arc.seconds
 	end
 
-	-- Arcs are drawn a fixed fraction as tall as the ground they cover, rather
-	-- than to their real height: a maxed shot peaks thirty thousand studs up,
-	-- which is off the top of any sky worth having.
-	local span = math.max(Config.rangeRadius(shot.distance), 1)
-	shot.heightScale = span * ARC_HEIGHT_RATIO / math.max(plan.peakHeight, 1)
+	-- Arc height policy: small shots draw 1:1 in every axis (a level-one
+	-- flight peaks ~45 real studs); only the big ones compress, down to the
+	-- corridor's ceiling, so the walls always contain the whole show.
+	shot.heightScale = math.min(Config.CorridorArcCeiling / math.max(plan.peakHeight, 1), 1)
 
 	shot.seconds = math.clamp(shot.simSeconds * 0.25, 2.4, 8)
 	shot.flown, shot.height, shot.speed, shot.bounced = 0, 0, 0, 0
@@ -1305,22 +1359,33 @@ function Flight.play(plan: {
 	spinAngle = 0
 	spinRate = math.pi * 5 * math.clamp(shot.launchSpeed / 260, 0.7, 1.8)
 	squash = 0
-	lastShotAt = nil
 
 	-- The character stands down while the squishy takes the controls.
 	borrowCharacterControls(true)
 
-	-- Get the first stretch of range streaming in before the shot reaches
-	-- it; the loop keeps feeding the escort from there.
-	lastStreamAsk = os.clock()
-	askStreaming(worldAt(math.min(shot.distance * 0.15, shot.distance), 0))
-
-	-- The camera starts AT the barrel and whips back into its chase seat
-	-- through the glide — the first half-second reads as being fired WITH
-	-- the squishy rather than teleporting to a viewing position.
+	-- The camera opens ON the barrel for the ignition beat, then hard-cuts
+	-- to the corridor once — set here, honored in the camera block. A lerp
+	-- across the nine thousand studs to the corridor would read as a swoop
+	-- through the sky, which is why the cut is a cut.
 	local from = muzzle :: Vector3
 	camEye = from - outward * 6 + Vector3.new(0, 5, 0)
 	camLook = from + outward * 40
+	cutAt = os.clock() + Config.CorridorCutDelay
+	cutDone = false
+
+	-- The corridor dresses for this flight: marker spacing on the 1/2.5/5
+	-- ladder of ITS distance (~CorridorMarkerCount boards however far it
+	-- goes), stale tracked FX purged, and marker slots forced to relabel.
+	markerSpacing = niceStep(shot.distance / Config.CorridorMarkerCount)
+	for _, fx in trackedFx do
+		if fx.part.Parent then
+			fx.part:Destroy()
+		end
+	end
+	table.clear(trackedFx)
+	for _, marker in corridorMarkers do
+		marker.index = -1
+	end
 
 	-- The mid-air game resets with the shot...
 	flightSerial = plan.serial or 0
@@ -1336,12 +1401,18 @@ function Flight.play(plan: {
 	liftVel = 0
 	touchAt = nil
 
-	-- ...and the boots and bombs re-seat ON this flight's own visual arc, so
-	-- the path runs straight through them and steering sideways is genuinely
-	-- how they are hit or dodged.
-	layoutExtras(function(distance: number)
-		return simHeightAt(shot.arcs, distance) * shot.heightScale
-	end)
+	-- ...and the boots and bombs seat ON this flight's own visual arc — the
+	-- draw heights are precomputed here, and the per-frame window pass reads
+	-- them, so the path runs straight through every one and steering
+	-- sideways is genuinely how they are hit or dodged.
+	table.clear(bootDrawHeight)
+	table.clear(bombDrawHeight)
+	for index, entry in bootField do
+		bootDrawHeight[index] = simHeightAt(shot.arcs, entry.distance) * shot.heightScale
+	end
+	for index, entry in bombField do
+		bombDrawHeight[index] = simHeightAt(shot.arcs, entry.distance) * shot.heightScale
+	end
 
 	-- The milestones this shot crosses for the first time, positioned from
 	-- Config by name so the popup fires at the sign it belongs to.
@@ -1409,83 +1480,6 @@ function Flight.play(plan: {
 	return shot.seconds
 end
 
--- Somebody else launched: fly their shot out from THEIR plot, over the same
--- bands, with their name over it. Takes the broadcast payload as-is.
-function Flight.playGhost(shot2: {
-	userId: number?,
-	name: string?,
-	distance: number,
-	arcs: { Arc },
-	seconds: number,
-	clickerId: string?,
-})
-	if typeof(shot2.arcs) ~= "table" or #shot2.arcs == 0 then
-		return
-	end
-	if shot2.userId == player.UserId then
-		return -- own shot is already flying as the real thing
-	end
-
-	-- Their bearing and muzzle, read off their plot's ownership stamp. No
-	-- plot found means nothing to fire from — the feed still lists the shot.
-	local map = workspace:FindFirstChild("Map")
-	local plots = map and map:FindFirstChild("Plots")
-	local bearing: Vector3? = nil
-	local theirMuzzle = Vector3.zero
-	local theirMuzzleRadius = 0
-	if plots then
-		for _, plotFolder in plots:GetChildren() do
-			if plotFolder:GetAttribute("OwnerUserId") == shot2.userId then
-				-- The stamped centre, not the geometry — same replication
-				-- race as our own plot, same fix.
-				local centre = plotFolder:GetAttribute("PlotCenter")
-				if typeof(centre) == "Vector3" then
-					local flat = Vector3.new(centre.X, 0, centre.Z)
-					if flat.Magnitude > 1 then
-						bearing = flat.Unit
-						-- Same approximation as our own muzzle in setPlot.
-						theirMuzzle = centre + flat.Unit * 9 + Vector3.new(0, 13, 0)
-						theirMuzzleRadius = flat.Magnitude + 9
-					end
-				end
-				break
-			end
-		end
-	end
-	if not bearing then
-		return
-	end
-
-	local ghost = ghosts[nextGhost]
-	nextGhost = nextGhost % #ghosts + 1
-
-	ghost.arcs = shot2.arcs
-	ghost.arcStarts = {}
-	local running, peak = 0, 1
-	for index, arc in shot2.arcs do
-		ghost.arcStarts[index] = running
-		running += arc.seconds
-		peak = math.max(peak, arc.peak)
-	end
-
-	ghost.simSeconds = math.max(shot2.seconds, 1e-3)
-	ghost.seconds = math.clamp(ghost.simSeconds * 0.25, 2.4, 8)
-	ghost.progress = 0
-	ghost.active = true
-	ghost.distance = math.max(shot2.distance, 0)
-	ghost.origin = theirMuzzle
-	ghost.muzzleRadius = theirMuzzleRadius
-	ghost.outward = bearing
-
-	local span = math.max(Config.rangeRadius(ghost.distance), 1)
-	ghost.heightScale = span * ARC_HEIGHT_RATIO / peak
-
-	local squishy = shot2.clickerId and Squishies.byId[shot2.clickerId]
-	ghost.part.Color = squishy and squishy.color or Color3.fromRGB(240, 240, 240)
-	ghost.part.Transparency = 0.1
-	ghost.label.Text = shot2.name or ""
-end
-
 function Flight.distance(): number
 	return shot.flown
 end
@@ -1504,7 +1498,6 @@ end
 RunService.RenderStepped:Connect(function(dt)
 	local toy = model
 	local flying = shot.progress < 1
-	local side = laneSide()
 	-- Where the shot was at the top of the frame: touches are judged by
 	-- CROSSING an entry's distance, so a fast segment that passes a whole
 	-- cluster in one frame still counts every member it swept.
@@ -1561,27 +1554,16 @@ RunService.RenderStepped:Connect(function(dt)
 			steerPos = -Config.SteerHalfWidth
 			steerVel = math.max(steerVel, 0)
 		end
-
-		-- Keep the streaming escort fed: a fresh ask every third of a
-		-- second, always a stride ahead of where the shot actually is.
-		if os.clock() - lastStreamAsk > 0.35 then
-			lastStreamAsk = os.clock()
-			local ahead = math.min(shot.flown + math.max(shot.distance * 0.1, 60), shot.distance)
-			askStreaming(worldAt(ahead, 0))
-		end
 	end
 
 	-- The slam's dive and recovery. The arc itself never changes — the dive
 	-- scales the drawn height down to the ground and eases it back after.
-	-- The steering offset in world studs, at the shot's current distance.
-	local steerWorld = steerPos * laneScaleAt(shot.flown)
-
 	if slamActive then
 		slamDrop = math.min(slamDrop + dt * 5, 1)
 		if slamDrop >= 1 then
 			slamActive = false
-			local ground = worldAt(shot.flown, 0) + side * steerWorld
-			splat(ground, Config.LaunchSplatRadius * 0.9)
+			local ground = corridorAt(shot.flown, 0) + SIDE * laneToStuds(steerPos)
+			trackFx(splat(ground, Config.LaunchSplatRadius * 0.9), shot.flown, steerPos, 0.4)
 			squash = 1
 			shakeAmp = Config.ImpactShakeMagnitude
 			shakePhase = 0
@@ -1603,6 +1585,7 @@ RunService.RenderStepped:Connect(function(dt)
 			ring.CanTouch = false
 			ring.Transparency = 0.2
 			ring.Parent = stage
+			trackFx(ring, shot.flown, steerPos, 0.6)
 			TweenService:Create(ring, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 				Size = Vector3.new(0.4, 44, 44),
 				Transparency = 1,
@@ -1631,15 +1614,90 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end
 
-	-- Where the squishy actually draws: the server's arc, dived by any slam,
-	-- kicked by any boot, and steered sideways across the lane.
-	local arcAt = worldAt(shot.flown, shot.height)
-	local groundLevel = worldAt(shot.flown, 0).Y
+	-- Where the squishy actually draws: at the treadmill's origin, on the
+	-- server's arc, dived by any slam, kicked by any boot, and steered
+	-- sideways across the fixed lane.
+	local arcAt = corridorAt(shot.flown, shot.height)
+	local groundLevel = CORRIDOR_ORIGIN.Y
 	local at = Vector3.new(
 		arcAt.X,
 		groundLevel + (arcAt.Y - groundLevel) * (1 - slamDrop) + extraLift,
 		arcAt.Z
-	) + side * steerWorld
+	) + SIDE * laneToStuds(steerPos)
+
+	-- The corridor itself: tiles, walls and marker boards wrap through the
+	-- window by modulo, so the same pooled parts carry every distance.
+	if flying or os.clock() < shot.holdUntil then
+		local tileLength = Config.CorridorTileLength
+		local width = Config.CorridorFloorWidth
+		local wallHeight = Config.CorridorWallHeight
+		local firstTile = math.floor((shot.flown - Config.CorridorViewBehind) / tileLength)
+		local lastTile = math.floor((shot.flown + Config.CorridorViewAhead) / tileLength)
+		for tileIndex = firstTile, lastTile do
+			local slot = (tileIndex % CORRIDOR_POOL) + 1
+			local tile = corridorTiles[slot]
+			local centreD = (tileIndex + 0.5) * tileLength
+			local base = corridorAt(centreD, 0)
+			tile.Color = tileIndex % 2 == 0 and corridorTheme.grass or corridorTheme.grassDark
+			tile.CFrame = CFrame.new(base - Vector3.new(0, 1, 0))
+			local walls = corridorWalls[slot]
+			walls.left.CFrame = CFrame.new(base + SIDE * (-width / 2 - 3) + Vector3.new(0, wallHeight / 2, 0))
+			walls.right.CFrame = CFrame.new(base + SIDE * (width / 2 + 3) + Vector3.new(0, wallHeight / 2, 0))
+			walls.leftLip.CFrame = CFrame.new(base + SIDE * (-width / 2 - 3) + Vector3.new(0, wallHeight + 2, 0))
+			walls.rightLip.CFrame = CFrame.new(base + SIDE * (width / 2 + 3) + Vector3.new(0, wallHeight + 2, 0))
+		end
+
+		local firstMarker = math.max(math.floor((shot.flown - Config.CorridorViewBehind) / markerSpacing), 1)
+		local lastMarker = math.floor((shot.flown + Config.CorridorViewAhead) / markerSpacing)
+		for markerIndex = firstMarker, lastMarker do
+			local slot = (markerIndex % CORRIDOR_POOL) + 1
+			local marker = corridorMarkers[slot]
+			local d = markerIndex * markerSpacing
+			local base = corridorAt(d, 0)
+			marker.stripe.CFrame = CFrame.new(base + Vector3.new(0, 0.2, 0))
+			if marker.index ~= markerIndex then
+				-- Relabel only on slot reuse: TextLabel writes are not free.
+				marker.index = markerIndex
+				local text = ("%s Studs"):format(Format.abbreviate(d))
+				for _, label in marker.labels do
+					label.Text = text
+				end
+			end
+			for boardIndex, board in marker.boards do
+				local sideSign = boardIndex == 1 and -1 or 1
+				board.CFrame = CFrame.new(
+					base + SIDE * (sideSign * (width / 2 + 2)) + Vector3.new(0, 20, 0)
+				)
+			end
+		end
+
+		-- The static depth dressing rides at fixed offsets from the origin.
+		corridorCap.CFrame = CFrame.new(
+			CORRIDOR_ORIGIN + FORWARD * Config.CorridorViewAhead + Vector3.new(0, wallHeight / 2, 0)
+		)
+		for _, plane in corridorFog do
+			local fraction = plane:GetAttribute("AheadFraction") :: number
+			plane.CFrame = CFrame.new(
+				CORRIDOR_ORIGIN + FORWARD * (Config.CorridorViewAhead * fraction) + Vector3.new(0, wallHeight / 2, 0)
+			)
+		end
+
+		-- And everything the shot can touch, seated in the same window.
+		drawTrackObjects(os.clock())
+	end
+
+	-- Ground-owned FX ride the treadmill: reseat every tracked part at its
+	-- remembered distance and lane, drop what has died or fallen behind.
+	for index = #trackedFx, 1, -1 do
+		local fx = trackedFx[index]
+		if fx.part.Parent == nil or fx.d < shot.flown - Config.CorridorViewBehind - 40 then
+			table.remove(trackedFx, index)
+		else
+			fx.part.CFrame = CFrame.new(
+				corridorAt(fx.d, 0) + SIDE * laneToStuds(fx.lane) + Vector3.new(0, fx.up, 0)
+			) * fx.rot
+		end
+	end
 
 	-- Steering through things: whatever the drawn squishy touches, the claim
 	-- remembers. The server re-prices all of it; these are the visuals.
@@ -1729,7 +1787,12 @@ RunService.RenderStepped:Connect(function(dt)
 	if flying and shot.bounced > lastBounceSeen then
 		lastBounceSeen = shot.bounced
 		fovKick = 1
-		splat(worldAt(shot.flown, 0) + side * steerPos, Config.LaunchSplatRadius * 0.7)
+		trackFx(
+			splat(corridorAt(shot.flown, 0) + SIDE * laneToStuds(steerPos), Config.LaunchSplatRadius * 0.7),
+			shot.flown,
+			steerPos,
+			0.4
+		)
 		-- Re-kick the shake oscillator, scaled by how fast the hit was.
 		shakeAmp = Config.ImpactShakeMagnitude * (0.4 + 0.6 * impactStrength)
 		shakePhase = 0
@@ -1745,8 +1808,11 @@ RunService.RenderStepped:Connect(function(dt)
 		fovKick = 1
 		shakeAmp = Config.ImpactShakeMagnitude
 		shakePhase = 0
-		local ground = worldAt(shot.distance, 0) + side * steerPos
-		splat(ground, Config.LaunchSplatRadius)
+		-- The treadmill has stopped (flown == distance), so the landing FX
+		-- sit still on their own — but they register with the tracker
+		-- anyway, in case a later system ever moves the window at rest.
+		local ground = corridorAt(shot.distance, 0) + SIDE * laneToStuds(steerPos)
+		trackFx(splat(ground, Config.LaunchSplatRadius), shot.distance, steerPos, 0.4)
 		payoutPopup(ground, shot.distance, shot.earnedCoins)
 		bounceThock.PlaybackSpeed = 0.42
 		bounceThock:Play()
@@ -1777,6 +1843,7 @@ RunService.RenderStepped:Connect(function(dt)
 		confetti.Enabled = false
 		confetti.Parent = party
 		confetti:Emit(42)
+		trackFx(party, shot.distance, steerPos, 4)
 		task.delay(1.8, function()
 			party:Destroy()
 		end)
@@ -1786,8 +1853,9 @@ RunService.RenderStepped:Connect(function(dt)
 	fovKick = math.max(fovKick - dt * 3, 0)
 	shakePhase += dt
 
-	-- The wind trail rides the shot and only draws at speed.
-	trailPart.CFrame = CFrame.new(at)
+	-- The wind rides the shot, blowing BACKWARD down the corridor, and only
+	-- draws at speed. -Z is the emitter's Back face, so aim it at +FORWARD.
+	trailPart.CFrame = CFrame.lookAt(at, at - FORWARD)
 	windTrail.Enabled = flying and impactStrength > Config.WindTrailMinSpeedFraction
 
 	if toy then
@@ -1818,32 +1886,29 @@ RunService.RenderStepped:Connect(function(dt)
 			-- The somersault runs at the spin the LAUNCH gave it, not on a
 			-- timer — each bounce has already bled some off above — and once
 			-- the shot is down in its final roll, the turn rate locks to the
-			-- ground actually drawn passing underneath, like a wheel. That
-			-- coupling is measured on screen positions, so the log-compressed
-			-- far range rolls exactly as fast as it appears to move.
+			-- TREADMILL's drawn ground speed, like a wheel. The corridor is
+			-- 1:1 longitudinally, so the sim's own delta IS the visual speed.
 			local radiusWorld = math.max(-toy.lowestY * applied, 0.5)
 			local lastArc = shot.arcs[#shot.arcs]
 			local rollingNow = lastArc and lastArc.rolling and shot.flown >= lastArc.fromX
-			if rollingNow and lastShotAt and dt > 0 then
-				local step = at - lastShotAt
-				spinRate = Vector3.new(step.X, 0, step.Z).Magnitude / dt / radiusWorld
+			if rollingNow and dt > 0 then
+				spinRate = (shot.flown - flownBefore) / dt / radiusWorld
 			end
-			lastShotAt = at
 			spinAngle += spinRate * dt
 
 			Models.apply(
 				toy.rig,
-				CFrame.new(at + Vector3.new(0, lift, 0)) * CFrame.fromAxisAngle(side, -spinAngle),
+				CFrame.new(at + Vector3.new(0, lift, 0)) * CFrame.fromAxisAngle(SIDE, -spinAngle),
 				scaleVec
 			)
 		elseif os.clock() < shot.holdUntil then
 			-- Landed, camera still lingering: the squishy SITS where it
 			-- stopped — pancaked from the landing, easing back to shape —
 			-- instead of blinking out the frame the flight ends.
-			local ground = worldAt(shot.distance, 0)
+			local ground = corridorAt(shot.distance, 0) + SIDE * laneToStuds(steerPos)
 			Models.apply(
 				toy.rig,
-				CFrame.new(ground + Vector3.new(0, lift, 0)) * CFrame.fromAxisAngle(side, -spinAngle),
+				CFrame.new(ground + Vector3.new(0, lift, 0)) * CFrame.fromAxisAngle(SIDE, -spinAngle),
 				scaleVec
 			)
 		else
@@ -1878,39 +1943,17 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end
 
-	-- The cash idles alive: a slow bob and turn on every visible pickup,
-	-- around the rest position layout remembered. Each gets its index as a
-	-- phase offset so the field shimmers rather than marching in step.
-	local idleClock = os.clock()
-	for index, prize in pickupParts do
-		local base = pickupBase[index]
-		if base and prize.Transparency < 1 then
-			prize.CFrame = CFrame.new(base + Vector3.new(0, math.sin(idleClock * 2.2 + index) * 0.7, 0))
-				* CFrame.Angles(0, idleClock * 1.4 + index, 0)
-		end
-	end
-	for index, part in bootParts do
-		local base = bootBase[index]
-		if base and part.Transparency < 1 then
-			part.CFrame = CFrame.new(base + Vector3.new(0, math.sin(idleClock * 2.6 + index * 2) * 0.9, 0))
-				* CFrame.Angles(0, idleClock * 1.8 + index, 0)
-		end
-	end
-	for index, part in bombParts do
-		local base = bombBase[index]
-		if base and part.Transparency < 1 then
-			part.CFrame = CFrame.new(base + Vector3.new(0, math.sin(idleClock * 1.6 + index * 3) * 0.5, 0))
-				* CFrame.Angles(0, idleClock * 0.8 + index, 0)
-		end
-	end
-
-	-- Milestone signs call out the moment the shot crosses them, at the spot
-	-- on the ground the sign marks.
+	-- Milestone popups fire on CROSSING, so their corridor position is right
+	-- beside the squishy — exactly where the eye already is.
 	if flying then
 		for index = #pendingMilestones, 1, -1 do
 			local milestone = pendingMilestones[index]
 			if shot.flown >= milestone.at then
-				floatPopup(worldAt(milestone.at, 0) + Vector3.new(0, 16, 0), milestone.text, Color3.fromRGB(255, 220, 120))
+				floatPopup(
+					corridorAt(milestone.at, 0) + Vector3.new(0, 16, 0),
+					milestone.text,
+					Color3.fromRGB(255, 220, 120)
+				)
 				table.remove(pendingMilestones, index)
 			end
 		end
@@ -1991,35 +2034,6 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end
 
-	-- Other players' shots, arcing out from their own plots.
-	for _, ghost in ghosts do
-		if ghost.active then
-			ghost.progress += dt / ghost.seconds
-			if ghost.progress >= 1 then
-				ghost.active = false
-				ghost.part.Transparency = 1
-			else
-				local flown, height =
-					sampleArcs(ghost.arcs, ghost.arcStarts, ghost.distance, ghost.progress * ghost.simSeconds)
-				-- The same clamped radius and sinking baseline as our own
-				-- shot, so their squishy also leaves a barrel and also
-				-- bounces on the actual ground.
-				local radius = math.max(Config.rangeRadius(flown), ghost.muzzleRadius)
-				local blend = math.clamp(
-					(radius - ghost.muzzleRadius) / math.max(Config.RangeNearRadius - ghost.muzzleRadius, 1),
-					0,
-					1
-				)
-				local baseY = ghost.origin.Y * (1 - blend) + PLAIN_TOP * blend
-				ghost.part.Position = Vector3.new(
-					ghost.outward.X * radius,
-					baseY + height * ghost.heightScale + 2,
-					ghost.outward.Z * radius
-				)
-			end
-		end
-	end
-
 	-- The camera rides behind the shot and hands straight back afterwards.
 	local camera = workspace.CurrentCamera
 	if camera and (flying or os.clock() < shot.holdUntil) then
@@ -2028,22 +2042,45 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 		-- The damped harmonic shake: an exponentially decaying sine, kicked
 		-- by every impact, riding the eye in view space so it reads as the
-		-- CAMERA being jolted rather than the world wobbling. (`side` is the
-		-- loop-level lane direction, shared with the steering.)
+		-- CAMERA being jolted rather than the world wobbling.
 		local wobble = shakeAmp * math.exp(-Config.ImpactShakeDamping * shakePhase)
 			* math.sin(shakePhase * math.pi * 2 * Config.ImpactShakeHz)
-		local shakeOffset = Vector3.new(0, wobble, 0) + side * wobble * 0.4
+		local shakeOffset = Vector3.new(0, wobble, 0) + SIDE * wobble * 0.4
 
-		-- The eye and aim GLIDE toward their targets instead of being set:
-		-- steering, boosts and slams all move the squishy sharply, and a
-		-- camera bolted straight to it re-broadcasts every kink. The shake
-		-- rides on top of the smoothing, so impacts stay punchy.
-		local targetEye = at - outward * CHASE_BACK + Vector3.new(0, CHASE_UP, 0) + side * CHASE_SIDE
-		local targetLook = at + outward * 20
-		local glide = 1 - math.exp(-dt * 10)
-		camEye = if camEye then camEye:Lerp(targetEye, glide) else targetEye
-		camLook = if camLook then camLook:Lerp(targetLook, glide) else targetLook
-		camera.CFrame = CFrame.lookAt((camEye :: Vector3) + shakeOffset, camLook :: Vector3)
+		if not cutDone and os.clock() < cutAt then
+			-- The ignition beat: hold the barrel shot while the bang plays.
+			-- camEye/camLook were seeded at the muzzle by play().
+			camera.CFrame = CFrame.lookAt((camEye :: Vector3) + shakeOffset, camLook :: Vector3)
+		else
+			-- The corridor chase. On the first frame past the beat this is a
+			-- HARD CUT — eye and aim assigned, not lerped, because a glide
+			-- would swoop nine thousand studs through the open sky.
+			-- The eye's lateral seat is clamped inside the walls, or a full
+			-- steer plus the side offset would poke the camera through them.
+			local eyeSide = math.clamp(
+				laneToStuds(steerPos) + CHASE_SIDE,
+				-(Config.CorridorFloorWidth / 2 - 8),
+				Config.CorridorFloorWidth / 2 - 8
+			)
+			local targetEye = CORRIDOR_ORIGIN
+				- FORWARD * CHASE_BACK
+				+ Vector3.new(0, (at.Y - CORRIDOR_ORIGIN.Y) * 0.6 + CHASE_UP, 0)
+				+ SIDE * eyeSide
+			local targetLook = at + FORWARD * 20
+			if not cutDone then
+				cutDone = true
+				camEye = targetEye
+				camLook = targetLook
+			else
+				-- After the cut the glide returns: steering, boosts and
+				-- slams all move the squishy sharply, and a camera bolted
+				-- straight to it re-broadcasts every kink.
+				local glide = 1 - math.exp(-dt * 10)
+				camEye = (camEye :: Vector3):Lerp(targetEye, glide)
+				camLook = (camLook :: Vector3):Lerp(targetLook, glide)
+			end
+			camera.CFrame = CFrame.lookAt((camEye :: Vector3) + shakeOffset, camLook :: Vector3)
+		end
 		-- FOV stretches with speed — measured against this shot's own launch
 		-- speed, so a level-1 arc and a level-80 arc both read as fast at
 		-- their own fastest — and every impact snaps it back toward base,

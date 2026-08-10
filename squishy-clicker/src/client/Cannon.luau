@@ -742,11 +742,9 @@ function Cannon.mount(gui: GuiObject, scene: any)
 			return
 		end
 
-		-- Ghosts fly over the REAL plain now, out from the launcher's own
-		-- plot — Flight owns them, the same as it owns your shot. It skips
-		-- your own broadcast itself, so no second squishy for one launch.
-		Flight.playGhost(shot)
-
+		-- Text only: flights live in each player's private corridor now, so
+		-- there is no shared sky for a ghost arc to cross. The feed is the
+		-- lobby's whole window onto other people's shots.
 		table.insert(feedLines, 1, ("%s — %s"):format(shot.name, Format.abbreviate(math.floor(shot.distance or 0))))
 		while #feedLines > Config.LobbyFeedSize do
 			table.remove(feedLines)
@@ -828,11 +826,15 @@ function Cannon.mount(gui: GuiObject, scene: any)
 
 		-- Repaint only when the server says the world actually changed —
 		-- GetDescendants over the island is nothing to run on every sync.
+		-- The flight corridor changes into the same outfit at the same
+		-- moment, so the island you stand on and the canyon you fly down
+		-- always agree about which world this is.
 		if activeWorldId ~= lastWorldId then
 			lastWorldId = activeWorldId
 			for _, world in Config.Worlds do
 				if world.id == activeWorldId then
 					repaintIsland(world)
+					Flight.setWorld(world)
 					break
 				end
 			end
