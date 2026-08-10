@@ -246,9 +246,9 @@ local Config = {
 
 	-- ===== Bombs =====
 	-- Cartoon bombs. Hitting one knocks the squishy down and cuts the
-	-- flight bonus — every hit multiplies the claim by (1 - this). Half of
-	-- them anchor beside cash so greed and danger share an address; the
-	-- other half scatter the WHOLE range so no line is ever carefree.
+	-- flight bonus — every hit multiplies the claim by (1 - this). Placed
+	-- on a density RAMP: sparse in the opening stretch, crowding toward
+	-- the far end, and never dead-centre in the opening third.
 	BombCount = 10,
 	BombClaimPenalty = 0.2,
 

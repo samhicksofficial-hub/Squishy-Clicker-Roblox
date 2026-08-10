@@ -6,8 +6,8 @@
 --  camera cuts to a walled corridor that belongs to this client
 --  alone, where the flight plays as a TREADMILL: the squishy stays
 --  near a fixed origin and pooled floor tiles, canyon walls and
---  distance boards scroll past at true one-to-one studs. A board
---  reading "10K Studs" is ten thousand real simulated studs —
+--  distance numbers painted on the road scroll past at true
+--  one-to-one studs. A "10K" on the floor is ten thousand real studs —
 --  no log compression anywhere, and no far edge: indices are just
 --  integers, so the corridor never ends.
 --
@@ -374,10 +374,10 @@ end
 local POOL = Config.LaunchPickupCount * 2 + Config.VipZoneCount * Config.VipZoneDensityMultiplier
 for _ = 1, POOL do
 	-- The imported cash-stack model when it exists; the neon block until.
-	local prize = templatePart("cash", { "CashStack", "Cash" }, 4.2)
+	local prize = templatePart("cash", { "CashStack", "Cash" }, 6)
 	if not prize then
 		local block = Instance.new("Part")
-		block.Size = Vector3.one * 4
+		block.Size = Vector3.one * 5.5
 		block.Material = Enum.Material.Neon
 		prize = block
 	end
@@ -453,26 +453,26 @@ end
 local bootParts: { BasePart } = {}
 local bombParts: { BasePart } = {}
 for _ = 1, 4 do
-	local boot = templatePart("boot", { "BoostBoot", "Boost" }, 5.2)
+	local boot = templatePart("boot", { "BoostBoot", "Boost" }, 8)
 	if boot then
 		boot.Parent = stage
 		table.insert(bootParts, boot)
 	else
 		table.insert(
 			bootParts,
-			makeExtraPart(Enum.PartType.Block, 4.5, Color3.fromRGB(88, 232, 96), Enum.Material.Neon, "⬆️", 4)
+			makeExtraPart(Enum.PartType.Block, 7, Color3.fromRGB(88, 232, 96), Enum.Material.Neon, "⬆️", 6)
 		)
 	end
 end
 for _ = 1, 14 do
-	local bomb = templatePart("bomb", { "CartoonBomb", "Bomb" }, 5.4)
+	local bomb = templatePart("bomb", { "CartoonBomb", "Bomb" }, 8)
 	if bomb then
 		bomb.Parent = stage
 		table.insert(bombParts, bomb)
 	else
 		table.insert(
 			bombParts,
-			makeExtraPart(Enum.PartType.Ball, 5, Color3.fromRGB(52, 52, 58), Enum.Material.SmoothPlastic, "💣", 3.6)
+			makeExtraPart(Enum.PartType.Ball, 7.5, Color3.fromRGB(52, 52, 58), Enum.Material.SmoothPlastic, "💣", 5.5)
 		)
 	end
 end
@@ -578,7 +578,7 @@ local function corridorPart(size: Vector3, color: Color3, material: Enum.Materia
 	return part
 end
 
-type MarkerSet = { stripe: BasePart, boards: { BasePart }, labels: { TextLabel }, index: number }
+type MarkerSet = { panel: BasePart, label: TextLabel, index: number }
 
 local corridorTiles: { BasePart } = {}
 local corridorWalls: { { left: BasePart, right: BasePart, leftLip: BasePart, rightLip: BasePart } } = {}
@@ -599,7 +599,7 @@ do
 
 		-- Walls with lip caps: the island's Canyon/CanyonLip recipe, so the
 		-- corridor reads as the same universe.
-		local function wallPair(sideSign: number): (BasePart, BasePart)
+		local function wallPair(): (BasePart, BasePart)
 			local wall = corridorPart(
 				Vector3.new(tileLength, wallHeight, 6),
 				corridorTheme.canyon,
@@ -607,45 +607,38 @@ do
 			)
 			local lip = corridorPart(Vector3.new(tileLength, 4, 8), corridorTheme.grassDark, Enum.Material.Plastic)
 			lip.TopSurface = Enum.SurfaceType.Studs
-			-- Positioned per-frame; sideSign only decides which side later.
-			wall:SetAttribute("SideSign", sideSign)
-			lip:SetAttribute("SideSign", sideSign)
 			return wall, lip
 		end
-		local left, leftLip = wallPair(-1)
-		local right, rightLip = wallPair(1)
+		local left, leftLip = wallPair()
+		local right, rightLip = wallPair()
 		corridorWalls[index] = { left = left, right = right, leftLip = leftLip, rightLip = rightLip }
 
-		-- A marker set: a bright stripe across the floor plus a number board
-		-- on EACH wall (wall boards read at grazing angles where floor text
-		-- disappears).
-		local stripe = corridorPart(Vector3.new(3, 2.2, width), Color3.fromRGB(255, 244, 200), Enum.Material.Neon)
-		local boards: { BasePart } = {}
-		local labels: { TextLabel } = {}
-		for _, sideSign in { -1, 1 } do
-			local board = corridorPart(Vector3.new(2, 12, 30), Color3.fromRGB(56, 40, 32), Enum.Material.SmoothPlastic)
-			board:SetAttribute("SideSign", sideSign)
-			local surface = Instance.new("SurfaceGui")
-			-- The inward face: left wall shows its right face and vice
-			-- versa; both are the board's Z-normal faces after per-frame
-			-- placement, so Front/Back split the two signs.
-			surface.Face = sideSign == -1 and Enum.NormalId.Front or Enum.NormalId.Back
-			surface.PixelsPerStud = 16
-			surface.Parent = board
-			local label = Instance.new("TextLabel")
-			label.Size = UDim2.fromScale(1, 1)
-			label.BackgroundTransparency = 1
-			label.Font = Enum.Font.FredokaOne
-			label.Text = ""
-			label.TextColor3 = Color3.fromRGB(255, 255, 255)
-			label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
-			label.TextStrokeTransparency = 0
-			label.TextScaled = true
-			label.Parent = surface
-			table.insert(boards, board)
-			table.insert(labels, label)
-		end
-		corridorMarkers[index] = { stripe = stripe, boards = boards, labels = labels, index = -1 }
+		-- A marker: the distance painted flat on the road, like airport
+		-- runway numbers. The part itself is invisible — a SurfaceGui
+		-- renders regardless of its part's transparency — so all that
+		-- shows is the number on the ground.
+		local panel = corridorPart(
+			Vector3.new(width - 24, 0.5, 16),
+			Color3.fromRGB(255, 255, 255),
+			Enum.Material.SmoothPlastic
+		)
+		panel.Transparency = 1
+		local surface = Instance.new("SurfaceGui")
+		surface.Face = Enum.NormalId.Top
+		surface.PixelsPerStud = 25
+		surface.Parent = panel
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.FredokaOne
+		label.Text = ""
+		label.TextColor3 = Color3.fromRGB(255, 255, 255)
+		label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
+		label.TextStrokeTransparency = 0.35
+		label.TextTransparency = 0.12
+		label.TextScaled = true
+		label.Parent = surface
+		corridorMarkers[index] = { panel = panel, label = label, index = -1 }
 	end
 end
 
@@ -850,7 +843,7 @@ local function setupFieldCosmetics()
 				prize.Size = meshBase * (entry.vip and 1.6 or 1)
 			else
 				prize.Color = entry.vip and VIP_GOLD or (PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
-				prize.Size = Vector3.one * (entry.vip and 6.5 or 4)
+				prize.Size = Vector3.one * (entry.vip and 9 or 5.5)
 			end
 			local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
 			if icon then
@@ -1653,26 +1646,26 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 
 		local firstMarker = math.max(math.floor((shot.flown - Config.CorridorViewBehind) / markerSpacing), 1)
-		local lastMarker = math.floor((shot.flown + Config.CorridorViewAhead) / markerSpacing)
+		-- Never more markers in the window than the pool holds — on a short
+		-- shot the ladder bottoms out at 25-stud spacing, and an uncapped
+		-- window would fold two distances onto one pooled panel.
+		local lastMarker = math.min(
+			math.floor((shot.flown + Config.CorridorViewAhead) / markerSpacing),
+			firstMarker + CORRIDOR_POOL - 1
+		)
 		for markerIndex = firstMarker, lastMarker do
 			local slot = (markerIndex % CORRIDOR_POOL) + 1
 			local marker = corridorMarkers[slot]
 			local d = markerIndex * markerSpacing
 			local base = corridorAt(d, 0)
-			marker.stripe.CFrame = CFrame.new(base + Vector3.new(0, 0.2, 0))
+			-- Flat on the road, yawed so the gui's up axis runs down-track:
+			-- the number reads right-way-up as the squishy flies toward it,
+			-- exactly like paint on a runway.
+			marker.panel.CFrame = CFrame.new(base + Vector3.new(0, 0.35, 0)) * CFrame.Angles(0, -math.pi / 2, 0)
 			if marker.index ~= markerIndex then
 				-- Relabel only on slot reuse: TextLabel writes are not free.
 				marker.index = markerIndex
-				local text = ("%s Studs"):format(Format.abbreviate(d))
-				for _, label in marker.labels do
-					label.Text = text
-				end
-			end
-			for boardIndex, board in marker.boards do
-				local sideSign = boardIndex == 1 and -1 or 1
-				board.CFrame = CFrame.new(
-					base + SIDE * (sideSign * (width / 2 + 2)) + Vector3.new(0, 20, 0)
-				)
+				marker.label.Text = Format.abbreviate(d)
 			end
 		end
 

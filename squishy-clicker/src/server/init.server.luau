@@ -708,15 +708,27 @@ local function makeLaunchField(data: PlayerData): { Pickup }
 end
 
 -- The steerable extras riding the same track: boost boots to fly through,
--- bombs to fly around. Bombs are seeded NEAR pickups on purpose — the cash
--- clustering by the hazards is what makes the steering a decision.
-local function makeTrackExtras(data: PlayerData, field: { Pickup }): ({ TrackBoot }, { TrackBomb })
+-- bombs to fly around. Both are placed on a RAMP: stratified along the
+-- flight so no two ever bunch, then bent toward the far end — the opening
+-- stretch stays sparse and readable while the player is still finding the
+-- controls, and the track crowds up as the flight goes on. (Cash is exempt
+-- on purpose: money everywhere is fine; dodging everywhere is noise.)
+local function makeTrackExtras(data: PlayerData): ({ TrackBoot }, { TrackBomb })
 	local reach = expectedReach(data)
 	local boots: { TrackBoot } = {}
 	local bombs: { TrackBomb } = {}
 
+	-- One slot per index (stratified), then u^0.55 bends the spread toward
+	-- 1 — early gaps stretch wide, late gaps tighten. Density ramps with
+	-- distance by construction, no rejection loops needed.
+	local function rampAt(index: number, count: number, fromFraction: number, toFraction: number): number
+		local u = (index - rng:NextNumber()) / count
+		local bent = u ^ 0.55
+		return reach * (fromFraction + (toFraction - fromFraction) * bent)
+	end
+
 	for index = 1, Config.BootCount do
-		local at = reach * (0.3 + 0.5 * (index - 0.5) / Config.BootCount + rng:NextNumber() * 0.1)
+		local at = rampAt(index, Config.BootCount, 0.25, 0.9)
 		local direction = rng:NextNumber() < 0.5 and -1 or 1
 		local cash = Config.BootCash * (1 + (at / 1000) * Config.PickupValuePer1kStuds)
 		table.insert(boots, {
@@ -728,17 +740,15 @@ local function makeTrackExtras(data: PlayerData, field: { Pickup }): ({ TrackBoo
 	end
 
 	for index = 1, Config.BombCount do
-		-- Half the bombs anchor beside a real pickup, offset a touch, so
-		-- greed and danger share an address. The other half scatter across
-		-- the WHOLE range — any lane, any distance — so no line through the
-		-- field is ever carefree.
-		local anchor = if index % 2 == 0 then field[((index * 7) % math.max(#field, 1)) + 1] else nil
-		local at = if anchor
-			then anchor.distance * (0.92 + rng:NextNumber() * 0.16)
-			else reach * (0.12 + rng:NextNumber() * 0.85)
-		local lane = if anchor
-			then anchor.lane + (rng:NextNumber() * 2 - 1) * 5
-			else (rng:NextNumber() * 2 - 1) * Config.SteerHalfWidth
+		local at = rampAt(index, Config.BombCount, 0.15, 0.97)
+		local lane = (rng:NextNumber() * 2 - 1) * Config.SteerHalfWidth
+		-- No bomb parks dead-centre in the opening third: a hit before the
+		-- player has meaningfully steered reads as unfair, not as a dodge
+		-- they missed.
+		local centreClear = Config.SteerHalfWidth * 0.25
+		if at < reach * 0.35 and math.abs(lane) < centreClear then
+			lane = (lane < 0 and -1 or 1) * (centreClear + rng:NextNumber() * centreClear)
+		end
 		table.insert(bombs, {
 			distance = math.max(at, 1),
 			height = rng:NextNumber() < 0.4 and 2 or 6 + rng:NextNumber() * 24,
@@ -753,7 +763,7 @@ end
 -- site that regenerates the field goes through here, so the three arrays
 -- can never drift apart on the client.
 local function relayField(player: Player, data: PlayerData)
-	data.launchBoots, data.launchBombs = makeTrackExtras(data, data.launchField)
+	data.launchBoots, data.launchBombs = makeTrackExtras(data)
 	LaunchField:FireClient(player, {
 		pickups = data.launchField,
 		boots = data.launchBoots,
