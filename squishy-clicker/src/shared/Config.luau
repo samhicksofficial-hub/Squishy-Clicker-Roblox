@@ -172,13 +172,32 @@ local Config = {
 	LaunchMagnetPerStar = 0.02,
 	LaunchMaxStarMagnet = 1.5,
 
-	-- ----- Pickups -----
-	-- Cash strung along the flight path, laid out fresh after every shot.
-	-- The server places it, decides what the path actually passed close
-	-- enough to, and pays for it; the client only draws it. One currency on
-	-- purpose: everything a shot earns competes for the same wallet, so
-	-- upgrading the cannon and buying steamers are a real choice.
-	LaunchPickupCount = 26,
+	-- ===== The living flight =====
+	-- A shot has NO predetermined length. The old closed-form simulator
+	-- survives only as the ECONOMY ORACLE: it prices what a power level is
+	-- expected to cover, and Track.calibrate turns that expectation into
+	-- forward momentum. From there the flight is a real simulation — boots
+	-- relaunch it, bombs bleed it, and it ends when the roll runs out.
+	--
+	-- The vertical envelope is FIXED at human scale regardless of power
+	-- (forward speed carries the progression), so the corridor ceiling,
+	-- the object heights and the touch windows mean the same thing at
+	-- level 1 and level 100.
+	FlightGravity = 34, -- studs/s² in the live sim (see LaunchGravity for the oracle's own scale)
+	FlightVyMin = 30, -- launch vertical speed across the angle span...
+	FlightVyMax = 55, -- ...higher angle = longer hang, calibrated to the same expected distance
+	FlightRollSeconds = 3, -- the landing roll decays over this long, whatever the speed
+	FlightEndSpeed = 10, -- rolling slower than this is the end of the flight
+	FlightMaxSeconds = 240, -- hard safety cap; an honest run of chained boosts never meets it
+
+	-- ----- The endless track -----
+	-- The field is CHUNKS, generated deterministically from a per-shot seed
+	-- by shared/Track.luau. The client generates chunks to draw them; the
+	-- server regenerates the same chunks to validate and pay them. However
+	-- far a flight goes, there is always more track.
+	ChunkLength = 400, -- studs of track per chunk
+	ChunkCashCount = 10, -- cash pickups per chunk (plus any VIP cluster)
+	ChunkVipChance = 0.18, -- odds a chunk carries a 5-pickup golden knot
 
 	-- Base value of one pickup, before every bonus.
 	PickupCoinValue = 15,
@@ -198,25 +217,26 @@ local Config = {
 	CorridorStudsPerLane = 1.6, -- lane units → studs; FIXED (the old range scaled this with distance)
 	CorridorFloorWidth = 72, -- wall to wall; wider than the ±24-stud steer span so walls threaten, never block
 	CorridorWallHeight = 170, -- taller than the arc ceiling + camera height: the frame never sees over the rim
-	CorridorArcCeiling = 130, -- arcs draw at min(this / real peak, 1): small shots 1:1, huge ones compressed to fit
+	CorridorArcCeiling = 130, -- the walls contain every height the fixed vertical envelope can produce (boot peak ~106)
 	CorridorTileLength = 64, -- floor/wall segment length; the view window ÷ this sizes the pools
 	CorridorViewAhead = 900, -- studs drawn ahead; the fog wall sits here
 	CorridorViewBehind = 160, -- studs kept behind, so a bounce just passed doesn't visibly vanish
-	CorridorMarkerCount = 14, -- distance boards per flight; spacing snaps to a 1/2.5/5 ladder of REAL studs
+	CorridorMarkerCount = 14, -- road numbers per EXPECTED flight; spacing snaps to a 1/2.5/5 ladder of REAL studs
 	CorridorCutDelay = 0.35, -- seconds of island ignition (smoke, flash, bang) before the hard cut to the corridor
 
 	-- ===== Mid-air controls =====
-	-- The flight itself never changed hands: distance, the arc and the
-	-- fire-time magnet sweep are still the server's closed-form arithmetic.
-	-- What steering adds is a LATERAL game on top — pickups sit across a
-	-- lane now, the player steers the replay through them (and away from
-	-- bombs), and the claims are settled AFTER landing, validated against
-	-- what the steering speed could physically have reached in the time the
-	-- flight allowed. A claim the physics couldn't make is simply not paid.
+	-- The client steers its local sim and reports every touch as an event
+	-- (what, when, which lane). At settle the server RE-RUNS the same sim,
+	-- applying each claimed event only if the physics agree the shot was
+	-- there: near the object's distance at that moment, near its height,
+	-- and laterally REACHABLE — the gap between consecutive touches can
+	-- never beat the steering speed times the time between them. A claim
+	-- the physics couldn't make is simply not paid.
 	SteerHalfWidth = 15, -- LANE UNITS either side of the centre line (see CorridorStudsPerLane)
 	SteerSpeed = 26, -- lane units/sec — the client's control AND the server's reachability check
 	ClaimLaneSlack = 6, -- forgiveness in that check, so honest play never loses a claim to rounding
-	ClaimHeightWindow = 60, -- vertical generosity when validating a claimed pickup against the arc
+	ClaimHeightWindow = 24, -- vertical generosity validating a touch against the re-simulated height
+	ClaimDistanceSlackSeconds = 0.25, -- distance window per touch = max(80, vx × this): frame quantisation at speed
 	LaneTouchWidth = 3.4, -- lane units within which a crossed pickup counts as touched
 
 	-- The fraction of pickups laid dead on the centre line, where the
@@ -228,61 +248,41 @@ local Config = {
 	-- Manual ground slam: SPACE (or a screen tap) dives the squishy into the
 	-- ground and bursts the cash near the impact point off the track.
 	SlamMaxPerFlight = 3,
+	SlamDiveSpeed = 95, -- the dive's downward speed, in the live sim's studs/sec
 	SlamRadiusFraction = 0.05, -- of the shot's distance...
 	SlamRadiusMin = 12, -- ...but never tighter than this, in sim studs
 	SlamLaneRadius = 14,
 
 	-- ===== Boost Boots =====
-	-- Floating green up-arrows on the track. Steering through one kicks the
-	-- squishy skyward and pays a Cash bonus (scaled by how far out it sits,
-	-- like every pickup, then by the full cash multiplier stack). The kick
-	-- is a real little arc — an upward IMPULSE integrated against its own
-	-- gravity — so the ride up is smooth and the fall back is earned, never
-	-- a teleport.
-	BootCount = 2,
+	-- Floating green up-arrows on the track, placed by the chunk generator
+	-- (none in the opening chunk, thickening deeper in). Steering through
+	-- one pays Cash AND genuinely relaunches the flight — the sim's
+	-- vertical speed is refreshed, buying a whole extra hop of distance.
+	-- A ground-line boot even rescues a shot already rolling out, which is
+	-- the whole reason to keep steering at the end.
 	BootCash = 150,
-	BootImpulse = 85, -- world studs/sec of upward kick on touch
-	BootGravity = 90, -- studs/sec² pulling that kick back down (~40-stud arc)
+	BootImpulse = 85, -- studs/sec of upward speed a boot restores
 
 	-- ===== Bombs =====
-	-- Cartoon bombs. Hitting one knocks the squishy down and cuts the
-	-- flight bonus — every hit multiplies the claim by (1 - this). Placed
-	-- on a density RAMP: sparse in the opening stretch, crowding toward
-	-- the far end, and never dead-centre in the opening third.
-	BombCount = 10,
+	-- Cartoon bombs, placed by the chunk generator on a density RAMP:
+	-- none in the opening chunk, up to three per chunk deep in, and never
+	-- dead-centre early. A hit costs twice — it bleeds the sim's forward
+	-- speed (real distance, gone) and cuts the flight bonus by (1 - the
+	-- penalty) per hit.
 	BombClaimPenalty = 0.2,
+	BombSpeedCut = 0.3, -- fraction of forward speed a hit bleeds
 
-	-- How near the path has to pass to sweep a pickup up — quoted in the units
-	-- the player actually SEES, not in game studs.
-	--
-	-- This matters more than it looks. A level-1 flight peaks around 45 studs
-	-- up; a level-50 flight peaks around 33,000. A magnet fixed in game studs
-	-- would be a generous sweep at the start and a rounding error later, and
-	-- the minigame would quietly stop paying out as players got stronger. So
-	-- the magnet is measured against MagnetReferenceHeight — the height the
-	-- track is DRAWN at, whatever the real numbers — which keeps the hit rate
-	-- steady near 37% at every power level and makes the reach on screen the
-	-- reach that actually scores.
+	-- The magnet, in LANE UNITS of the centre line. Any pickup lying within
+	-- this many lane units of centre is swept automatically as the flight
+	-- passes it — no steering required, no height test (it is a magnet).
+	-- The client vacuums them visually as it crosses; the server pays every
+	-- one along the settled distance without needing them claimed. Stars
+	-- and summons widen it.
 	LaunchPickupMagnet = 2,
 
-	-- The reference envelope height the server's effectiveMagnet normalizes
-	-- the field's tallest pickup against — what turns the screen-unit magnet
-	-- into sim studs at any power level. Server-side only.
-	MagnetReferenceHeight = 26,
-
-	-- Pickups spread between these fractions of the player's own expected
-	-- shot, so the field always sits where they can actually reach and
-	-- stretches down the track as their power grows.
-	LaunchPickupNearFraction = 0.05,
-	LaunchPickupFarFraction = 1.1,
-
-	-- ----- VIP zones -----
-	-- Bands of the track where pickups cluster and pay extra. Placed as
-	-- fractions of the expected shot, so they move out with the player.
-	VipZoneCount = 2,
-	VipZoneWidthFraction = 0.08,
+	-- What a VIP-cluster pickup pays over an ordinary one. The clusters
+	-- themselves come from the chunk generator (see ChunkVipChance).
 	VipZoneValueMultiplier = 4,
-	VipZoneDensityMultiplier = 3,
 
 	-- ----- Milestones -----
 	-- Signs down the track. Passing one for the FIRST time pays its Cash

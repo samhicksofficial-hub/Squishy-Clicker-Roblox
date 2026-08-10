@@ -1,6 +1,6 @@
 --!strict
 -- ============================================================
---  FLIGHT  —  the shot, drawn in a private endless corridor.
+--  FLIGHT  —  the living shot, flown in a private endless corridor.
 --
 --  The bang happens at YOUR cannon on YOUR plot; a beat later the
 --  camera cuts to a walled corridor that belongs to this client
@@ -11,14 +11,24 @@
 --  no log compression anywhere, and no far edge: indices are just
 --  integers, so the corridor never ends.
 --
+--  The flight has NO predetermined length. The server sends momentum
+--  (calibrated so the power economy holds), a fixed-scale vertical
+--  launch, physics, and a track SEED — then this file flies a real
+--  simulation (shared/Track) that lasts exactly as long as the player
+--  keeps it alive: boots relaunch it, bombs bleed it, slams dive it,
+--  and it ends when the roll runs out of speed. The track itself is
+--  seeded chunks generated on demand, so however far the shot goes,
+--  there is always more of it.
+--
 --  Everything draws RELATIVE to the flown distance:
 --      corridorAt(d, h) = ORIGIN + FORWARD * (d - shot.flown) + up
 --  which is what makes a million-stud flight cost the same as a
 --  hundred-stud one — the camera never actually goes anywhere.
 --
---  Nothing here decides anything. The server simulates the flight
---  and sends its shape — every hop, its peak, its duration — and
---  this draws that shape onto the treadmill.
+--  And still: nothing here decides anything that PAYS. Every touch is
+--  logged as an event; the server re-runs this same sim from that log
+--  and the flight's real distance and income are whatever ITS copy
+--  says (see settleFlight, server-side).
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -30,6 +40,10 @@ local UserInputService = game:GetService("UserInputService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local Format = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Format"))
+-- The living flight and the endless track — the SAME module the server
+-- settles with, which is what keeps the drawn world and the paid world
+-- from ever drifting apart.
+local Track = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Track"))
 local Models = require(script.Parent:WaitForChild("Models"))
 
 local Flight = {}
@@ -49,8 +63,6 @@ local CHASE_SIDE = 16
 local CORRIDOR_ORIGIN = Vector3.new(0, 9000, 0)
 local FORWARD = Vector3.xAxis
 local SIDE = Vector3.zAxis
-
-type Arc = { fromX: number, toX: number, peak: number, seconds: number, rolling: boolean }
 
 local stage = Instance.new("Folder")
 stage.Name = "FlightStage"
@@ -177,26 +189,29 @@ local function refreshStationIcon()
 	stationIcon.BackgroundColor3 = modelSpec.color
 end
 
+-- The live simulation itself (shared/Track), plus the mirror the drawing
+-- code reads. `sim` is nil until the first shot; `shot` carries what the
+-- corridor, camera and HUD actually consume each frame.
+local sim: Track.Sim? = nil
 local shot = {
 	active = false,
-	progress = 1,
-	seconds = 1,
-	simSeconds = 1,
-	distance = 0,
-	arcs = {} :: { Arc },
-	arcStarts = {} :: { number },
-	heightScale = 1,
 	flown = 0,
 	height = 0,
 	speed = 0,
 	bounced = 0,
 	holdUntil = 0,
-	-- For the chase camera's FOV stretch: speed reads against this.
+	-- For the chase camera's FOV stretch: speed reads against this (the
+	-- calibrated forward momentum the shot left the barrel with).
 	launchSpeed = 1,
-	-- What the landing popup announces. Carried on the shot rather than read
-	-- back from the summary, so the popup and the flight can never disagree.
-	earnedCoins = 0,
+	-- The oracle's expected distance. NOT a limit — the flight goes where
+	-- it goes — this only sizes the marker ladder so the road numbers suit
+	-- the flight's likely scale.
+	expected = 100,
 }
+-- The magnet's sweep width for this shot, in lane units, straight from the
+-- server. Pickups this close to centre vacuum themselves as the flight
+-- passes — no event sent, because the server pays them unclaimed.
+local shotMagnet = 0
 
 -- Impact bookkeeping, outside the shot table because it belongs to the FX
 -- layer: which bounce was last given its splat, whether the landing has had
@@ -282,14 +297,26 @@ local PICKUP_LOOK = {
 	coin = Color3.fromRGB(96, 210, 100),
 }
 local VIP_GOLD = Color3.fromRGB(240, 190, 70)
-type PickupEntry = { distance: number, height: number, kind: string, value: number, vip: boolean, lane: number? }
-type BootEntry = { distance: number, height: number, lane: number, cash: number }
-type BombEntry = { distance: number, height: number, lane: number }
+
+-- ---------- the seeded track, client copy ----------
+-- Chunks generate on demand from the shot's seed — the same function the
+-- server settles with. Everything per-entry is keyed by the entry's id
+-- (unique across the whole flight), never by array position: the track has
+-- no fixed length for positions to be stable against.
+local trackSeed = 0
+local chunkCache: { [number]: Track.Chunk } = {}
+local function chunkFor(index: number): Track.Chunk
+	local cached = chunkCache[index]
+	if cached then
+		return cached
+	end
+	local made = Track.chunk(trackSeed, index)
+	chunkCache[index] = made
+	return made
+end
 
 local pickupParts: { BasePart } = {}
-local pickupField: { PickupEntry } = {}
 local pickupTaken: { [number]: boolean } = {}
-local pickupCollecting: { [number]: number } = {}
 -- Where each drawn pickup RESTS: the render loop bobs and spins them around
 -- these, so layout writes here and animation never fights it.
 local pickupBase: { [number]: Vector3 } = {}
@@ -366,12 +393,13 @@ local function templatePart(cacheKey: string, looseNames: { string }, target: nu
 	return nil
 end
 
--- Double the base count: headroom for the extra pickups VIP zones add.
--- (This line once multiplied by the Cash Rain density constant — reading a
--- REMOVED config key made it nil arithmetic, which killed this module at
--- require time and took the whole HUD down with it. Every button gone, no
--- error visible past the Output.)
-local POOL = Config.LaunchPickupCount * 2 + Config.VipZoneCount * Config.VipZoneDensityMultiplier
+-- Sized to the view WINDOW, not the flight: at most ~4 chunks are ever on
+-- show at once (ahead 900 + behind 160 over 400-stud chunks), each holding
+-- ChunkCashCount pickups plus a possible 5-pickup VIP knot. (A predecessor
+-- of this line once read a REMOVED config key — nil arithmetic killed this
+-- module at require time and took the whole HUD down with it. Every button
+-- gone, no error visible past the Output.)
+local POOL = 64
 for _ = 1, POOL do
 	-- The imported cash-stack model when it exists; the neon block until.
 	local prize = templatePart("cash", { "CashStack", "Cash" }, 6)
@@ -452,7 +480,9 @@ end
 
 local bootParts: { BasePart } = {}
 local bombParts: { BasePart } = {}
-for _ = 1, 4 do
+-- Pool sizes follow the same window budget as the pickups: up to two boots
+-- and three bombs per chunk, four chunks on show.
+for _ = 1, 8 do
 	local boot = templatePart("boot", { "BoostBoot", "Boost" }, 8)
 	if boot then
 		boot.Parent = stage
@@ -477,12 +507,50 @@ for _ = 1, 14 do
 	end
 end
 
-local bootField: { BootEntry } = {}
-local bombField: { BombEntry } = {}
 local bootBase: { [number]: Vector3 } = {}
 local bombBase: { [number]: Vector3 } = {}
 local bootTaken: { [number]: boolean } = {}
 local bombHit: { [number]: boolean } = {}
+
+-- ---------- pooled part allocation ----------
+-- The track is endless but the pools are not: each entry borrows a part
+-- while it is inside the view window and hands it back on the way out.
+-- Dressing happens once, at assignment — never per frame.
+type Allocator = { assign: { [number]: BasePart }, free: { BasePart } }
+
+local function makeAllocator(parts: { BasePart }): Allocator
+	local free = table.create(#parts)
+	for _, part in parts do
+		table.insert(free, part)
+	end
+	return { assign = {}, free = free }
+end
+
+-- Hide an entry's part (if it has one) and return it to the pool.
+local function releaseEntry(alloc: Allocator, bases: { [number]: Vector3 }, id: number)
+	local part = alloc.assign[id]
+	if part then
+		alloc.assign[id] = nil
+		part.Transparency = 1
+		local icon = part:FindFirstChild("CashIcon") or part:FindFirstChild("Glyph")
+		if icon then
+			(icon :: BillboardGui).Enabled = false
+		end
+		table.insert(alloc.free, part)
+	end
+	bases[id] = nil
+end
+
+local function releaseAll(alloc: Allocator, bases: { [number]: Vector3 })
+	for id in pairs(alloc.assign) do
+		releaseEntry(alloc, bases, id)
+	end
+	table.clear(bases)
+end
+
+local pickupAlloc = makeAllocator(pickupParts)
+local bootAlloc = makeAllocator(bootParts)
+local bombAlloc = makeAllocator(bombParts)
 
 -- The ascending ping for flying through a boot.
 local bootSound = Instance.new("Sound")
@@ -531,9 +599,10 @@ end
 
 -- Where sim distance `d` at sim height `h` draws, relative to the flight's
 -- current flown distance. THE treadmill equation: the squishy's own forward
--- term is always zero, and everything else slides past it.
+-- term is always zero, and everything else slides past it. Heights are 1:1
+-- now — the live sim's fixed vertical envelope never outgrows the walls.
 local function corridorAt(d: number, simHeight: number): Vector3
-	return CORRIDOR_ORIGIN + FORWARD * (d - shot.flown) + Vector3.new(0, simHeight * shot.heightScale, 0)
+	return CORRIDOR_ORIGIN + FORWARD * (d - shot.flown) + Vector3.new(0, simHeight, 0)
 end
 
 -- Snap a raw spacing to the 1 / 2.5 / 5 × 10^k ladder, so marker numbers
@@ -693,11 +762,9 @@ local function trackFx(part: BasePart, d: number, lane: number, up: number)
 	})
 end
 
--- Per-flight marker spacing (the 1/2.5/5 ladder of the shot's distance) and
--- the precomputed draw heights that seat boots/bombs ON this flight's arc.
+-- Per-flight marker spacing: the 1/2.5/5 ladder of the shot's EXPECTED
+-- distance (the real one doesn't exist until it lands).
 local markerSpacing = 100
-local bootDrawHeight: { [number]: number } = {}
-local bombDrawHeight: { [number]: number } = {}
 
 -- The ignition-to-corridor cut: the camera holds the barrel bang until this
 -- clock, then hard-cuts once (a lerp would swoop nine thousand studs).
@@ -705,25 +772,23 @@ local cutAt = 0
 local cutDone = true
 
 -- ---------- the mid-air game's state ----------
--- Steering and slamming change NOTHING the server has decided — distance,
--- the arc and the fire-time payout are already settled. What they change is
--- which off-lane things the replay touches, and that list is sent back as a
--- claim for the server to validate and price (see ClaimFlight server-side).
+-- Steering, boots, bombs and slams change the LOCAL sim — that is the whole
+-- point now — but nothing they change PAYS until the server re-runs the
+-- flight from the event log and agrees (see settleFlight, server-side).
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local ClaimFlightRemote = Remotes:WaitForChild("ClaimFlight") :: RemoteEvent
 
 local steerPos = 0
 local steerVel = 0 -- eased toward the input, so direction flips glide
 local slamsUsed = 0
-local slamActive = false
-local slamDrop = 0 -- 0 riding the arc, 1 pressed to the ground
-local slamCollectAt: { distance: number, lane: number }? = nil
-local extraLift = 0 -- the boots' kick, integrated as a real mini-arc
-local liftVel = 0 -- its vertical velocity, fought by BootGravity
+-- A slam is a real dive in the sim now; these only route its IMPACT back
+-- to the FX: the next ground contact wears the ring, and a manual slam's
+-- contact also bursts the nearby cash.
+local slamFxPending = false
+local slamManualPending = false
 local flightEvents: { { [string]: any } } = {}
 local flightSerial = 0
 local claimSent = true
-local pendingBundle: any = nil
 
 -- Touch: horizontal drag steers, a short tap slams.
 local touchAt: number? = nil
@@ -795,147 +860,120 @@ function Flight.setActiveSquishies(list: { { shape: string?, color: Color3, spar
 	end
 end
 
--- ---------- the curve ----------
--- The same two-phase-per-hop curve the server scored against, reproduced to
--- animate. Only the server's copy decides what was collected, so the two
--- drifting apart is a cosmetic bug and never an exploit. Generic over the arc
--- list because ghosts replay other players' flights through it too.
-local function sampleArcs(arcs: { Arc }, starts: { number }, endDistance: number, simTime: number): (number, number, number)
-	for index, arc in arcs do
-		local started = starts[index] or 0
-		if simTime <= started + arc.seconds or index == #arcs then
-			local span = arc.toX - arc.fromX
-			if arc.seconds <= 0 or span <= 0 then
-				return arc.toX, 0, 0
-			end
-			local along = math.clamp((simTime - started) / arc.seconds, 0, 1)
-			if arc.rolling then
-				local eased = along * (2 - along)
-				return arc.fromX + span * eased, 0, (span / arc.seconds) * (1 - along) * 2
-			end
-			return arc.fromX + span * along, arc.peak * 4 * along * (1 - along), span / arc.seconds
-		end
-	end
-	return endDistance, 0, 0
-end
-
-local function sample(simTime: number): (number, number, number)
-	return sampleArcs(shot.arcs, shot.arcStarts, shot.distance, simTime)
-end
+-- (The arc-sampling curve is gone: the flight is stepped live through
+-- shared/Track, the same integrator the server settles with.)
 
 -- ---------- drawing the track ----------
--- Field entries stay in SIM space; the window pass below seats whatever is
--- near the flown distance each frame and hides the rest. The *Base tables
--- keep their old contract — "base exists = currently drawn" — which is
--- exactly what the touch detection reads.
+-- Chunk entries stay in SIM space; the window pass below borrows a pooled
+-- part for whatever is near the flown distance and hands it back on the
+-- way out. The *Base tables keep their old contract — "base exists =
+-- currently drawn" — now keyed by entry id.
 
--- Per-entry cosmetics run ONCE per field (on bundle apply), not per frame:
--- mesh sizing, VIP tinting, and which face the cash icon wears. A real
--- cash-stack model keeps its own paint (VIPs just come bigger) and needs no
--- floating marker except the 💰 jackpot flag; the fallback blocks get the
--- tint-and-resize treatment and the full billboard.
-local function setupFieldCosmetics()
-	for index, prize in pickupParts do
-		local entry = pickupField[index]
-		if entry then
-			local meshBase = prize:GetAttribute("MeshBase") :: Vector3?
-			if meshBase then
-				prize.Size = meshBase * (entry.vip and 1.6 or 1)
-			else
-				prize.Color = entry.vip and VIP_GOLD or (PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
-				prize.Size = Vector3.one * (entry.vip and 9 or 5.5)
-			end
-			local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
-			if icon then
-				local useImage = Config.CashIconImage ~= "" and not entry.vip and meshBase == nil
-				local face = icon:FindFirstChildOfClass("TextLabel")
-				local pic = icon:FindFirstChild("Pic") :: ImageLabel?
-				if pic then
-					pic.Visible = useImage
-				end
-				if face then
-					face.Visible = not useImage
-					face.Text = entry.vip and "💰" or "💵"
-				end
-			end
+-- Dressing runs ONCE per assignment, not per frame: mesh sizing, VIP
+-- tinting, and which face the cash icon wears. A real cash-stack model
+-- keeps its own paint (VIPs just come bigger) and needs no floating marker
+-- except the 💰 jackpot flag; the fallback blocks get the tint-and-resize
+-- treatment and the full billboard.
+local function stylePickup(part: BasePart, entry: Track.Pickup)
+	local meshBase = part:GetAttribute("MeshBase") :: Vector3?
+	if meshBase then
+		part.Size = meshBase * (entry.vip and 1.6 or 1)
+	else
+		part.Color = entry.vip and VIP_GOLD or (PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
+		part.Size = Vector3.one * (entry.vip and 9 or 5.5)
+	end
+	local icon = part:FindFirstChild("CashIcon") :: BillboardGui?
+	if icon then
+		local useImage = Config.CashIconImage ~= "" and not entry.vip and meshBase == nil
+		local face = icon:FindFirstChildOfClass("TextLabel")
+		local pic = icon:FindFirstChild("Pic") :: ImageLabel?
+		if pic then
+			pic.Visible = useImage
 		end
+		if face then
+			face.Visible = not useImage
+			face.Text = entry.vip and "💰" or "💵"
+		end
+		icon.Enabled = meshBase == nil or entry.vip
 	end
 end
 
--- One pass, one iteration: seat, bob and spin everything inside the view
--- window; hide everything outside it. Only runs while a shot is flying or
--- resting — between shots the corridor is empty and the track with it.
+-- Boots and bombs come pre-dressed from their pools; assignment only has
+-- to light the glyph back up.
+local function styleExtra(part: BasePart, _entry: any)
+	local glyph = part:FindFirstChild("Glyph") :: BillboardGui?
+	if glyph then
+		glyph.Enabled = true
+	end
+end
+
+-- One pass per kind: release what slid out of the window, borrow-and-dress
+-- for what slid in, then seat, bob and spin everything on show. Only runs
+-- while a shot is flying or resting — between shots the corridor is empty
+-- and the track with it.
 local function drawTrackObjects(idleClock: number)
 	local ahead = Config.CorridorViewAhead
 	local behind = Config.CorridorViewBehind
+	local firstChunk = math.max(Track.chunkAt(shot.flown - behind), 0)
+	local lastChunk = Track.chunkAt(shot.flown + ahead)
 
-	local function inWindow(d: number): boolean
-		return d > shot.flown - behind and d < shot.flown + ahead
-	end
-
-	for index, prize in pickupParts do
-		local entry = pickupField[index]
-		local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
-		if entry and not pickupTaken[index] and inWindow(entry.distance) then
-			-- Real arc heights on the flight's own scale — the pickup sits
-			-- where the arc that placed it actually passes.
-			local lift = math.max(entry.height * shot.heightScale, 2)
-			local base = corridorAt(entry.distance, 0)
-				+ Vector3.new(0, lift, 0)
-				+ SIDE * laneToStuds(entry.lane or 0)
-			pickupBase[index] = base
-			prize.Transparency = if prize:GetAttribute("MeshBase") then 0 else 0.1
-			prize.CFrame = CFrame.new(base + Vector3.new(0, math.sin(idleClock * 2.2 + index) * 0.7, 0))
-				* CFrame.Angles(0, idleClock * 1.4 + index, 0)
-			if icon then
-				local meshy = prize:GetAttribute("MeshBase") ~= nil
-				icon.Enabled = not meshy or entry.vip == true
-			end
-		else
-			pickupBase[index] = nil
-			prize.Transparency = 1
-			if icon then
-				icon.Enabled = false
-			end
-		end
-	end
-
-	local function seatExtras(
-		parts: { BasePart },
-		entries: { any },
-		bases: { [number]: Vector3 },
+	local function seatKind(
+		alloc: Allocator,
 		dead: { [number]: boolean },
-		heights: { [number]: number },
+		bases: { [number]: Vector3 },
+		listOf: (Track.Chunk) -> { any },
+		style: (BasePart, any) -> (),
 		spinSpeed: number,
-		bobSpeed: number
+		bobSpeed: number,
+		fallbackTransparency: number
 	)
-		for index, part in parts do
-			local entry = entries[index]
-			local icon = part:FindFirstChild("Glyph") :: BillboardGui?
-			if entry and not dead[index] and inWindow(entry.distance) then
-				local lift = math.max(heights[index] or 10, 4)
+		local wanted: { [number]: any } = {}
+		for index = firstChunk, lastChunk do
+			for _, entry in listOf(chunkFor(index)) do
+				if
+					not dead[entry.id]
+					and entry.distance > shot.flown - behind
+					and entry.distance < shot.flown + ahead
+				then
+					wanted[entry.id] = entry
+				end
+			end
+		end
+		for id in pairs(alloc.assign) do
+			if wanted[id] == nil then
+				releaseEntry(alloc, bases, id)
+			end
+		end
+		for id, entry in pairs(wanted) do
+			local part = alloc.assign[id]
+			if part == nil then
+				part = table.remove(alloc.free)
+				if part then
+					alloc.assign[id] = part
+					style(part, entry)
+				end
+			end
+			if part then
 				local base = corridorAt(entry.distance, 0)
-					+ Vector3.new(0, lift, 0)
+					+ Vector3.new(0, math.max(entry.height, 2), 0)
 					+ SIDE * laneToStuds(entry.lane)
-				bases[index] = base
-				part.Transparency = 0
-				part.CFrame = CFrame.new(base + Vector3.new(0, math.sin(idleClock * bobSpeed + index * 2) * 0.8, 0))
-					* CFrame.Angles(0, idleClock * spinSpeed + index, 0)
-				if icon then
-					icon.Enabled = true
-				end
-			else
-				bases[index] = nil
-				part.Transparency = 1
-				if icon then
-					icon.Enabled = false
-				end
+				bases[id] = base
+				part.Transparency = if part:GetAttribute("MeshBase") then 0 else fallbackTransparency
+				part.CFrame = CFrame.new(base + Vector3.new(0, math.sin(idleClock * bobSpeed + id * 0.7) * 0.7, 0))
+					* CFrame.Angles(0, idleClock * spinSpeed + id * 0.5, 0)
 			end
 		end
 	end
 
-	seatExtras(bootParts, bootField :: { any }, bootBase, bootTaken, bootDrawHeight, 1.8, 2.6)
-	seatExtras(bombParts, bombField :: { any }, bombBase, bombHit, bombDrawHeight, 0.8, 1.6)
+	seatKind(pickupAlloc, pickupTaken, pickupBase, function(chunk)
+		return chunk.pickups :: any
+	end, stylePickup :: any, 1.4, 2.2, 0.1)
+	seatKind(bootAlloc, bootTaken, bootBase, function(chunk)
+		return chunk.boots :: any
+	end, styleExtra, 1.8, 2.6, 0)
+	seatKind(bombAlloc, bombHit, bombBase, function(chunk)
+		return chunk.bombs :: any
+	end, styleExtra, 0.8, 1.6, 0)
 end
 
 -- ---------- public ----------
@@ -977,41 +1015,8 @@ function Flight.setSquishy(shape: string?, color: Color3, sparkle: boolean, size
 	refreshStationIcon()
 end
 
-local function applyFieldBundle(bundle: any)
-	-- The server sends { pickups, boots, bombs } now; a bare array is an old
-	-- shape and still works as pickups-only rather than crashing.
-	local pickups = bundle.pickups or bundle
-	pickupField = pickups
-	bootField = bundle.boots or {}
-	bombField = bundle.bombs or {}
-	pickupTaken = {}
-	pickupCollecting = {}
-	bootTaken = {}
-	bombHit = {}
-	bombNear = {}
-	for index, entry in pickupParts do
-		if not pickupField[index] then
-			pickupTaken[index] = true
-			entry.Transparency = 1
-		end
-	end
-	setupFieldCosmetics()
-end
-
-function Flight.setField(bundle: any)
-	if typeof(bundle) ~= "table" then
-		return
-	end
-	-- The NEXT shot's track lands while this one is still flying (the server
-	-- lays it the instant it scores). Swapping mid-replay would yank the
-	-- steering game's targets out from underneath it — hold the new track
-	-- until the landing settles the claim.
-	if shot.active then
-		pendingBundle = bundle
-		return
-	end
-	applyFieldBundle(bundle)
-end
+-- (Flight.setField and the field bundle are gone: there is no field to
+-- push. The seed in each LaunchResult IS the track, generated locally.)
 
 -- ---------- impact FX ----------
 
@@ -1152,37 +1157,20 @@ local function payoutPopup(at: Vector3, distance: number, coins: number)
 	end)
 end
 
--- The visual arc height at `x`, same parabola family the server draws from.
-local function simHeightAt(arcs: { Arc }, x: number): number
-	for _, arc in arcs do
-		if x <= arc.toX then
-			local span = arc.toX - arc.fromX
-			if arc.rolling or span <= 0 then
-				return 0
-			end
-			local along = (x - arc.fromX) / span
-			return arc.peak * 4 * along * (1 - along)
-		end
-	end
-	return 0
-end
+-- A pickup visually taken by the flight (steer-through, magnet vacuum or
+-- slam burst). Payment is the server's — the settlement covers it — this
+-- is only the pop the eye needs at the moment of touch. Combos count for
+-- SKILL takes only: the magnet's passive sweeps stay quiet.
+local function takePickupVisual(entry: Track.Pickup, skill: boolean)
+	pickupTaken[entry.id] = true
+	local part = pickupAlloc.assign[entry.id]
+	local popAt = if part
+		then part.Position
+		else corridorAt(entry.distance, math.max(entry.height, 2)) + SIDE * laneToStuds(entry.lane)
+	releaseEntry(pickupAlloc, pickupBase, entry.id)
+	floatPopup(popAt, ("+$%d"):format(entry.value), PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
 
--- A pickup visually taken by the mid-air game (steer-through or slam
--- burst). Payment is the server's — the claim covers it — this is only the
--- pop the eye needs at the moment of touch.
-local function takePickupVisual(index: number, entry: PickupEntry)
-	pickupTaken[index] = true
-	pickupCollecting[index] = nil
-	local prize = pickupParts[index]
-	if prize then
-		floatPopup(prize.Position, ("+$%d"):format(entry.value), PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
-		prize.Transparency = 1
-		pickupBase[index] = nil
-		local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
-		if icon then
-			icon.Enabled = false
-		end
-
+	if skill then
 		-- The combo: quick successive grabs count up, announce from three,
 		-- and the ping climbs with them — a run through a cash line makes
 		-- a little ascending scale.
@@ -1190,11 +1178,7 @@ local function takePickupVisual(index: number, entry: PickupEntry)
 		comboCount = if now - comboAt <= 1.25 then comboCount + 1 else 1
 		comboAt = now
 		if comboCount >= 3 then
-			floatPopup(
-				prize.Position + Vector3.new(0, 6, 0),
-				("COMBO x%d!"):format(comboCount),
-				Color3.fromRGB(255, 214, 120)
-			)
+			floatPopup(popAt + Vector3.new(0, 6, 0), ("COMBO x%d!"):format(comboCount), Color3.fromRGB(255, 214, 120))
 		end
 		comboPing.PlaybackSpeed = math.min(0.9 + comboCount * 0.09, 2.2)
 		comboPing:Play()
@@ -1230,40 +1214,40 @@ local function boomFx(at: Vector3): BasePart
 	return anchor
 end
 
--- The dive. Manual slams spend a limited stock and burst nearby cash on
--- impact; bomb knock-downs are the same dive with no reward attached.
-local function beginSlam(manual: boolean)
-	if slamActive or not shot.active then
+-- The dive: a REAL slam in the sim now — vertical speed forced hard
+-- downward, the impact handled like any other ground contact. Spends a
+-- limited stock; the burst and the ring fire where the sim actually lands.
+local function beginSlam()
+	local live = sim
+	if not live or live.done or live.rolling or slamFxPending or not shot.active then
 		return
 	end
-	if manual then
-		if slamsUsed >= Config.SlamMaxPerFlight then
-			return
-		end
-		slamsUsed += 1
-		slamCollectAt = { distance = shot.flown, lane = steerPos }
-		table.insert(flightEvents, { kind = "slam", distance = shot.flown, lane = steerPos })
-	else
-		slamCollectAt = nil
+	if slamsUsed >= Config.SlamMaxPerFlight then
+		return
 	end
-	-- A dive cancels whatever a boot was still carrying.
-	extraLift = 0
-	liftVel = 0
-	slamActive = true
+	slamsUsed += 1
+	slamFxPending = true
+	slamManualPending = true
+	table.insert(flightEvents, { kind = "slam", t = live.t, lane = steerPos })
+	Track.slam(live)
 end
 
--- What a slam's burst reaches, mirrored from the server's own formula so
--- what pops here is exactly what the claim will pay there.
-local function slamBurst(at: { distance: number, lane: number })
-	local radius = math.max(shot.distance * Config.SlamRadiusFraction, Config.SlamRadiusMin)
-	for index, entry in pickupField do
-		if
-			not pickupTaken[index]
-			and pickupBase[index]
-			and math.abs(entry.distance - at.distance) <= radius
-			and math.abs((entry.lane or 0) - at.lane) <= Config.SlamLaneRadius
-		then
-			takePickupVisual(index, entry)
+-- What a slam's burst reaches, mirrored from the server's own formula as
+-- closely as the moment allows. The server's radius scales with the FINAL
+-- distance, unknown mid-flight, so this draws with the running distance —
+-- the settlement can only pay MORE than what pops here.
+local function slamBurst(atDistance: number, lane: number)
+	local radius = math.max(shot.flown * Config.SlamRadiusFraction, Config.SlamRadiusMin)
+	local fromChunk = math.max(Track.chunkAt(atDistance - radius), 0)
+	for chunkIndex = fromChunk, Track.chunkAt(atDistance + radius) do
+		for _, entry in chunkFor(chunkIndex).pickups do
+			if
+				not pickupTaken[entry.id]
+				and math.abs(entry.distance - atDistance) <= radius
+				and math.abs(entry.lane - lane) <= Config.SlamLaneRadius
+			then
+				takePickupVisual(entry, false)
+			end
 		end
 	end
 end
@@ -1275,7 +1259,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		return
 	end
 	if input.KeyCode == Enum.KeyCode.Space and shot.active then
-		beginSlam(true)
+		beginSlam()
 	elseif input.UserInputType == Enum.UserInputType.Touch and shot.active then
 		touchAt = input.Position.X
 		touchTravel = 0
@@ -1303,20 +1287,25 @@ UserInputService.InputEnded:Connect(function(input)
 	touchAt = nil
 	-- A press that never travelled is a tap, and a tap is a slam.
 	if touchTravel < 10 and os.clock() - touchBegan < 0.35 then
-		beginSlam(true)
+		beginSlam()
 	end
 end)
 
 function Flight.play(plan: {
 	serial: number?,
-	distance: number,
-	arcs: { Arc },
-	seconds: number,
-	peakHeight: number,
-	launchSpeed: number?,
-	coins: number?,
-	milestones: { { name: string, cash: number } }?,
-	collected: { number },
+	seed: number,
+	vx: number,
+	vy: number,
+	gravity: number,
+	restitution: number,
+	bounceFriction: number,
+	minBounceSpeed: number,
+	rollSeconds: number,
+	endSpeed: number,
+	maxSeconds: number,
+	expected: number,
+	magnet: number?,
+	milestones: { { name: string, at: number, cash: number } }?,
 }): number
 	if not muzzle then
 		-- Should be impossible once a plot is claimed, so if it ever happens
@@ -1325,29 +1314,37 @@ function Flight.play(plan: {
 		return 0
 	end
 
-	shot.distance = math.max(plan.distance, 0)
-	shot.arcs = plan.arcs
-	shot.simSeconds = math.max(plan.seconds, 1e-3)
+	-- The living sim, from the server's own numbers. No distance in the
+	-- payload — there isn't one until this lands.
+	sim = Track.newSim(plan.vx, plan.vy, {
+		gravity = plan.gravity,
+		restitution = plan.restitution,
+		bounceFriction = plan.bounceFriction,
+		minBounceSpeed = plan.minBounceSpeed,
+		rollSeconds = plan.rollSeconds,
+		endSpeed = plan.endSpeed,
+		maxSeconds = plan.maxSeconds,
+	})
 
-	shot.arcStarts = {}
-	local running = 0
-	for index, arc in plan.arcs do
-		shot.arcStarts[index] = running
-		running += arc.seconds
-	end
+	-- The whole track resets to this shot's seed: fresh chunks, fresh
+	-- taken-sets, every pooled part back in its pool.
+	trackSeed = plan.seed
+	table.clear(chunkCache)
+	releaseAll(pickupAlloc, pickupBase)
+	releaseAll(bootAlloc, bootBase)
+	releaseAll(bombAlloc, bombBase)
+	table.clear(pickupTaken)
+	table.clear(bootTaken)
+	table.clear(bombHit)
 
-	-- Arc height policy: small shots draw 1:1 in every axis (a level-one
-	-- flight peaks ~45 real studs); only the big ones compress, down to the
-	-- corridor's ceiling, so the walls always contain the whole show.
-	shot.heightScale = math.min(Config.CorridorArcCeiling / math.max(plan.peakHeight, 1), 1)
-
-	shot.seconds = math.clamp(shot.simSeconds * 0.25, 2.4, 8)
 	shot.flown, shot.height, shot.speed, shot.bounced = 0, 0, 0, 0
-	shot.progress = 0
 	shot.active = true
-	shot.holdUntil = os.clock() + shot.seconds + 1.4
-	shot.launchSpeed = math.max(plan.launchSpeed or 1, 1)
-	shot.earnedCoins = plan.coins or 0
+	-- A floor under the camera's tenancy until the landing sets the real
+	-- lease; the flying flag is what actually holds it open.
+	shot.holdUntil = os.clock() + 3
+	shot.launchSpeed = math.max(plan.vx, 1)
+	shot.expected = math.max(plan.expected, 100)
+	shotMagnet = plan.magnet or 0
 	lastBounceSeen = 0
 	landingDone = false
 	fovKick = 0
@@ -1372,9 +1369,10 @@ function Flight.play(plan: {
 	cutDone = false
 
 	-- The corridor dresses for this flight: marker spacing on the 1/2.5/5
-	-- ladder of ITS distance (~CorridorMarkerCount boards however far it
-	-- goes), stale tracked FX purged, and marker slots forced to relabel.
-	markerSpacing = niceStep(shot.distance / Config.CorridorMarkerCount)
+	-- ladder of the EXPECTED distance (the real one doesn't exist yet — a
+	-- great run simply sails past more numbers), stale tracked FX purged,
+	-- and marker slots forced to relabel.
+	markerSpacing = niceStep(shot.expected / Config.CorridorMarkerCount)
 	for _, fx in trackedFx do
 		if fx.part.Parent then
 			fx.part:Destroy()
@@ -1385,54 +1383,26 @@ function Flight.play(plan: {
 		marker.index = -1
 	end
 
-	-- The mid-air game resets with the shot...
+	-- The mid-air game resets with the shot.
 	flightSerial = plan.serial or 0
 	flightEvents = {}
 	claimSent = false
 	steerPos = 0
 	steerVel = 0
 	slamsUsed = 0
-	slamActive = false
-	slamDrop = 0
-	slamCollectAt = nil
-	extraLift = 0
-	liftVel = 0
+	slamFxPending = false
+	slamManualPending = false
 	touchAt = nil
 
-	-- ...and the boots and bombs seat ON this flight's own visual arc — the
-	-- draw heights are precomputed here, and the per-frame window pass reads
-	-- them, so the path runs straight through every one and steering
-	-- sideways is genuinely how they are hit or dodged.
-	table.clear(bootDrawHeight)
-	table.clear(bombDrawHeight)
-	for index, entry in bootField do
-		bootDrawHeight[index] = simHeightAt(shot.arcs, entry.distance) * shot.heightScale
-	end
-	for index, entry in bombField do
-		bombDrawHeight[index] = simHeightAt(shot.arcs, entry.distance) * shot.heightScale
-	end
-
-	-- The milestones this shot crosses for the first time, positioned from
-	-- Config by name so the popup fires at the sign it belongs to.
+	-- The milestones this account has NOT yet earned, straight from the
+	-- server with their positions — the popup fires at the sign the moment
+	-- the flight actually crosses it.
 	pendingMilestones = {}
 	for _, milestone in plan.milestones or {} do
-		for _, entry in Config.DistanceMilestones do
-			if entry.name == milestone.name then
-				table.insert(pendingMilestones, {
-					at = entry.at,
-					text = ("🏁 %s Studs!  +%s 💵"):format(milestone.name, Format.abbreviate(milestone.cash)),
-				})
-				break
-			end
-		end
-	end
-
-	pickupCollecting = {}
-	for _, index in plan.collected do
-		local entry = pickupField[index]
-		if entry and not pickupTaken[index] then
-			pickupCollecting[index] = entry.distance
-		end
+		table.insert(pendingMilestones, {
+			at = milestone.at,
+			text = ("🏁 %s Studs!  +%s 💵"):format(milestone.name, Format.abbreviate(milestone.cash)),
+		})
 	end
 
 	if not model then
@@ -1475,7 +1445,9 @@ function Flight.play(plan: {
 		flash:Destroy()
 	end)
 
-	return shot.seconds
+	-- No duration to promise: the flight lasts as long as it stays alive.
+	-- Launch watches Flight.flying() for the landing instead.
+	return 0
 end
 
 function Flight.distance(): number
@@ -1490,47 +1462,58 @@ end
 function Flight.bounces(): number
 	return shot.bounced
 end
+-- True from ignition to landing. Launch's landing watch reads this: when
+-- it flips false, the settlement (FlightBonus) is what arrives next.
+function Flight.flying(): boolean
+	return shot.active
+end
 
 -- ---------- the loop ----------
 
 RunService.RenderStepped:Connect(function(dt)
 	local toy = model
-	local flying = shot.progress < 1
+	local live = sim
+	local flying = shot.active and live ~= nil and not live.done
 	-- Where the shot was at the top of the frame: touches are judged by
 	-- CROSSING an entry's distance, so a fast segment that passes a whole
 	-- cluster in one frame still counts every member it swept.
 	local flownBefore = shot.flown
+	-- Any ground contact this frame (a fast frame can hold several sim
+	-- steps); the impact FX below read this.
+	local hitThisFrame = false
 
-	if shot.active then
-		shot.progress += dt / shot.seconds
-		if shot.progress >= 1 then
-			shot.progress = 1
+	if shot.active and live then
+		-- The live step: substepped so the physics stay stable at any frame
+		-- rate, capped so a tab-out can't fast-forward the flight in one
+		-- giant leap.
+		local remaining = math.min(dt, 0.25)
+		while remaining > 0 and not live.done do
+			local step = math.min(remaining, 1 / 60)
+			Track.step(live, step)
+			if live.hitGround then
+				hitThisFrame = true
+			end
+			remaining -= step
+		end
+		shot.flown = live.dist
+		shot.height = live.h
+		shot.speed = live.vx
+		shot.bounced = live.bounced
+
+		if live.done then
+			-- The flight ran out of speed: THAT is the landing. Settle the
+			-- claim — the server re-runs everything from these events and
+			-- FlightBonus brings back the verdict.
 			shot.active = false
-			-- The replay is over: settle the mid-air game. One claim per
-			-- shot, and the held-back next track can finally land.
+			shot.holdUntil = os.clock() + 1.6
 			if not claimSent then
 				claimSent = true
 				ClaimFlightRemote:FireServer(flightSerial, flightEvents)
-			end
-			if pendingBundle then
-				local bundle = pendingBundle
-				pendingBundle = nil
-				applyFieldBundle(bundle)
 			end
 		end
 	end
 
 	if flying then
-		shot.flown, shot.height, shot.speed = sample(shot.progress * shot.simSeconds)
-
-		local skips = 0
-		for index, arc in shot.arcs do
-			if not arc.rolling and shot.flown >= arc.toX and index < #shot.arcs then
-				skips += 1
-			end
-		end
-		shot.bounced = skips
-
 		-- Keyboard steering, read fresh each frame: A / D or the arrows.
 		-- EASED, not instant: the velocity chases the keys, so direction
 		-- flips glide instead of kinking — which is most of what "smooth"
@@ -1554,74 +1537,53 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end
 
-	-- The slam's dive and recovery. The arc itself never changes — the dive
-	-- scales the drawn height down to the ground and eases it back after.
-	if slamActive then
-		slamDrop = math.min(slamDrop + dt * 5, 1)
-		if slamDrop >= 1 then
-			slamActive = false
-			local ground = corridorAt(shot.flown, 0) + SIDE * laneToStuds(steerPos)
-			trackFx(splat(ground, Config.LaunchSplatRadius * 0.9), shot.flown, steerPos, 0.4)
-			squash = 1
-			shakeAmp = Config.ImpactShakeMagnitude
-			shakePhase = 0
-			fovKick = 1
-			bounceThock.PlaybackSpeed = 0.45
-			bounceThock:Play()
+	-- A slam's IMPACT: the dive itself is the sim's (Track.slam forced the
+	-- vertical speed), so the FX fire at the real ground contact — ring,
+	-- squash, thock, and the manual burst.
+	if hitThisFrame and slamFxPending then
+		slamFxPending = false
+		local ground = corridorAt(shot.flown, 0) + SIDE * laneToStuds(steerPos)
+		trackFx(splat(ground, Config.LaunchSplatRadius * 0.9), shot.flown, steerPos, 0.4)
+		squash = 1
+		shakeAmp = Config.ImpactShakeMagnitude
+		shakePhase = 0
+		fovKick = 1
+		bounceThock.PlaybackSpeed = 0.45
+		bounceThock:Play()
 
-			-- The shockwave: a white ring racing out from the impact, which
-			-- is what sells the slam as a HIT rather than a fast descent.
-			local ring = Instance.new("Part")
-			ring.Shape = Enum.PartType.Cylinder
-			ring.Size = Vector3.new(0.4, 6, 6)
-			ring.CFrame = CFrame.new(ground + Vector3.new(0, 0.6, 0)) * CFrame.Angles(0, 0, math.pi / 2)
-			ring.Color = Color3.fromRGB(255, 255, 255)
-			ring.Material = Enum.Material.Neon
-			ring.Anchored = true
-			ring.CanCollide = false
-			ring.CanQuery = false
-			ring.CanTouch = false
-			ring.Transparency = 0.2
-			ring.Parent = stage
-			trackFx(ring, shot.flown, steerPos, 0.6)
-			TweenService:Create(ring, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Size = Vector3.new(0.4, 44, 44),
-				Transparency = 1,
-			}):Play()
-			task.delay(0.5, function()
-				ring:Destroy()
-			end)
-			if slamCollectAt then
-				floatPopup(ground + Vector3.new(0, 8, 0), "💥 SLAM!", Color3.fromRGB(255, 214, 120))
-				slamBurst(slamCollectAt :: { distance: number, lane: number })
-				slamCollectAt = nil
-			end
-		end
-	elseif slamDrop > 0 then
-		slamDrop = math.max(slamDrop - dt * 2.2, 0)
-	end
-
-	-- The boots' kick, integrated: an impulse rises against its own gravity
-	-- and falls back to the server's arc — a smooth little bounce on top of
-	-- the flight, not a teleport up and an ooze down.
-	if extraLift > 0 or liftVel > 0 then
-		liftVel -= Config.BootGravity * dt
-		extraLift = math.max(extraLift + liftVel * dt, 0)
-		if extraLift == 0 and liftVel < 0 then
-			liftVel = 0
+		-- The shockwave: a white ring racing out from the impact, which
+		-- is what sells the slam as a HIT rather than a fast descent.
+		local ring = Instance.new("Part")
+		ring.Shape = Enum.PartType.Cylinder
+		ring.Size = Vector3.new(0.4, 6, 6)
+		ring.CFrame = CFrame.new(ground + Vector3.new(0, 0.6, 0)) * CFrame.Angles(0, 0, math.pi / 2)
+		ring.Color = Color3.fromRGB(255, 255, 255)
+		ring.Material = Enum.Material.Neon
+		ring.Anchored = true
+		ring.CanCollide = false
+		ring.CanQuery = false
+		ring.CanTouch = false
+		ring.Transparency = 0.2
+		ring.Parent = stage
+		trackFx(ring, shot.flown, steerPos, 0.6)
+		TweenService:Create(ring, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = Vector3.new(0.4, 44, 44),
+			Transparency = 1,
+		}):Play()
+		task.delay(0.5, function()
+			ring:Destroy()
+		end)
+		if slamManualPending then
+			slamManualPending = false
+			floatPopup(ground + Vector3.new(0, 8, 0), "💥 SLAM!", Color3.fromRGB(255, 214, 120))
+			slamBurst(shot.flown, steerPos)
 		end
 	end
 
-	-- Where the squishy actually draws: at the treadmill's origin, on the
-	-- server's arc, dived by any slam, kicked by any boot, and steered
-	-- sideways across the fixed lane.
-	local arcAt = corridorAt(shot.flown, shot.height)
-	local groundLevel = CORRIDOR_ORIGIN.Y
-	local at = Vector3.new(
-		arcAt.X,
-		groundLevel + (arcAt.Y - groundLevel) * (1 - slamDrop) + extraLift,
-		arcAt.Z
-	) + SIDE * laneToStuds(steerPos)
+	-- Where the squishy actually draws: at the treadmill's origin, at the
+	-- LIVE sim's own height — boots, bombs and slams are all already in it
+	-- — and steered sideways across the fixed lane.
+	local at = corridorAt(shot.flown, shot.height) + SIDE * laneToStuds(steerPos)
 
 	-- The corridor itself: tiles, walls and marker boards wrap through the
 	-- window by modulo, so the same pooled parts carry every distance.
@@ -1697,83 +1659,94 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end
 
-	-- Steering through things: whatever the drawn squishy touches, the claim
-	-- remembers. The server re-prices all of it; these are the visuals.
-	-- Judged in LANE UNITS and by crossing, never world proximity — the
-	-- lane's world width varies with distance now, so a fixed world radius
-	-- would be untouchable far out and unmissable up close.
-	if flying and toy then
+	-- Steering through things: whatever the sim touches, the claim
+	-- remembers — with when and where, because the server re-runs the whole
+	-- flight from this log. Judged in LANE UNITS and by crossing, never
+	-- world proximity, and against the CHUNKS the frame swept rather than
+	-- the drawn window: a fast segment can cross more track in one frame
+	-- than the window even shows.
+	if flying and toy and live then
 		local laneTouch = Config.LaneTouchWidth
-		local function crossed(distance: number, lane: number): boolean
-			return distance > flownBefore
-				and distance <= shot.flown
-				and math.abs(lane - steerPos) <= laneTouch
+		local function crossed(distance: number): boolean
+			return distance > flownBefore and distance <= shot.flown
+		end
+		local function popPosition(entry: any): Vector3
+			return corridorAt(entry.distance, math.max(entry.height, 2)) + SIDE * laneToStuds(entry.lane)
 		end
 
-		for index, entry in pickupField do
-			local base = pickupBase[index]
-			if base and not pickupTaken[index] and pickupCollecting[index] == nil then
-				if crossed(entry.distance, entry.lane or 0) and math.abs(base.Y - at.Y) <= 16 then
-					takePickupVisual(index, entry)
-					table.insert(flightEvents, { kind = "pickup", index = index })
+		for chunkIndex = Track.chunkAt(flownBefore), Track.chunkAt(shot.flown) do
+			local chunk = chunkFor(chunkIndex)
+			for _, entry in chunk.pickups do
+				if not pickupTaken[entry.id] and crossed(entry.distance) then
+					if math.abs(entry.lane) <= shotMagnet then
+						-- The magnet's vacuum: no event — the server pays
+						-- every centre-line pickup along the settled
+						-- distance without being asked.
+						takePickupVisual(entry, false)
+					elseif
+						math.abs(entry.lane - steerPos) <= laneTouch
+						and math.abs(entry.height - shot.height) <= 16
+					then
+						takePickupVisual(entry, true)
+						table.insert(flightEvents, { kind = "pickup", id = entry.id, t = live.t, lane = steerPos })
+					end
 				end
 			end
-		end
-		for index, entry in bootField do
-			local base = bootBase[index]
-			if base and not bootTaken[index] and crossed(entry.distance, entry.lane) and math.abs(base.Y - at.Y) <= 15 then
-				bootTaken[index] = true
-				bootBase[index] = nil
-				bootParts[index].Transparency = 1
-				local glyph = bootParts[index]:FindFirstChild("Glyph") :: BillboardGui?
-				if glyph then
-					glyph.Enabled = false
+			for _, entry in chunk.boots do
+				if
+					not bootTaken[entry.id]
+					and crossed(entry.distance)
+					and math.abs(entry.lane - steerPos) <= laneTouch
+					and math.abs(entry.height - shot.height) <= 15
+				then
+					bootTaken[entry.id] = true
+					local base = bootBase[entry.id] or popPosition(entry)
+					releaseEntry(bootAlloc, bootBase, entry.id)
+					-- The relaunch is REAL: the sim's vertical speed comes
+					-- back and the flight simply keeps going. This is the
+					-- whole point of the boots.
+					Track.boot(live)
+					bootSound.PlaybackSpeed = 1 + 0.1 * (#flightEvents % 5)
+					bootSound:Play()
+					floatPopup(base, "+BOOST!", Color3.fromRGB(120, 244, 128))
+					table.insert(flightEvents, { kind = "boot", id = entry.id, t = live.t, lane = steerPos })
 				end
-				-- An impulse, not a position set: the loop's integrator turns
-				-- it into the smooth rise. Chained boots keep the stronger kick.
-				liftVel = math.max(liftVel, Config.BootImpulse)
-				bootSound.PlaybackSpeed = 1 + 0.12 * index
-				bootSound:Play()
-				floatPopup(base, "+BOOST!", Color3.fromRGB(120, 244, 128))
-				table.insert(flightEvents, { kind = "boot", index = index })
 			end
-		end
-		for index, entry in bombField do
-			local base = bombBase[index]
-			-- Sailing close PAST a bomb earns a once-per-bomb "phew!" — the
-			-- near-miss is half of why dodging feels like anything.
-			if
-				base
-				and not bombHit[index]
-				and not bombNear[index]
-				and entry.distance > flownBefore
-				and entry.distance <= shot.flown
-				and math.abs(entry.lane - steerPos) > laneTouch
-				and math.abs(entry.lane - steerPos) <= laneTouch * 2.4
-			then
-				bombNear[index] = true
-				floatPopup(base + Vector3.new(0, 6, 0), "phew!", Color3.fromRGB(255, 240, 150))
-			end
-			if base and not bombHit[index] and crossed(entry.distance, entry.lane) and math.abs(base.Y - at.Y) <= 15 then
-				bombHit[index] = true
-				bombBase[index] = nil
-				bombParts[index].Transparency = 1
-				local glyph = bombParts[index]:FindFirstChild("Glyph") :: BillboardGui?
-				if glyph then
-					glyph.Enabled = false
+			for _, entry in chunk.bombs do
+				-- Sailing close PAST a bomb earns a once-per-bomb "phew!" —
+				-- the near-miss is half of why dodging feels like anything.
+				if
+					not bombHit[entry.id]
+					and not bombNear[entry.id]
+					and crossed(entry.distance)
+					and math.abs(entry.lane - steerPos) > laneTouch
+					and math.abs(entry.lane - steerPos) <= laneTouch * 2.4
+				then
+					bombNear[entry.id] = true
+					floatPopup(popPosition(entry) + Vector3.new(0, 6, 0), "phew!", Color3.fromRGB(255, 240, 150))
 				end
-				boomFx(base)
-				bounceThock.PlaybackSpeed = 0.5
-				bounceThock:Play()
-				floatPopup(base, "-BOOM!", Color3.fromRGB(255, 110, 92))
-				-- The hit reads in the body: spin knocked down, and a forced
-				-- dive with no burst attached.
-				spinRate *= 0.55
-				beginSlam(false)
-				fovKick = 1
-				shakeAmp = Config.ImpactShakeMagnitude
-				shakePhase = 0
-				table.insert(flightEvents, { kind = "bomb", index = index })
+				if
+					not bombHit[entry.id]
+					and crossed(entry.distance)
+					and math.abs(entry.lane - steerPos) <= laneTouch
+					and math.abs(entry.height - shot.height) <= 15
+				then
+					bombHit[entry.id] = true
+					local base = bombBase[entry.id] or popPosition(entry)
+					releaseEntry(bombAlloc, bombBase, entry.id)
+					-- The hit is REAL: forward speed bled and the body
+					-- knocked down, in the same sim the server will re-run.
+					Track.bomb(live)
+					boomFx(base)
+					bounceThock.PlaybackSpeed = 0.5
+					bounceThock:Play()
+					floatPopup(base, "-BOOM!", Color3.fromRGB(255, 110, 92))
+					spinRate *= 0.55
+					fovKick = 1
+					shakeAmp = Config.ImpactShakeMagnitude
+					shakePhase = 0
+					table.insert(flightEvents, { kind = "bomb", id = entry.id, t = live.t, lane = steerPos })
+				end
 			end
 		end
 	end
@@ -1806,12 +1779,14 @@ RunService.RenderStepped:Connect(function(dt)
 		fovKick = 1
 		shakeAmp = Config.ImpactShakeMagnitude
 		shakePhase = 0
-		-- The treadmill has stopped (flown == distance), so the landing FX
+		-- The treadmill has stopped (the sim is done), so the landing FX
 		-- sit still on their own — but they register with the tracker
 		-- anyway, in case a later system ever moves the window at rest.
-		local ground = corridorAt(shot.distance, 0) + SIDE * laneToStuds(steerPos)
-		trackFx(splat(ground, Config.LaunchSplatRadius), shot.distance, steerPos, 0.4)
-		payoutPopup(ground, shot.distance, shot.earnedCoins)
+		-- The popup announces the DISTANCE only: what it earned is the
+		-- server's verdict, still in flight to the summary card.
+		local ground = corridorAt(shot.flown, 0) + SIDE * laneToStuds(steerPos)
+		trackFx(splat(ground, Config.LaunchSplatRadius), shot.flown, steerPos, 0.4)
+		payoutPopup(ground, shot.flown, 0)
 		bounceThock.PlaybackSpeed = 0.42
 		bounceThock:Play()
 
@@ -1841,7 +1816,7 @@ RunService.RenderStepped:Connect(function(dt)
 		confetti.Enabled = false
 		confetti.Parent = party
 		confetti:Emit(42)
-		trackFx(party, shot.distance, steerPos, 4)
+		trackFx(party, shot.flown, steerPos, 4)
 		task.delay(1.8, function()
 			party:Destroy()
 		end)
@@ -1887,8 +1862,7 @@ RunService.RenderStepped:Connect(function(dt)
 			-- TREADMILL's drawn ground speed, like a wheel. The corridor is
 			-- 1:1 longitudinally, so the sim's own delta IS the visual speed.
 			local radiusWorld = math.max(-toy.lowestY * applied, 0.5)
-			local lastArc = shot.arcs[#shot.arcs]
-			local rollingNow = lastArc and lastArc.rolling and shot.flown >= lastArc.fromX
+			local rollingNow = live ~= nil and live.rolling
 			if rollingNow and dt > 0 then
 				spinRate = (shot.flown - flownBefore) / dt / radiusWorld
 			end
@@ -1903,7 +1877,7 @@ RunService.RenderStepped:Connect(function(dt)
 			-- Landed, camera still lingering: the squishy SITS where it
 			-- stopped — pancaked from the landing, easing back to shape —
 			-- instead of blinking out the frame the flight ends.
-			local ground = corridorAt(shot.distance, 0) + SIDE * laneToStuds(steerPos)
+			local ground = corridorAt(shot.flown, 0) + SIDE * laneToStuds(steerPos)
 			Models.apply(
 				toy.rig,
 				CFrame.new(ground + Vector3.new(0, lift, 0)) * CFrame.fromAxisAngle(SIDE, -spinAngle),
@@ -1916,28 +1890,6 @@ RunService.RenderStepped:Connect(function(dt)
 			-- squishy lives on the cushion and in the collection; the cannon
 			-- carries it only mid-flight.
 			Models.apply(toy.rig, CFrame.new(0, -500, 0), Vector3.one * 0.001)
-		end
-	end
-
-	-- Pickups pop as the shot reaches them — with a little "+value" floating
-	-- off each one, so a good line through a cluster reads as a combo rather
-	-- than as scenery quietly vanishing. The server already decided WHICH
-	-- ones; this is only the moment they disappear.
-	for index, distance in pickupCollecting do
-		if shot.flown >= distance then
-			local prize = pickupParts[index]
-			local entry = pickupField[index]
-			if prize and entry then
-				floatPopup(prize.Position, ("+%d 💵"):format(entry.value), PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
-				prize.Transparency = 1
-				pickupBase[index] = nil
-				local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
-				if icon then
-					icon.Enabled = false
-				end
-			end
-			pickupTaken[index] = true
-			pickupCollecting[index] = nil
 		end
 	end
 

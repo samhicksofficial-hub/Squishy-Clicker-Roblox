@@ -1338,11 +1338,10 @@ Scene.onViewChanged(function(atValley)
 	end
 end)
 
--- Tell the server we are listening. Its join sync and — more importantly — its
--- join LaunchField both fire the moment the player is added, which routinely
--- beats this script to connecting its handlers. A lost sync fixes itself on
--- the next click; a lost field left the track with no pickups on it at all
--- until after the player's first shot.
+-- Tell the server we are listening. Its join sync fires the moment the
+-- player is added, which routinely beats this script to connecting its
+-- handlers — and anything sent before then is simply gone. This asks for
+-- it again once the handlers actually exist.
 task.spawn(function()
 	local ready = Remotes:WaitForChild("ClientReady") :: RemoteEvent
 	ready:FireServer()

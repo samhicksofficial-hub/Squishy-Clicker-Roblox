@@ -22,6 +22,10 @@ local Config = require(Shared:WaitForChild("Config"))
 -- with an orange "Infinite yield possible" warning in Output, the file was
 -- moved — put it back at src/shared/Squishies.luau or update this path.
 local Squishies = require(Shared:WaitForChild("Squishies"))
+-- The living flight and the endless track, SHARED with the client. The
+-- client requires the same module to draw and steer; this side requires it
+-- to validate and pay. See its header for the contract.
+local Track = require(Shared:WaitForChild("Track"))
 
 -- Rank by position in the rarity table (Common 1 ... Mythical 6), so "rarer"
 -- is derived from the one existing set of odds rather than a second table that
@@ -71,22 +75,18 @@ local LaunchResult = Instance.new("RemoteEvent")
 LaunchResult.Name = "LaunchResult"
 LaunchResult.Parent = Remotes
 
--- Where the pickups are for this player's NEXT shot. Sent on join and after
--- every shot rather than folded into the ordinary sync, which fires on every
--- single click and doesn't need a couple of dozen extra tables riding along.
-local LaunchField = Instance.new("RemoteEvent")
-LaunchField.Name = "LaunchField"
-LaunchField.Parent = Remotes
-
--- The mid-air game's settlement: (serial, events) after the replay lands —
--- which off-lane pickups and boots the steering reached, where the slams
--- hit, which bombs connected. The server validates every claim against what
--- the steering speed could physically have covered before paying a coin.
+-- The flight's settlement: (serial, events) after the client's sim lands —
+-- every pickup, boot, bomb and slam its steering reached, each stamped with
+-- when and in which lane. The server RE-RUNS the whole flight from these
+-- events and pays only what the physics agree happened; the flight's real
+-- distance is whatever that re-simulation says it was.
 local ClaimFlight = Instance.new("RemoteEvent")
 ClaimFlight.Name = "ClaimFlight"
 ClaimFlight.Parent = Remotes
 
--- The verdict on that claim: { cash, pickups, boots, bombs, slams }.
+-- The verdict on that settlement — now the whole payout: distance, cash,
+-- milestones, the record, the counts. (There is no fire-time payout left:
+-- a shot with no predetermined length has nothing to pay until it lands.)
 local FlightBonus = Instance.new("RemoteEvent")
 FlightBonus.Name = "FlightBonus"
 FlightBonus.Parent = Remotes
@@ -113,10 +113,11 @@ local SetWorld = Instance.new("RemoteEvent")
 SetWorld.Name = "SetWorld"
 SetWorld.Parent = Remotes
 
--- Somebody launched. Goes to EVERY client so the lobby can watch the shot fly
--- and list it in the feed. Carries the shape of the flight and a name, and
--- deliberately nothing about what it earned — that is the launcher's business
--- and nobody else's.
+-- Somebody's flight SETTLED. Goes to EVERY client for the lobby feed —
+-- fired at settle rather than at launch now, because a living flight's
+-- distance doesn't exist until it lands. Carries a name and the distance,
+-- and deliberately nothing about what it earned — that is the launcher's
+-- business and nobody else's.
 local LaunchBroadcast = Instance.new("RemoteEvent")
 LaunchBroadcast.Name = "LaunchBroadcast"
 LaunchBroadcast.Parent = Remotes
@@ -146,8 +147,8 @@ SyncData.Parent = Remotes
 -- catch-up loop, which runs the instant the server script does). Both can and
 -- do beat the client to connecting its listeners, and anything sent before
 -- then is simply gone. SyncData survives that because a click re-sends it
--- seconds later — but LaunchField only goes out on join, so a lost one left
--- the whole track bare until after the player's first shot.
+-- seconds later; this remote asks for it again the moment the handlers are
+-- actually listening.
 local ClientReady = Instance.new("RemoteEvent")
 ClientReady.Name = "ClientReady"
 ClientReady.Parent = Remotes
@@ -182,28 +183,18 @@ end
 -- One per-second bucket per rate-limited remote.
 type RateLimit = { bucket: number, count: number }
 
--- One pickup on the track. Positions are in GAME studs; the client scales
--- them to fit the stage. `lane` is the lateral offset in the steering lane —
--- zero for the centre-line pickups the fire-time magnet still sweeps, out to
--- ±SteerHalfWidth for the ones only steering reaches.
-type Pickup = { distance: number, height: number, kind: string, value: number, vip: boolean, lane: number }
-
--- The steerable extras on the track. Boots pay a bonus for being flown
--- through; bombs cut the flight bonus for being hit.
-type TrackBoot = { distance: number, height: number, lane: number, cash: number }
-type TrackBomb = { distance: number, height: number, lane: number }
-
--- The shot a claim settles against. Snapshotted at fire time, because the
--- live field regenerates the moment a shot is scored.
+-- The shot a settlement re-simulates. No field snapshot any more — the
+-- whole track derives from the seed, so holding the launch parameters IS
+-- holding the field, however far the flight ends up going.
 type ShotRecord = {
 	serial: number,
 	at: number, -- os.clock when fired
 	window: number, -- seconds the claim stays valid
-	flight: Flight,
-	field: { Pickup },
-	boots: { TrackBoot },
-	bombs: { TrackBomb },
-	taken: { [number]: boolean }, -- pickup indexes the fire-time magnet already paid
+	seed: number, -- the track: Track.chunk(seed, i) on both sides
+	vx: number, -- forward momentum (the power economy, calibrated)
+	vy: number, -- launch vertical speed (the angle)
+	phys: Track.Physics,
+	magnet: number, -- centre-line sweep width, in lane units
 	claimed: boolean,
 }
 
@@ -216,9 +207,6 @@ type PlayerData = {
 	clickerId: string?,           -- which owned squishy is the click toy
 	lastLaunch: number,           -- os.clock of the last cannon shot
 	bestDistance: number,         -- furthest cannon shot ever, in studs
-	launchField: { Pickup },      -- pickups waiting for their NEXT shot
-	launchBoots: { TrackBoot },   -- boost boots on that same track
-	launchBombs: { TrackBomb },   -- and the bombs to steer around
 	shotSerial: number,           -- ticks up per shot; claims must quote it
 	lastShot: ShotRecord?,        -- what the pending claim settles against
 
@@ -411,42 +399,6 @@ local function simulateFlight(power: number, angleFraction: number, mods: Abilit
 	}
 end
 
--- How many seconds into the flight the shot reaches `x`. Linear within each
--- arc — an approximation, but the claim check that reads this carries its
--- own slack, so the error never costs an honest player a pickup.
-local function timeAtDistance(flight: Flight, x: number): number
-	local elapsed = 0
-	for _, arc in flight.arcs do
-		if x <= arc.toX then
-			local span = arc.toX - arc.fromX
-			if span <= 0 then
-				return elapsed
-			end
-			return elapsed + math.clamp((x - arc.fromX) / span, 0, 1) * arc.seconds
-		end
-		elapsed += arc.seconds
-	end
-	return elapsed
-end
-
--- How high the shot is when it has travelled `x`. The client redraws this same
--- curve from the same arcs to animate; only this copy decides what was
--- collected, so the two drifting apart is a cosmetic bug, never an exploit.
-local function heightAt(flight: Flight, x: number): number
-	for _, arc in flight.arcs do
-		if x <= arc.toX then
-			local span = arc.toX - arc.fromX
-			if arc.rolling or span <= 0 then
-				return 0
-			end
-			-- Parabola meeting the ground at both ends of the hop.
-			local along = (x - arc.fromX) / span
-			return arc.peak * 4 * along * (1 - along)
-		end
-	end
-	return 0
-end
-
 -- ---------- What the player brings to a shot ----------
 
 local function starPowerFor(data: PlayerData): number
@@ -577,24 +529,12 @@ local function launchPowerFor(data: PlayerData): number
 		* squishyBonuses(data).power
 end
 
--- The player's magnet, in the SCREEN units Config quotes it in.
+-- The player's magnet, in LANE UNITS of the centre line — the width of the
+-- automatic sweep as the flight passes. Stars and summons widen it.
 local function magnetFor(data: PlayerData): number
 	return Config.LaunchPickupMagnet
 		+ math.min(totalStars(data) * Config.LaunchMagnetPerStar, Config.LaunchMaxStarMagnet)
 		+ squishyBonuses(data).magnet
-end
-
--- The same magnet converted into the game studs a shot is actually measured
--- in. The track is drawn so that a flight's envelope is always about
--- MagnetReferenceHeight tall on screen, so scaling by this field's own tallest
--- pickup undoes that and lands on the equivalent real reach. See the comment
--- on Config.LaunchPickupMagnet for why this cannot be a fixed number.
-local function effectiveMagnet(data: PlayerData): number
-	local tallest = 1
-	for _, pickup in data.launchField do
-		tallest = math.max(tallest, pickup.height)
-	end
-	return magnetFor(data) * tallest / Config.MagnetReferenceHeight
 end
 
 -- Distance needed for the player's next rebirth.
@@ -602,174 +542,10 @@ local function rebirthRequirement(rebirths: number): number
 	return Config.RebirthBaseRequirement * Config.RebirthRequirementGrowth ^ rebirths
 end
 
--- The distance a good shot at full charge would cover right now. Used to lay
--- the pickup field out where the player can actually reach it, so the track
--- stretches out with them instead of bunching at the cannon forever.
-local function expectedReach(data: PlayerData): number
-	local power = launchPowerFor(data)
-	local best = 0
-	for step = 0, 8 do
-		local candidate = simulateFlight(power, step / 8).distance
-		if candidate > best then
-			best = candidate
-		end
-	end
-	return math.max(best, 1)
-end
-
--- ---------- The pickup field ----------
-
--- VIP zones: bands of the track where pickups cluster and pay several times
--- over. Placed as fractions of the player's own reach, so they stay relevant
--- at every power level rather than being left behind at 500 studs.
-local function makeVipZones(reach: number): { { from: number, to: number } }
-	local zones = {}
-	for index = 1, Config.VipZoneCount do
-		-- Spread across the back half of the reach: a VIP zone at the cannon's
-		-- feet would be free money on every shot.
-		local centre = reach * (0.45 + 0.5 * (index - 0.5) / Config.VipZoneCount)
-		local half = reach * Config.VipZoneWidthFraction * 0.5
-		table.insert(zones, { from = centre - half, to = centre + half })
-	end
-	return zones
-end
-
-local function inVipZone(zones: { { from: number, to: number } }, at: number): boolean
-	for _, zone in zones do
-		if at >= zone.from and at <= zone.to then
-			return true
-		end
-	end
-	return false
-end
-
-local function makeLaunchField(data: PlayerData): { Pickup }
-	local reach = expectedReach(data)
-	local spread = Config.LaunchPickupFarFraction - Config.LaunchPickupNearFraction
-	local zones = makeVipZones(reach)
-
-	local count = Config.LaunchPickupCount
-
-	local field: { Pickup } = {}
-	local function place(at: number, forceVip: boolean)
-		at = math.max(at, 1)
-		local vip = forceVip or inVipZone(zones, at)
-
-		-- Height is read off a REAL arc rather than picked out of the air, so
-		-- every pickup sits on some flyable path — a different one each time,
-		-- which is what stops one angle being the answer to every field.
-		local reference = simulateFlight(launchPowerFor(data) * (0.55 + rng:NextNumber() * 0.5), rng:NextNumber())
-		local height = heightAt(reference, at)
-
-		-- One currency now: every pickup is Cash.
-		local kind, value = "coin", Config.PickupCoinValue
-
-		-- Further out is worth more, or a six-figure run pays the same per
-		-- pickup as a five-hundred-stud one and the track stops mattering.
-		value *= 1 + (at / 1000) * Config.PickupValuePer1kStuds
-		if vip then
-			value *= Config.VipZoneValueMultiplier
-		end
-
-		-- Some pickups ride the centre line for the fire-time magnet; the
-		-- rest spread UNIFORM across the full lane, edge to edge, so the
-		-- sides of the player's space are always worth steering to.
-		local lane = 0
-		if rng:NextNumber() > Config.PickupCentreFraction then
-			lane = (rng:NextNumber() * 2 - 1) * Config.SteerHalfWidth
-		end
-
-		table.insert(field, {
-			distance = at,
-			height = math.max(height, 2),
-			kind = kind,
-			value = math.max(math.floor(value + 0.5), 1),
-			vip = vip,
-			lane = lane,
-		})
-	end
-
-	for index = 1, count do
-		-- Evenly spaced slots with a jitter inside each, rather than free
-		-- rolls — free rolls clump, and a clumped field is a dead field.
-		local slot = (index - 0.5) / count
-		local at = reach * (Config.LaunchPickupNearFraction + spread * slot)
-		place(at + (rng:NextNumber() - 0.5) * reach * spread / count, false)
-	end
-
-	-- The VIP clusters on top.
-	for _, zone in zones do
-		for _ = 1, Config.VipZoneDensityMultiplier do
-			place(zone.from + rng:NextNumber() * (zone.to - zone.from), true)
-		end
-	end
-
-	return field
-end
-
--- The steerable extras riding the same track: boost boots to fly through,
--- bombs to fly around. Both are placed on a RAMP: stratified along the
--- flight so no two ever bunch, then bent toward the far end — the opening
--- stretch stays sparse and readable while the player is still finding the
--- controls, and the track crowds up as the flight goes on. (Cash is exempt
--- on purpose: money everywhere is fine; dodging everywhere is noise.)
-local function makeTrackExtras(data: PlayerData): ({ TrackBoot }, { TrackBomb })
-	local reach = expectedReach(data)
-	local boots: { TrackBoot } = {}
-	local bombs: { TrackBomb } = {}
-
-	-- One slot per index (stratified), then u^0.55 bends the spread toward
-	-- 1 — early gaps stretch wide, late gaps tighten. Density ramps with
-	-- distance by construction, no rejection loops needed.
-	local function rampAt(index: number, count: number, fromFraction: number, toFraction: number): number
-		local u = (index - rng:NextNumber()) / count
-		local bent = u ^ 0.55
-		return reach * (fromFraction + (toFraction - fromFraction) * bent)
-	end
-
-	for index = 1, Config.BootCount do
-		local at = rampAt(index, Config.BootCount, 0.25, 0.9)
-		local direction = rng:NextNumber() < 0.5 and -1 or 1
-		local cash = Config.BootCash * (1 + (at / 1000) * Config.PickupValuePer1kStuds)
-		table.insert(boots, {
-			distance = math.max(at, 1),
-			height = 8 + rng:NextNumber() * 26,
-			lane = direction * rng:NextNumber() * Config.SteerHalfWidth * 0.8,
-			cash = math.floor(cash + 0.5),
-		})
-	end
-
-	for index = 1, Config.BombCount do
-		local at = rampAt(index, Config.BombCount, 0.15, 0.97)
-		local lane = (rng:NextNumber() * 2 - 1) * Config.SteerHalfWidth
-		-- No bomb parks dead-centre in the opening third: a hit before the
-		-- player has meaningfully steered reads as unfair, not as a dodge
-		-- they missed.
-		local centreClear = Config.SteerHalfWidth * 0.25
-		if at < reach * 0.35 and math.abs(lane) < centreClear then
-			lane = (lane < 0 and -1 or 1) * (centreClear + rng:NextNumber() * centreClear)
-		end
-		table.insert(bombs, {
-			distance = math.max(at, 1),
-			height = rng:NextNumber() < 0.4 and 2 or 6 + rng:NextNumber() * 24,
-			lane = math.clamp(lane, -Config.SteerHalfWidth, Config.SteerHalfWidth),
-		})
-	end
-
-	return boots, bombs
-end
-
--- Relay the whole track — pickups, boots, bombs — in one payload. Every
--- site that regenerates the field goes through here, so the three arrays
--- can never drift apart on the client.
-local function relayField(player: Player, data: PlayerData)
-	data.launchBoots, data.launchBombs = makeTrackExtras(data)
-	LaunchField:FireClient(player, {
-		pickups = data.launchField,
-		boots = data.launchBoots,
-		bombs = data.launchBombs,
-	})
-end
+-- (The pickup field, its VIP zones and the boot/bomb layout all left with
+-- the predetermined flight: the track is seeded chunks from shared/Track
+-- now, generated identically by both sides, so there is nothing to lay out
+-- or relay — the seed in the shot record IS the field.)
 
 -- Milestones the player has just passed for the first time. Paid once each —
 -- fat one-off Cash bounties on top of ordinary track income.
@@ -910,10 +686,6 @@ local function loadData(player: Player): PlayerData
 		-- this update loads as a player who has never touched the cannon
 		-- rather than as an error.
 		bestDistance = loaded and loaded.bestDistance or 0,
-		-- Laid out in onPlayerAdded, once the stars this reads are in place.
-		launchField = {},
-		launchBoots = {},
-		launchBombs = {},
 		shotSerial = 0,
 		lastShot = nil,
 
@@ -1025,10 +797,6 @@ local function onPlayerAdded(player: Player)
 	stars.Value = totalStars(data)
 	stars.Parent = leaderstats
 
-	-- The range needs sweets on it before they ever open the cannon panel.
-	data.launchField = makeLaunchField(data)
-	relayField(player, data)
-
 	sync(player)
 end
 
@@ -1045,7 +813,17 @@ for _, existing in Players:GetPlayers() do
 	task.spawn(onPlayerAdded, existing)
 end
 
+-- Assigned in the launch section below, where its whole toolbox is in
+-- scope; declared here so the leave handler can settle a flight that never
+-- got to claim — without this, quitting (or crashing) mid-flight would
+-- forfeit the entire run instead of paying its no-event baseline.
+local settleFlight: ((Player, PlayerData, { any }) -> ())? = nil
+
 Players.PlayerRemoving:Connect(function(player)
+	local data = dataByPlayer[player]
+	if data and settleFlight then
+		settleFlight(player, data, {})
+	end
 	saveData(player)
 	dataByPlayer[player] = nil
 	-- Freed immediately rather than on a timer: the next person to join should
@@ -1078,10 +856,6 @@ ClientReady.OnServerEvent:Connect(function(player)
 	if not data or overRate(data, "ready", 3) then
 		return
 	end
-	if #data.launchField == 0 then
-		data.launchField = makeLaunchField(data)
-	end
-	relayField(player, data)
 	sync(player)
 	-- King of the Steamer answers this same remote in its own section below,
 	-- where its snapshot function is in scope.
@@ -1095,6 +869,279 @@ end)
 -- HUD reading zero and no launch button. Every refusal therefore ANSWERS.
 local function rejectLaunch(player: Player, reason: string)
 	LaunchResult:FireClient(player, { ok = false, reason = reason })
+end
+
+-- The live sim's physics for this shot: the fixed vertical envelope, bent
+-- by the equipped squishy's ability the same way the old arcs were. The
+-- oracle's mods are ratios of ITS gravity scale, so they carry over as
+-- ratios; restitution is capped shy of 1 because the live sim would bounce
+-- forever at it.
+local function flightPhysicsFor(mods: AbilityMods, angle: number): (Track.Physics, number)
+	local phys = Track.basePhysics()
+	phys.gravity = Config.FlightGravity * mods.gravity / Config.LaunchGravity
+	phys.restitution = math.min(mods.restitution, 0.92)
+	phys.rollSeconds = Config.FlightRollSeconds
+		* math.clamp(Config.LaunchRollDeceleration / mods.rollDeceleration, 0.5, 3)
+	local vy = Config.FlightVyMin + (Config.FlightVyMax - Config.FlightVyMin) * angle
+	return phys, vy
+end
+
+-- ---------- settling a flight ----------
+-- THE core of the living flight's authority. The client steered a local
+-- sim and reports every touch as (kind, id, when, lane); this re-runs the
+-- SAME sim from the same launch numbers, applying each claimed touch only
+-- where the physics agree the shot actually was — near the object's
+-- distance at that moment, near its height, and laterally REACHABLE from
+-- the previous touch at steering speed. Whatever survives is the flight:
+-- its distance, its milestones, its record and every coin it pays all come
+-- out of this re-simulation. Runs exactly once per shot — from the claim,
+-- from the next launch finding an unclaimed shot, or from the player
+-- leaving — and the empty-events call is the no-event baseline settlement.
+settleFlight = function(player: Player, data: PlayerData, events: { any })
+	local shot = data.lastShot
+	if not shot or shot.claimed then
+		return
+	end
+	shot.claimed = true
+	if os.clock() - shot.at > shot.window then
+		return
+	end
+
+	-- The track, regenerated chunk by chunk as the settlement needs it —
+	-- identical to what the client drew, because it is the same function.
+	local chunks: { [number]: Track.Chunk } = {}
+	local function chunkFor(index: number): Track.Chunk
+		local cached = chunks[index]
+		if cached then
+			return cached
+		end
+		local made = Track.chunk(shot.seed, index)
+		chunks[index] = made
+		return made
+	end
+
+	-- Sanitize the hostile payload into typed, time-ordered touches.
+	local touches: { { kind: string, id: number, t: number, lane: number } } = {}
+	for _, event in events do
+		if typeof(event) ~= "table" then
+			continue
+		end
+		local kind = (event :: any).kind
+		local t = (event :: any).t
+		local lane = (event :: any).lane
+		if typeof(kind) ~= "string" or typeof(t) ~= "number" or typeof(lane) ~= "number" then
+			continue
+		end
+		if t ~= t or lane ~= lane or t < 0 or t > shot.phys.maxSeconds then
+			continue
+		end
+		lane = math.clamp(lane, -Config.SteerHalfWidth, Config.SteerHalfWidth)
+		if kind == "slam" then
+			table.insert(touches, { kind = kind, id = 0, t = t, lane = lane })
+		elseif kind == "pickup" or kind == "boot" or kind == "bomb" then
+			local id = (event :: any).id
+			if typeof(id) == "number" and id == id and id >= 0 and id % 1 == 0 then
+				table.insert(touches, { kind = kind, id = id, t = t, lane = lane })
+			end
+		end
+		if #touches >= 500 then
+			break
+		end
+	end
+	table.sort(touches, function(a, b)
+		return a.t < b.t
+	end)
+
+	-- The re-simulation. Fixed-step for determinism-enough; every window
+	-- below carries slack sized to the frame quantisation an honest client
+	-- suffers at speed.
+	local sim = Track.newSim(shot.vx, shot.vy, shot.phys)
+	local DT = 1 / 45
+	local prevLane, prevTime = 0, 0
+	local claimed: { [number]: boolean } = {}
+	local subtotal = 0
+	local pickupCount, bootCount, bombCount, slamCount = 0, 0, 0, 0
+	local slamLanePending: number? = nil
+	local burstCentres: { { distance: number, lane: number } } = {}
+
+	local function advanceTo(target: number)
+		while not sim.done and sim.t < target do
+			Track.step(sim, math.min(DT, target - sim.t))
+			if sim.hitGround and slamLanePending then
+				table.insert(burstCentres, { distance = sim.dist, lane = slamLanePending :: number })
+				slamLanePending = nil
+			end
+		end
+	end
+
+	for _, touch in touches do
+		advanceTo(touch.t)
+		if sim.done then
+			break
+		end
+		-- The reachability chain: no touch may sit further from the last
+		-- accepted one than the steering speed could cover in the time.
+		local within = Config.SteerSpeed * math.max(touch.t - prevTime, 0) + Config.ClaimLaneSlack
+		if math.abs(touch.lane - prevLane) > within then
+			continue
+		end
+
+		if touch.kind == "slam" then
+			if slamCount < Config.SlamMaxPerFlight and not sim.rolling then
+				slamCount += 1
+				slamLanePending = touch.lane
+				Track.slam(sim)
+				prevLane, prevTime = touch.lane, touch.t
+			end
+			continue
+		end
+
+		local chunk = chunkFor(Track.chunkOf(touch.id))
+		local distWindow = math.max(80, sim.vx * Config.ClaimDistanceSlackSeconds)
+		if touch.kind == "pickup" then
+			local entry = Track.pickupById(chunk, touch.id)
+			if
+				entry
+				and not claimed[touch.id]
+				and math.abs(sim.dist - entry.distance) <= distWindow
+				and math.abs(sim.h - entry.height) <= Config.ClaimHeightWindow
+				and math.abs(entry.lane - touch.lane) <= Config.LaneTouchWidth + 1
+			then
+				claimed[touch.id] = true
+				subtotal += entry.value
+				pickupCount += 1
+				prevLane, prevTime = touch.lane, touch.t
+			end
+		elseif touch.kind == "boot" then
+			local entry = Track.bootById(chunk, touch.id)
+			if
+				entry
+				and not claimed[touch.id]
+				and math.abs(sim.dist - entry.distance) <= distWindow
+				and math.abs(sim.h - entry.height) <= Config.ClaimHeightWindow
+				and math.abs(entry.lane - touch.lane) <= Config.LaneTouchWidth + 1
+			then
+				claimed[touch.id] = true
+				subtotal += entry.cash
+				bootCount += 1
+				-- The relaunch is REAL here too: this is where a claimed
+				-- boot actually buys its extra distance.
+				Track.boot(sim)
+				prevLane, prevTime = touch.lane, touch.t
+			end
+		elseif touch.kind == "bomb" then
+			local entry = Track.bombById(chunk, touch.id)
+			if
+				entry
+				and not claimed[touch.id]
+				and math.abs(sim.dist - entry.distance) <= distWindow
+				and math.abs(sim.h - entry.height) <= Config.ClaimHeightWindow
+			then
+				claimed[touch.id] = true
+				bombCount += 1
+				Track.bomb(sim)
+				prevLane, prevTime = touch.lane, touch.t
+			end
+		end
+	end
+
+	-- Run the flight out to wherever the surviving events actually carry it.
+	advanceTo(shot.phys.maxSeconds)
+	local finalDistance = sim.dist
+
+	-- The magnet sweep: every centre-line pickup along the whole settled
+	-- distance, paid without needing a claim — the client vacuumed them
+	-- visually as it crossed, and this is the copy that pays.
+	for index = 0, Track.chunkAt(finalDistance) do
+		for _, entry in chunkFor(index).pickups do
+			if not claimed[entry.id] and entry.distance <= finalDistance and math.abs(entry.lane) <= shot.magnet then
+				claimed[entry.id] = true
+				subtotal += entry.value
+				pickupCount += 1
+			end
+		end
+	end
+
+	-- Each slam's burst: the untaken cash near its impact point.
+	local slamRadius = math.max(finalDistance * Config.SlamRadiusFraction, Config.SlamRadiusMin)
+	for _, centre in burstCentres do
+		local fromChunk = math.max(Track.chunkAt(centre.distance - slamRadius), 0)
+		for index = fromChunk, Track.chunkAt(centre.distance + slamRadius) do
+			for _, entry in chunkFor(index).pickups do
+				if
+					not claimed[entry.id]
+					and math.abs(entry.distance - centre.distance) <= slamRadius
+					and math.abs(entry.lane - centre.lane) <= Config.SlamLaneRadius
+				then
+					claimed[entry.id] = true
+					subtotal += entry.value
+					pickupCount += 1
+				end
+			end
+		end
+	end
+
+	-- Paid through the full cash stack, recomputed fresh; bombs cut the
+	-- whole track income multiplicatively per hit.
+	local world = worldFor(data)
+	local collection = collectionBonus(data)
+	local stack = squishyBonuses(data).coins
+		* abilityModsFor(data).cashMult
+		* collection
+		* rebirthMultiplier(data, Config.RebirthCoinBonus)
+		* world.multiplier
+	local cash = math.floor(subtotal * stack * (1 - Config.BombClaimPenalty) ^ bombCount)
+
+	-- Distance milestones pay their Cash bounty the first time only, and
+	-- OUTSIDE the stack — achievements, not track income.
+	local milestones = newMilestones(data, finalDistance)
+	local milestoneCash = 0
+	for _, milestone in milestones do
+		milestoneCash += milestone.cash
+	end
+
+	-- The two halves of the game still touch: distance nudges the steamer
+	-- bar along, at a rate small enough that nobody launches to fill it.
+	local steamerBonus = math.floor(finalDistance * Config.LaunchClicksPerStud + 0.5)
+	addProgress(data, steamerBonus)
+
+	local record = finalDistance > data.bestDistance
+	if record then
+		data.bestDistance = finalDistance
+	end
+
+	data.coins += cash + milestoneCash
+
+	-- The whole verdict in one payload: the summary card is built from this.
+	FlightBonus:FireClient(player, {
+		serial = shot.serial,
+		distance = finalDistance,
+		cash = cash,
+		milestoneCash = milestoneCash,
+		milestones = milestones,
+		steamerBonus = steamerBonus,
+		best = data.bestDistance,
+		record = record,
+		pickups = pickupCount,
+		boots = bootCount,
+		bombs = bombCount,
+		slams = slamCount,
+		bounces = sim.bounced,
+		rebirths = data.rebirths,
+		coinMultiplier = stack,
+		collectionBonus = collection,
+		worldMultiplier = world.multiplier,
+	})
+
+	-- And the lobby feed hears about it, now that the distance exists.
+	LaunchBroadcast:FireAllClients({
+		name = player.DisplayName,
+		userId = player.UserId,
+		distance = finalDistance,
+		clickerId = data.clickerId,
+	})
+
+	sync(player)
 end
 
 LaunchShot.OnServerEvent:Connect(function(player, power, angle)
@@ -1130,145 +1177,80 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 	end
 	data.lastLaunch = now
 
+	-- A previous shot that never claimed (a crash, a mid-flight rejoin)
+	-- settles its no-event baseline before this one takes the record slot.
+	if settleFlight then
+		settleFlight(player, data, {})
+	end
+
 	-- Charge maps onto a fraction of full power, so even a badly timed tap
 	-- still flies — it just doesn't fly far. The equipped squishy's ability
-	-- shapes the whole shot from here: its physics ride into the simulation,
-	-- its cash and magnet sides join the payout maths below.
+	-- shapes the whole shot from here: its physics ride into the live sim,
+	-- its cash and magnet sides join the settlement maths above.
 	local mods = abilityModsFor(data)
 	local charged = launchPowerFor(data)
 		* (Config.LaunchMinPowerFraction + (1 - Config.LaunchMinPowerFraction) * power)
 		* mods.powerMult
-	local flight = simulateFlight(charged, angle, mods)
-	local distance = flight.distance
 
-	-- Sweep up everything the path passed close enough to. The magnet is the
-	-- other half of what stars and summons buy: a built-up account both flies
-	-- further AND hoovers up more on the way past.
-	local magnet = effectiveMagnet(data) + mods.magnetBonus
-	local bonuses = squishyBonuses(data)
-	-- The full cash stack: team bonus, main-squishy ability, the collection
-	-- bonus (every distinct squishy ever discovered), rebirths and the
-	-- world. Milestone bounties stay OUTSIDE the stack — they are one-off
-	-- achievements, not track income.
-	local world = worldFor(data)
-	local collection = collectionBonus(data)
-	local cashMultiplier = bonuses.coins
-		* mods.cashMult
-		* collection
-		* rebirthMultiplier(data, Config.RebirthCoinBonus)
-		* world.multiplier
+	-- THE ECONOMY ORACLE. The closed-form simulator no longer decides the
+	-- flight — nothing does, until it lands — but it still prices what this
+	-- power level is EXPECTED to cover, and the calibration turns that into
+	-- forward momentum. Every upgrade, star, rebirth and world multiplier
+	-- keeps exactly the value it had under the old arcs.
+	local expected = simulateFlight(charged, angle, mods).distance
+	local phys, vy = flightPhysicsFor(mods, angle)
+	local vx = Track.calibrate(expected, vy, phys)
 
-	-- The passive sweep only reaches the CENTRE LINE now: the magnet gates
-	-- on lane as well as height, and the off-lane cash belongs to steering —
-	-- claimed after the replay, validated in the handler below.
-	local collected: { number } = {}
-	local taken: { [number]: boolean } = {}
-	local earnedCoins = 0
-	for index, pickup in data.launchField do
-		if
-			pickup.distance <= distance
-			and math.abs(heightAt(flight, pickup.distance) - pickup.height) <= magnet
-			and math.abs(pickup.lane or 0) <= magnet
-		then
-			table.insert(collected, index)
-			taken[index] = true
-			earnedCoins += pickup.value * cashMultiplier
-		end
-	end
+	-- The whole track in one number: both sides grow it from this seed.
+	local seed = rng:NextInteger(1, 2 ^ 30)
+	local magnet = magnetFor(data) + mods.magnetBonus
 
-	earnedCoins = math.floor(earnedCoins)
-
-	-- Distance milestones pay their Cash bounty the first time only.
-	local milestones = newMilestones(data, distance)
-	local milestoneCash = 0
-	for _, milestone in milestones do
-		milestoneCash += milestone.cash
-	end
-
-	data.coins += earnedCoins + milestoneCash
-
-	-- The two halves of the game still touch: distance nudges the steamer bar
-	-- along too, at a rate small enough that nobody launches to fill it.
-	local steamerBonus = math.floor(distance * Config.LaunchClicksPerStud + 0.5)
-	addProgress(data, steamerBonus)
-
-	local record = distance > data.bestDistance
-	if record then
-		data.bestDistance = distance
-	end
-
-	-- Snapshot the shot for the mid-air claim: the live field regenerates a
-	-- few lines down, but the claim settles against what was actually flown.
-	-- The window covers the client's compressed replay plus honest lag.
 	data.shotSerial += 1
 	data.lastShot = {
 		serial = data.shotSerial,
 		at = now,
-		window = math.clamp(flight.seconds * 0.25, 2.4, 8) + 8,
-		flight = flight,
-		field = data.launchField,
-		boots = data.launchBoots,
-		bombs = data.launchBombs,
-		taken = taken,
+		window = phys.maxSeconds + 20,
+		seed = seed,
+		vx = vx,
+		vy = vy,
+		phys = phys,
+		magnet = magnet,
 		claimed = false,
 	}
 
-	-- The client animates THIS flight — the shape of every hop, which pickups
-	-- were taken and what it all paid. It gets no say in any of it.
+	-- The milestones this player has NOT yet earned, so the client can pop
+	-- the sign at the moment of crossing without guessing which are new.
+	local unearned = {}
+	for _, milestone in Config.DistanceMilestones do
+		if not data.milestones[milestone.name] then
+			table.insert(unearned, { name = milestone.name, at = milestone.at, cash = milestone.cash })
+		end
+	end
+
+	-- The client flies THIS: momentum, physics, seed. No distance — there
+	-- isn't one yet. What it earns arrives in FlightBonus at settlement.
 	LaunchResult:FireClient(player, {
 		serial = data.shotSerial,
-		angle = angle,
-		distance = distance,
-		arcs = flight.arcs,
-		peakHeight = flight.peakHeight,
-		launchSpeed = flight.launchSpeed,
-		seconds = flight.seconds,
-		bounces = #flight.arcs - 1,
-		collected = collected,
-		coins = earnedCoins,
-		milestoneCash = milestoneCash,
-		milestones = milestones,
-		steamerBonus = steamerBonus,
-		best = data.bestDistance,
-		record = record,
-		-- Shown as the summary's multiplier breakdown, so the player can see
-		-- what each part of their account is actually contributing.
-		rebirths = data.rebirths,
-		coinMultiplier = cashMultiplier,
-		collectionBonus = collection,
-		worldMultiplier = world.multiplier,
+		seed = seed,
+		vx = vx,
+		vy = vy,
+		gravity = phys.gravity,
+		restitution = phys.restitution,
+		bounceFriction = phys.bounceFriction,
+		minBounceSpeed = phys.minBounceSpeed,
+		rollSeconds = phys.rollSeconds,
+		endSpeed = phys.endSpeed,
+		maxSeconds = phys.maxSeconds,
+		expected = expected,
+		magnet = magnet,
+		milestones = unearned,
 	})
-
-	-- Everyone in the lobby watches the shot fly. Deliberately carries the
-	-- SHAPE of the flight and a name and nothing else: what a launch earned is
-	-- the launcher's business, and broadcasting balances to the whole server
-	-- would be handing every client a list of who is worth targeting.
-	LaunchBroadcast:FireAllClients({
-		name = player.DisplayName,
-		userId = player.UserId,
-		distance = distance,
-		arcs = flight.arcs,
-		seconds = flight.seconds,
-		-- So the ghost is drawn as the squishy they actually launched.
-		clickerId = data.clickerId,
-	})
-
-	-- A fresh field for next time, so the angle that worked once isn't simply
-	-- the answer forever.
-	data.launchField = makeLaunchField(data)
-	relayField(player, data)
-	sync(player)
 end)
 
--- ---------- settling the mid-air game ----------
--- The replay has landed and the client reports what its steering reached:
--- off-lane pickups, boost boots, where the slams hit, which bombs connected.
--- Nothing is taken on faith. The claim must quote the shot's serial and
--- arrive inside its window, and every touch must sit inside the lane, near
--- the arc's height, and be REACHABLE — the lateral gap between consecutive
--- touches can never beat the steering speed times the flight time between
--- them. What fails the physics is skipped, never punished; what passes is
--- paid through the same cash stack as the fire-time sweep.
+-- ---------- the claim ----------
+-- The client's sim has landed and this is its event log. Everything hard
+-- lives in settleFlight above; this is just the doorman — right serial,
+-- one claim per shot, a table for a payload.
 ClaimFlight.OnServerEvent:Connect(function(player, serial, events)
 	local data = dataByPlayer[player]
 	if not data or overRate(data, "claim", 4) then
@@ -1281,154 +1263,11 @@ ClaimFlight.OnServerEvent:Connect(function(player, serial, events)
 	if typeof(serial) ~= "number" or serial ~= shot.serial then
 		return
 	end
-	-- One settlement per shot, even if this one turns out empty.
-	shot.claimed = true
-	if os.clock() - shot.at > shot.window then
+	if typeof(events) ~= "table" then
 		return
 	end
-	if typeof(events) ~= "table" or #events > 64 then
-		return
-	end
-
-	-- Sanitize the hostile payload into typed touches; anything malformed
-	-- simply sheds.
-	local touches: { { kind: string, index: number, distance: number, lane: number } } = {}
-	local bombHits: { [number]: boolean } = {}
-	local slamCount = 0
-	for _, event in events do
-		if typeof(event) ~= "table" or typeof((event :: any).kind) ~= "string" then
-			continue
-		end
-		local kind = (event :: any).kind
-		if kind == "pickup" or kind == "boot" then
-			local index = (event :: any).index
-			if typeof(index) ~= "number" then
-				continue
-			end
-			local entry: any = if kind == "pickup" then shot.field[index] else shot.boots[index]
-			if entry then
-				table.insert(touches, { kind = kind, index = index, distance = entry.distance, lane = entry.lane })
-			end
-		elseif kind == "slam" then
-			local d, lane = (event :: any).distance, (event :: any).lane
-			if
-				typeof(d) == "number"
-				and typeof(lane) == "number"
-				and d == d
-				and lane == lane
-				and slamCount < Config.SlamMaxPerFlight
-			then
-				slamCount += 1
-				table.insert(touches, {
-					kind = "slam",
-					index = slamCount,
-					distance = math.clamp(d, 0, shot.flight.distance),
-					lane = math.clamp(lane, -Config.SteerHalfWidth, Config.SteerHalfWidth),
-				})
-			end
-		elseif kind == "bomb" then
-			local index = (event :: any).index
-			if typeof(index) == "number" and shot.bombs[index] then
-				bombHits[index] = true
-			end
-		end
-	end
-
-	-- The reachability chain, in track order.
-	table.sort(touches, function(a, b)
-		return a.distance < b.distance
-	end)
-
-	local prevLane, prevTime = 0, 0
-	local claimedPickups: { [number]: boolean } = {}
-	local claimedBoots: { [number]: boolean } = {}
-	local acceptedSlams: { { distance: number, lane: number } } = {}
-	local subtotal = 0
-	local pickupCount, bootCount = 0, 0
-
-	for _, touch in touches do
-		if touch.distance > shot.flight.distance + 1 then
-			continue -- past where the shot actually stopped
-		end
-		if math.abs(touch.lane) > Config.SteerHalfWidth + 0.5 then
-			continue
-		end
-		local t = timeAtDistance(shot.flight, touch.distance)
-		local within = Config.SteerSpeed * math.max(t - prevTime, 0) + Config.ClaimLaneSlack
-		if math.abs(touch.lane - prevLane) > within then
-			continue
-		end
-		prevLane, prevTime = touch.lane, t
-
-		if touch.kind == "pickup" then
-			local entry = shot.field[touch.index]
-			if
-				entry
-				and not shot.taken[touch.index]
-				and not claimedPickups[touch.index]
-				and math.abs(heightAt(shot.flight, entry.distance) - entry.height) <= Config.ClaimHeightWindow
-			then
-				claimedPickups[touch.index] = true
-				subtotal += entry.value
-				pickupCount += 1
-			end
-		elseif touch.kind == "boot" then
-			local entry = shot.boots[touch.index]
-			if entry and not claimedBoots[touch.index] then
-				claimedBoots[touch.index] = true
-				subtotal += entry.cash
-				bootCount += 1
-			end
-		else
-			table.insert(acceptedSlams, { distance = touch.distance, lane = touch.lane })
-		end
-	end
-
-	-- Each accepted slam bursts the untaken cash near its impact point.
-	local slamRadius =
-		math.max(shot.flight.distance * Config.SlamRadiusFraction, Config.SlamRadiusMin)
-	for _, slam in acceptedSlams do
-		for index, entry in shot.field do
-			if
-				not shot.taken[index]
-				and not claimedPickups[index]
-				and math.abs(entry.distance - slam.distance) <= slamRadius
-				and math.abs(entry.lane - slam.lane) <= Config.SlamLaneRadius
-			then
-				claimedPickups[index] = true
-				subtotal += entry.value
-				pickupCount += 1
-			end
-		end
-	end
-
-	-- Bombs cut the whole bonus, multiplicatively per hit.
-	local bombCount = 0
-	for _ in bombHits do
-		bombCount += 1
-	end
-
-	-- Paid through the SAME stack as the fire-time sweep, recomputed fresh.
-	local world = worldFor(data)
-	local stack = squishyBonuses(data).coins
-		* abilityModsFor(data).cashMult
-		* collectionBonus(data)
-		* rebirthMultiplier(data, Config.RebirthCoinBonus)
-		* world.multiplier
-	local total = math.floor(subtotal * stack * (1 - Config.BombClaimPenalty) ^ bombCount)
-
-	if total > 0 then
-		data.coins += total
-	end
-	FlightBonus:FireClient(player, {
-		cash = total,
-		pickups = pickupCount,
-		boots = bootCount,
-		bombs = bombCount,
-		slams = #acceptedSlams,
-	})
-	if total > 0 then
-		sync(player)
+	if settleFlight then
+		settleFlight(player, data, events)
 	end
 end)
 
@@ -1452,10 +1291,6 @@ BuyPower.OnServerEvent:Connect(function(player)
 
 	data.coins -= cost
 	data.powerLevel += 1
-
-	-- Reach just grew, so the track's pickups belong further out.
-	data.launchField = makeLaunchField(data)
-	relayField(player, data)
 	sync(player)
 end)
 
@@ -1481,8 +1316,6 @@ DoRebirth.OnServerEvent:Connect(function(player)
 	data.bestDistance = 0
 	data.worldId = Config.Worlds[1].id
 
-	data.launchField = makeLaunchField(data)
-	relayField(player, data)
 	sync(player)
 	print(("[SquishyClicker] %s rebirthed to %d"):format(player.Name, data.rebirths))
 end)
@@ -1550,10 +1383,6 @@ SetActive.OnServerEvent:Connect(function(player, squishyId, shouldActivate)
 		table.remove(data.active, at)
 	end
 
-	-- Summoning changes launch power, which changes reach, which is what the
-	-- pickup field is laid out against.
-	data.launchField = makeLaunchField(data)
-	relayField(player, data)
 	sync(player)
 end)
 
@@ -1720,11 +1549,6 @@ if DebugAction then
 		else
 			return
 		end
-
-		-- Stars decide how far the field is spread, and half these actions move
-		-- them, so the range is relaid every time rather than left stale.
-		data.launchField = makeLaunchField(data)
-		relayField(player, data)
 
 		updateLeaderstats(player)
 		sync(player)

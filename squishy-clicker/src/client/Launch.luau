@@ -67,7 +67,6 @@ function Launch.mount(gui: GuiObject, scene: any)
 	local shotRemote = remotes:WaitForChild("LaunchShot") :: RemoteEvent
 	local resultRemote = remotes:WaitForChild("LaunchResult") :: RemoteEvent
 	local bonusRemote = remotes:WaitForChild("FlightBonus") :: RemoteEvent
-	local fieldRemote = remotes:WaitForChild("LaunchField") :: RemoteEvent
 
 	local stage: Stage = "idle"
 	local readyIn = 0 -- seconds left on the cooldown, straight from the server
@@ -81,22 +80,19 @@ function Launch.mount(gui: GuiObject, scene: any)
 	local needlePhase = 0
 	local tapsLocked: { number } = {}
 
-	-- The server lays out the NEXT shot's pickups the instant it scores this
-	-- one, which lands here while the squishy is still in the air. Applying it
-	-- there and then would teleport the track out from under a flight that is
-	-- still collecting from it, so it waits its turn.
-	local pendingField: { any }? = nil
+	-- The landing watch. A living flight promises no duration, so the
+	-- summary cannot run on a timer: the RenderStepped loop below watches
+	-- Flight.flying() flip false, arms this deadline, and the settlement
+	-- (FlightBonus) either arrives inside it and paints the summary, or the
+	-- screen is handed back with an apology.
+	local bonusDeadline: number? = nil
 
-	fieldRemote.OnClientEvent:Connect(function(field)
-		if typeof(field) ~= "table" then
-			return
-		end
-		if stage == "flying" or stage == "summary" then
-			pendingField = field
-		else
-			Flight.setField(field)
-		end
-	end)
+	-- The serial of the shot currently on screen, -1 while none is. The
+	-- settlement handler only answers for THIS shot: firing while an old
+	-- claim went missing makes the server settle the old shot first, and
+	-- without the serial gate that stale verdict would hijack the new
+	-- flight's summary mid-air.
+	local currentSerial = -1
 
 	-- ---------- the record banner ----------
 	local bestBanner = UI.make("Frame", {
@@ -483,18 +479,8 @@ function Launch.mount(gui: GuiObject, scene: any)
 		end
 	end
 
-	local function applyPendingField()
-		local waiting = pendingField
-		if waiting then
-			pendingField = nil
-			Flight.setField(waiting)
-		end
-	end
-
 	local function closeAiming()
 		setStage("idle")
-		-- Now that nothing is in the air, the next shot's track can go down.
-		applyPendingField()
 	end
 
 	-- A refused or lost shot. Hands the screen straight back rather than
@@ -555,6 +541,8 @@ function Launch.mount(gui: GuiObject, scene: any)
 		setStage("flying")
 		distanceLabel.Text = "0"
 		vitalsLabel.Text = ""
+		bonusDeadline = nil
+		currentSerial = -1 -- unknown until the server's answer names it
 		shotRemote:FireServer(power, Config.LaunchFixedAngle)
 
 		-- WATCHDOG. Entering "flying" hides the controls and hands the screen
@@ -642,6 +630,19 @@ function Launch.mount(gui: GuiObject, scene: any)
 				Format.abbreviate(math.floor(Flight.speed())),
 				bounces > 0 and ("   ↻ %d bounce%s"):format(bounces, bounces == 1 and "" or "s") or ""
 			)
+			-- The landing watch: the flight is over when the sim says so —
+			-- no timer knew in advance. From that moment the settlement has
+			-- this long to arrive with the summary's numbers. (Before the
+			-- server's launch answer, Flight isn't flying either; the fire
+			-- watchdog owns that window, and the result handler re-arms
+			-- this one.)
+			if not Flight.flying() and bonusDeadline == nil then
+				bonusDeadline = os.clock() + 10
+			end
+			if bonusDeadline and os.clock() > bonusDeadline then
+				bonusDeadline = nil
+				abandonShot("The landing went missing — try another shot.")
+			end
 			return
 		end
 		if stage ~= "aim" then
@@ -664,41 +665,89 @@ function Launch.mount(gui: GuiObject, scene: any)
 		precisionLabel.TextColor3 = Color3.fromHSV(precision * 0.33, 0.72, 1)
 	end)
 
-	-- ---------- the mid-air claim's settlement ----------
-	-- Arrives around the moment the replay lands — usually just BEFORE the
-	-- summary card, which is why the value is held rather than only drawn:
-	-- whichever of the two shows up second paints the row.
-	local latestBonus: any = nil
-	local function paintSkillRow()
-		local bonus = latestBonus
-		local card = skillRow.Parent :: Frame
-		if bonus and (bonus.cash or 0) > 0 then
-			skillRow.Text = ("🎯  +%s Mid-Air Bonus!"):format(Format.abbreviate(bonus.cash))
-			card.Visible = true
-		else
-			card.Visible = false
-		end
-	end
-
+	-- ---------- the settlement, which IS the summary now ----------
+	-- The whole payout arrives here after the flight lands and the server
+	-- re-runs it: distance, cash, milestones, the record. Nothing was known
+	-- at fire time — a living flight has no numbers until it stops.
 	bonusRemote.OnClientEvent:Connect(function(bonus)
 		if typeof(bonus) ~= "table" then
 			return
 		end
-		latestBonus = bonus
-		paintSkillRow()
-		if (bonus.cash or 0) > 0 then
-			-- The steered cash flies home just like the fire-time cash did.
-			Cannon.collectCash(bonus.cash)
+		if stage ~= "flying" then
+			return
 		end
+		if typeof(bonus.serial) ~= "number" or bonus.serial ~= currentSerial then
+			return -- an old shot's late settlement; not this flight's verdict
+		end
+		bonusDeadline = nil
+		shotToken += 1 -- the shot has fully answered; no watchdog may reclaim it
+
+		best = math.max(bonus.best or 0, best)
+		bestLabel.Text = ("🏆 Best  %s Studs"):format(Format.abbreviate(math.floor(best)))
+
+		summary.title.Text = bonus.record and "NEW BEST!" or "Landed!"
+		summaryDistance.Text = ("%s Studs"):format(Format.abbreviate(math.floor(bonus.distance or 0)))
+
+		-- The label lives on a card; hiding the label alone leaves an empty
+		-- coloured bar, so the CARD is what toggles.
+		local cash = bonus.cash or 0
+		coinRow.Text = ("💵  +%s Cash"):format(Format.abbreviate(cash));
+		(coinRow.Parent :: Frame).Visible = cash > 0
+
+		local bounty = bonus.milestoneCash or 0
+		bountyRow.Text = ("🏁  +%s Bounty!"):format(Format.abbreviate(bounty));
+		(bountyRow.Parent :: Frame).Visible = bounty > 0
+
+		-- What the steering actually did, in counts a kid can read.
+		local pickups = bonus.pickups or 0
+		local boots = bonus.boots or 0
+		local bombs = bonus.bombs or 0
+		skillRow.Text = ("🎯  %d cash grab%s · %d boost%s%s"):format(
+			pickups,
+			pickups == 1 and "" or "s",
+			boots,
+			boots == 1 and "" or "s",
+			bombs > 0 and ("  · %d 💣"):format(bombs) or ""
+		);
+		(skillRow.Parent :: Frame).Visible = (pickups + boots + bombs) > 0
+
+		-- The multiplier breakdown: what each part of the account actually
+		-- contributed, so an upgrade's effect is visible rather than felt.
+		local lines = {
+			("%d bounce%s   ·   rebirth ×%d"):format(
+				bonus.bounces or 0,
+				(bonus.bounces or 0) == 1 and "" or "s",
+				bonus.rebirths or 0
+			),
+			("cash ×%.2f   ·   collection ×%.2f"):format(bonus.coinMultiplier or 1, bonus.collectionBonus or 1),
+		}
+		local milestones = bonus.milestones or {}
+		if #milestones > 0 then
+			local names = {}
+			for _, milestone in milestones do
+				table.insert(names, milestone.name)
+			end
+			table.insert(lines, ("🏁 passed %s for the first time"):format(table.concat(names, ", ")))
+		end
+		breakdown.Text = table.concat(lines, "\n")
+
+		setStage("summary")
+		summary.root.BackgroundTransparency = 1
+		TweenService:Create(summary.root, TweenInfo.new(0.22), { BackgroundTransparency = 0 }):Play()
+
+		-- The flight's earnings fly home: bills stream from the summary
+		-- into the wallet, where the number actually changes.
+		Cannon.collectCash(cash + bounty)
 	end)
 
-	-- ---------- the server's verdict ----------
+	-- ---------- the server's launch answer ----------
+	-- Momentum, physics and a track seed — no distance, no payout. The
+	-- flight goes where the player keeps it going; the settlement above is
+	-- where the numbers come back.
 	resultRemote.OnClientEvent:Connect(function(result)
 		if typeof(result) ~= "table" then
 			return
 		end
-		-- A fresh shot voids the previous shot's settled bonus display.
-		latestBonus = nil
 
 		-- A refusal. The server tells us why rather than dropping the request,
 		-- so the screen comes straight back with a reason on it.
@@ -707,64 +756,15 @@ function Launch.mount(gui: GuiObject, scene: any)
 			return
 		end
 
-		if typeof(result.arcs) ~= "table" then
+		if typeof(result.seed) ~= "number" or typeof(result.vx) ~= "number" then
 			return
 		end
-		-- A real verdict arrived: disarm the watchdog armed when we fired.
+		-- A real answer arrived: disarm the fire watchdog, hand the landing
+		-- watch a clean slate, and fly.
 		shotToken += 1
-
-		-- The stage says how long its animation runs, so the summary can wait
-		-- for the landing exactly rather than on a guessed timer. Announcing
-		-- the distance mid-flight would give the ending away.
-		local flightSeconds = Flight.play(result)
-
-		task.delay(flightSeconds + 0.4, function()
-			if stage ~= "flying" then
-				return
-			end
-			best = math.max(result.best or 0, best)
-			bestLabel.Text = ("🏆 Best  %s Studs"):format(Format.abbreviate(math.floor(best)))
-
-			summary.title.Text = result.record and "NEW BEST!" or "Landed!"
-			summaryDistance.Text = ("%s Studs"):format(Format.abbreviate(math.floor(result.distance or 0)))
-
-			coinRow.Text = ("💵  +%s Cash"):format(Format.abbreviate(result.coins or 0))
-			-- The label lives on a card; hiding the label alone leaves an
-			-- empty orange bar, so the CARD is what toggles.
-			local bounty = result.milestoneCash or 0
-			bountyRow.Text = ("🏁  +%s Bounty!"):format(Format.abbreviate(bounty));
-			(bountyRow.Parent :: Frame).Visible = bounty > 0
-			-- The claim may already have settled while the shot flew.
-			paintSkillRow()
-
-			-- The multiplier breakdown: what each part of the account actually
-			-- contributed, so an upgrade's effect is visible rather than felt.
-			local lines = {
-				("%d bounce%s   ·   rebirth ×%d"):format(
-					result.bounces or 0,
-					(result.bounces or 0) == 1 and "" or "s",
-					result.rebirths or 0
-				),
-				("cash ×%.2f   ·   collection ×%.2f"):format(result.coinMultiplier or 1, result.collectionBonus or 1),
-			}
-			local milestones = result.milestones or {}
-			if #milestones > 0 then
-				local names = {}
-				for _, milestone in milestones do
-					table.insert(names, milestone.name)
-				end
-				table.insert(lines, ("🏁 passed %s for the first time"):format(table.concat(names, ", ")))
-			end
-			breakdown.Text = table.concat(lines, "\n")
-
-			setStage("summary")
-			summary.root.BackgroundTransparency = 1
-			TweenService:Create(summary.root, TweenInfo.new(0.22), { BackgroundTransparency = 0 }):Play()
-
-			-- The turn's earnings fly home: bills stream from the summary
-			-- into the wallet, where the number actually changes.
-			Cannon.collectCash((result.coins or 0) + (result.milestoneCash or 0))
-		end)
+		bonusDeadline = nil
+		currentSerial = if typeof(result.serial) == "number" then result.serial else -1
+		Flight.play(result)
 	end)
 
 	-- ---------- cooldown and record, straight from the server ----------
