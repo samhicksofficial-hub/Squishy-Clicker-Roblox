@@ -61,10 +61,12 @@ local GROUND_Y = 0
 -- pass ended up with a moat of void between the plain's real edge and the
 -- mesas — the request said 1350 and the engine built 1024.
 local PLAIN_RADIUS = 1020
--- Beyond the furthest band, not on top of it: the 1M ring sits at 1000, and a
--- cliff face rising out of it would read as the end of the range rather than
--- as the horizon past it.
-local MESA_RADIUS = 1160
+-- Beyond the furthest band, not on top of it: the 1M ring sits at 2600 now
+-- (the range mapping went geometric and much further out), and a cliff face
+-- rising out of it would read as the end of the range rather than as the
+-- horizon past it. The ground between the disc's clamp-limited edge and
+-- here is carried by the skirt ring below.
+local MESA_RADIUS = 2760
 local PLATEAU_DROP = 22 -- how far the base sits above the plain
 
 local Y = {
@@ -220,8 +222,10 @@ local function buildGround()
 	plain.Name = "Grass"
 	studded(decor(plain))
 
-	local SKIRT_OUTER = 1360 -- past the last mesa terrace
-	local SKIRT_SEGMENTS = 72
+	-- Past the last mesa terrace. The radial span (≈1985) sits just under
+	-- the 2048 Part clamp — one ring of segments still carries it all.
+	local SKIRT_OUTER = 3000
+	local SKIRT_SEGMENTS = 96
 	local skirtMid = (PLAIN_RADIUS - 5 + SKIRT_OUTER) * 0.5
 	local skirtWidth = 2 * math.pi * skirtMid / SKIRT_SEGMENTS + 6
 	for index = 1, SKIRT_SEGMENTS do
@@ -1087,7 +1091,7 @@ local function buildRangeScenery()
 
 	for slot = 1, Island.PLOT_COUNT do
 		local bisector = (slot - 0.5) / Island.PLOT_COUNT * math.pi * 2
-		for _, radius in { 270, 360, 470, 600, 760, 930 } do
+		for _, radius in { 270, 360, 470, 600, 760, 930, 1200, 1550, 1950, 2400 } do
 			local angle = bisector + (rockRng:NextNumber() - 0.5) * 0.1
 			local spread = radius + (rockRng:NextNumber() - 0.5) * 40
 			-- Bigger further out, or the horizon formations vanish to specks.
@@ -1155,15 +1159,21 @@ local function buildBarriers()
 		local angle = (slot - 0.5) / Island.PLOT_COUNT * math.pi * 2
 		local yaw = CFrame.Angles(0, -angle, 0)
 
+		-- Two segments per divider: the full run to the far band is past the
+		-- 2048-stud Part clamp now, and a clamped wall would quietly stop
+		-- halfway down the range.
 		local rangeFrom, rangeTo = ISLAND_RADIUS + 4, Config.RangeFarRadius
 		local rangeMid = (rangeFrom + rangeTo) * 0.5
-		local lane = barrierPart(
-			Vector3.new(rangeTo - rangeFrom, 30, 1.5),
-			CFrame.new(Vector3.new(math.cos(angle) * rangeMid, Y.plain + 15, math.sin(angle) * rangeMid)) * yaw,
-			barriers
-		)
-		lane.CanCollide = false
-		lane.Transparency = 0.7
+		for _, span in { { rangeFrom, rangeMid }, { rangeMid, rangeTo } } do
+			local segMid = (span[1] + span[2]) * 0.5
+			local lane = barrierPart(
+				Vector3.new(span[2] - span[1], 30, 1.5),
+				CFrame.new(Vector3.new(math.cos(angle) * segMid, Y.plain + 15, math.sin(angle) * segMid)) * yaw,
+				barriers
+			)
+			lane.CanCollide = false
+			lane.Transparency = 0.7
+		end
 	end
 end
 

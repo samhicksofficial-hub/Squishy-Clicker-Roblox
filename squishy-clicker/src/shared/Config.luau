@@ -312,7 +312,7 @@ local Config = {
 	-- upgrade moves you a visible step, which is exactly the feedback a
 	-- simulator needs.
 	RangeNearRadius = 300, -- world studs from the island centre to the first band
-	RangeFarRadius = 1000, -- ...and to the last one
+	RangeFarRadius = 2600, -- ...and to the last one, out past the far desert
 	RangeNearStuds = 100, -- the game distance the first band means
 	RangeFarStuds = 1000000, -- ...and the last
 
@@ -515,7 +515,14 @@ function Config.rangeRadius(studs: number): number
 
 	local span = math.log(far / near, 10)
 	local along = math.clamp(math.log(studs / near, 10) / span, 0, 1)
-	return Config.RangeNearRadius + along * (Config.RangeFarRadius - Config.RangeNearRadius)
+	-- GEOMETRIC in radius, not linear: every decade of distance multiplies
+	-- the radius by the same factor (~1.7×), instead of adding the same
+	-- slice. Linear-over-log front-loaded the whole rainbow — a 10K shot
+	-- (one percent of the way to 1M) already landed 65% of the way out, and
+	-- everything after crawled. Geometric starts shots close to the island
+	-- and keeps every order of magnitude a visible stride: 1K lands at 515,
+	-- 10K at 883, 100K at 1515, 1M at the full 2600.
+	return Config.RangeNearRadius * (Config.RangeFarRadius / Config.RangeNearRadius) ^ along
 end
 
 return Config
