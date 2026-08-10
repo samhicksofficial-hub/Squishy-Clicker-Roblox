@@ -26,10 +26,12 @@ local Models = {}
 
 -- ---------- glitter ----------
 -- The glittery squishies get a real sparkly surface rather than flat plastic.
--- Roblox can't be handed a local image, so upload assets/glitter/glitter.png
--- (Asset Manager → Import) and paste its id here. Leave it empty and the
--- glittery ones simply wear their colour, no harm done.
-local GLITTER_TEXTURE = ""
+-- This is the NEUTRAL "glitter" sheet on purpose: the variant's colour map
+-- multiplies by each part's own Color, so one pale sheet turns gold, pink or
+-- green to match its wearer. The uploads also include a pre-tinted
+-- "glitter-gold" (109091097025649) — don't use it here, it would muddy
+-- every non-gold squishy — and the raw "glitter-gold-source" (104559770453654).
+local GLITTER_TEXTURE = "rbxassetid://78941774209871"
 -- Roughly one tile across a squishy. Tiling any tighter and the flakes shrink
 -- below a pixel on screen, where they average back into flat grey.
 local GLITTER_STUDS_PER_TILE = 2.5
