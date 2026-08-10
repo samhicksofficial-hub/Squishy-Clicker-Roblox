@@ -45,12 +45,26 @@ local function ensureGlitter(): MaterialVariant?
 	if glitterVariant then
 		return glitterVariant
 	end
-	local variant = Instance.new("MaterialVariant")
-	variant.Name = "SquishyGlitter"
-	variant.BaseMaterial = Enum.Material.Plastic
-	variant.ColorMap = GLITTER_TEXTURE
-	variant.StudsPerTile = GLITTER_STUDS_PER_TILE
-	variant.Parent = MaterialService
+	-- pcall'd, and loudly: this block never ran before the texture id landed
+	-- (the empty-string guard skipped it for the project's whole life), and
+	-- it executes inside the same call chain as the HUD's sync refresh — an
+	-- unhandled throw here would kill every squishy build after it. If the
+	-- engine refuses anything, the glittery ones fall back to plain colour
+	-- and the game carries on.
+	local ok, variant = pcall(function()
+		local made = Instance.new("MaterialVariant")
+		made.Name = "SquishyGlitter"
+		made.BaseMaterial = Enum.Material.Plastic
+		made.ColorMap = GLITTER_TEXTURE
+		made.StudsPerTile = GLITTER_STUDS_PER_TILE
+		made.Parent = MaterialService
+		return made
+	end)
+	if not ok or not variant then
+		warn("[SquishyClicker] Glitter surface failed, using plain colour — " .. tostring(variant))
+		GLITTER_TEXTURE = "" -- don't retry on every build
+		return nil
+	end
 	glitterVariant = variant
 	return variant
 end
