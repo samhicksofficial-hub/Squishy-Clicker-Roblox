@@ -448,6 +448,12 @@ local Config = {
 	-- oldest is recycled, so a busy server can't fill the valley with ghosts.
 	LobbyMaxGhosts = 6,
 
+	-- ===== Sprinting =====
+	-- Hold Shift to run. Client-side, like all character movement; nothing
+	-- on the island is speed-gated, so there is nothing to validate.
+	WalkSpeed = 16,
+	SprintSpeed = 26,
+
 	-- ===== King of the Steamer (the shared minigame) =====
 	-- The round is a race, not a shared bar: whoever clicks the most wins the
 	-- crown — but only if they got over this many clicks. A dead round where

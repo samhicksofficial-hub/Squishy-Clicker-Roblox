@@ -1223,6 +1223,52 @@ do
 	end)
 end
 
+-- ---------- sprint ----------
+-- Hold Shift (either one) to run. The held state survives respawns: a new
+-- character walks in at whatever pace the key currently says, rather than
+-- being stranded at walking speed with Shift still down.
+do
+	local sprinting = false
+
+	local function applySpeed()
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid.WalkSpeed = sprinting and Config.SprintSpeed or Config.WalkSpeed
+		end
+	end
+
+	local function isShift(input: InputObject): boolean
+		return input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift
+	end
+
+	UserInputService.InputBegan:Connect(function(input, processed)
+		if processed then
+			return
+		end
+		if isShift(input) then
+			sprinting = true
+			applySpeed()
+		end
+	end)
+
+	-- No processed guard on the release: whatever swallowed the press, a
+	-- let-go must always end the sprint or the key sticks.
+	UserInputService.InputEnded:Connect(function(input)
+		if isShift(input) then
+			sprinting = false
+			applySpeed()
+		end
+	end)
+
+	player.CharacterAdded:Connect(function(character)
+		local humanoid = character:WaitForChild("Humanoid", 5)
+		if humanoid then
+			applySpeed()
+		end
+	end)
+end
+
 -- ---------- barrier fade ----------
 -- The rim force-field is clear until you walk toward the edge. The server
 -- builds the walls at their "seen" transparency and tags the fading ones;
