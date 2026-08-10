@@ -45,29 +45,14 @@ local GROUND_Y = 0
 -- most of what made the first island shimmer: the plaza, its rim, the spokes
 -- and the ring road all met at roughly the same Y and fought over the pixels.
 -- Gaps of a twentieth of a stud are invisible and settle it completely.
--- ---------- the range ----------
--- The island is a PLATEAU, not an island in water any more, and what
--- surrounds it is the ground the squishies fly over. Standing anywhere on the
--- base you should be able to see the whole expanse and the mesas ringing it,
--- because that view is the pitch: this is how far you are going to throw.
---
--- It is scenery. The flight itself is animated on the per-player stage 500
--- studs above, on a treadmill, because that is what makes an unbounded
--- distance possible at all — a real strip of ground long enough for a
--- six-figure shot would be six figures of studs long. What the plain has to
--- do is sell the SCALE, and for that it only has to be seen.
+-- ---------- the sea ----------
+-- The island is an ISLAND again: flights play in each player's private
+-- corridor (see Flight.luau), so what surrounds the plateau is open water
+-- to the horizon — scenery with one job, which is to be sea.
 -- Half the 2048-stud Part clamp, i.e. the biggest disc Roblox will actually
--- make. Asking for more is silently cut down to this, which is how the first
--- pass ended up with a moat of void between the plain's real edge and the
--- mesas — the request said 1350 and the engine built 1024.
+-- make; the skirt ring in buildGround carries the water on past it.
 local PLAIN_RADIUS = 1020
--- Beyond the furthest band, not on top of it: the 1M ring sits at 2600 now
--- (the range mapping went geometric and much further out), and a cliff face
--- rising out of it would read as the end of the range rather than as the
--- horizon past it. The ground between the disc's clamp-limited edge and
--- here is carried by the skirt ring below.
-local MESA_RADIUS = 2760
-local PLATEAU_DROP = 22 -- how far the base sits above the plain
+local PLATEAU_DROP = 22 -- how far the base sits above the water
 
 local Y = {
 	plain = -PLATEAU_DROP,
@@ -210,45 +195,41 @@ end
 local function buildGround()
 	local ground = group("Ground")
 
-	-- The plain first: one disc out to the Part clamp, then a ring of flat
-	-- segments carrying the ground on underneath the mesas, so the horizon
-	-- stands on land rather than hanging over void. The ring sits a tenth of
-	-- a stud lower where the two overlap, which settles the seam for good.
-	-- Recolourable ground is NAMED — "Grass", "Canyon", "CanyonLip" — because
-	-- the client repaints the island locally when a world is selected, and
-	-- matching parts by name is the only contract that survives this file
-	-- being rearranged. The names carry no behaviour on the server.
-	local plain = cylinder(PLAIN_RADIUS * 2, 12, Vector3.new(0, slabAt(Y.plain, 12), 0), COLOR.grass, ground)
-	plain.Name = "Grass"
-	studded(decor(plain))
+	-- The SEA first: the same disc-plus-skirt geometry that used to carry
+	-- the launch range, wearing water. Flights live in each player's own
+	-- corridor now, so what surrounds the island is simply ocean — which is
+	-- what it originally was. Named "Sea", NOT "Grass", so the world
+	-- repaint's name sweep leaves it blue in every world. (Recolourable
+	-- ground is NAMED — "Grass" — because the client repaints the island
+	-- locally when a world is selected, and matching parts by name is the
+	-- only contract that survives this file being rearranged.)
+	-- Dropped a few studs below the old plain so the sand cliff reads as a
+	-- shoreline rather than a wall.
+	local sea = cylinder(PLAIN_RADIUS * 2, 12, Vector3.new(0, slabAt(Y.plain - 4, 12), 0), COLOR.water, ground)
+	sea.Name = "Sea"
+	sea.Material = Enum.Material.SmoothPlastic
+	decor(sea)
 
-	-- Past the last mesa terrace. The radial span (≈1985) sits just under
-	-- the 2048 Part clamp — one ring of segments still carries it all.
+	-- The water carries to the horizon. The radial span (≈1985) sits just
+	-- under the 2048 Part clamp — one ring of segments carries it all, each
+	-- chord sized for the OUTER rim so the ring can't open wedge gaps.
 	local SKIRT_OUTER = 3000
 	local SKIRT_SEGMENTS = 96
 	local skirtMid = (PLAIN_RADIUS - 5 + SKIRT_OUTER) * 0.5
-	-- Chord sized for the OUTER rim, not the midpoint: straight segments on
-	-- a ring splay apart as the radius grows, and a mid-sized chord left
-	-- widening wedge gaps of void along the whole outer half of the skirt.
-	-- The overlap this piles up at the inner edge is invisible — same
-	-- height, same colour, nothing to fight about.
 	local skirtWidth = 2 * math.pi * SKIRT_OUTER / SKIRT_SEGMENTS + 6
 	for index = 1, SKIRT_SEGMENTS do
 		local angle = (index / SKIRT_SEGMENTS) * math.pi * 2
-		local at = Vector3.new(math.cos(angle) * skirtMid, slabAt(Y.plain - 0.1, 12), math.sin(angle) * skirtMid)
+		local at = Vector3.new(math.cos(angle) * skirtMid, slabAt(Y.plain - 4.1, 12), math.sin(angle) * skirtMid)
 		local piece = block(
 			Vector3.new(SKIRT_OUTER - (PLAIN_RADIUS - 5), 12, skirtWidth),
 			CFrame.new(at) * CFrame.Angles(0, -angle, 0),
-			COLOR.grass,
+			COLOR.water,
 			ground
 		)
-		piece.Name = "Grass"
-		studded(decor(piece))
+		piece.Name = "Sea"
+		piece.Material = Enum.Material.SmoothPlastic
+		decor(piece)
 	end
-
-	-- No apron between the cliff and the first band any more: the bands are
-	-- contiguous from the plateau edge out, so there is nothing for it to do
-	-- except peek through the seams.
 
 	-- The plateau the base sits on. A thick sand slab dropping to the plain,
 	-- which reads as a cliff edge from below and as a beach from above.
@@ -290,157 +271,6 @@ local function buildGround()
 
 	local plaza = cylinder(PLAZA_RADIUS * 2, 2, Vector3.new(0, slabAt(Y.plaza, 2), 0), COLOR.stone, ground)
 	studded(plaza)
-end
-
--- ---------- the horizon ----------
--- Terraced mesas ringing the plain, a thousand studs out. They used to stand
--- at the island's own edge, which walled the base in and hid the one thing
--- worth seeing from it — the distance. Pushed out here they do the opposite
--- job: they give the eye something to measure the range against, and they
--- close the world off without anybody feeling closed in.
---
--- Segment counts are low on purpose. At this distance a mesa is a silhouette,
--- and detail spent here is detail nobody can resolve.
-local function buildHorizon()
-	local horizon = group("Horizon")
-
-	local STEPS = 5
-	local STEP_HEIGHT = 26
-	local STEP_DEPTH = 34
-	local SEGMENTS = 64
-
-	for step = 1, STEPS do
-		local radius = MESA_RADIUS + (step - 1) * STEP_DEPTH
-		local height = step * STEP_HEIGHT
-		-- Chord length for one segment of a ring at this radius, plus a little
-		-- overlap so the joins never show daylight between them.
-		local width = 2 * math.pi * radius / SEGMENTS + 6
-
-		for index = 1, SEGMENTS do
-			local angle = (index / SEGMENTS) * math.pi * 2
-			local at = Vector3.new(
-				math.cos(angle) * radius,
-				Y.plain + height * 0.5 - 6,
-				math.sin(angle) * radius
-			)
-			local face = CFrame.new(at) * CFrame.Angles(0, -angle, 0)
-
-			local wall = block(Vector3.new(STEP_DEPTH, height, width), face, COLOR.rock, horizon)
-			wall.Name = "Canyon"
-			wall.Material = Enum.Material.Sandstone
-			decor(wall)
-
-			local lip = block(
-				Vector3.new(STEP_DEPTH, 4, width),
-				face * CFrame.new(0, height * 0.5 + 2, 0),
-				COLOR.rockTop,
-				horizon
-			)
-			lip.Name = "CanyonLip"
-			studded(decor(lip))
-		end
-	end
-end
-
--- ---------- distance rings ----------
--- Bands painted across the plain at increasing radius, each labelled. From the
--- plaza they read as a scale running away in every direction, which is the
--- whole point: the plots face outward, so the range has to be legible from all
--- of them rather than down one corridor.
--- A target painted around the plaza: filled rainbow rings covering the ground
--- from the plateau edge out to the last band, with the distance printed FLAT
--- on each one.
---
--- Filled rather than thin stripes on grass, because a solid band is the thing
--- that reads at a thousand studs — a nine-stud line seen almost edge-on is a
--- scratch. And printed on the ground rather than floated above it, because
--- floating signs are drawn at a fixed pixel size however far away they are:
--- the far ones stayed large, crowded toward the horizon line and stacked into
--- an unreadable pile. Ground text shrinks with perspective like everything
--- else, which is exactly what makes a receding scale legible.
-local function buildRangeMarkers()
-	local markers = group("Range")
-	local bands = Config.RangeBands
-
-	local inner = ISLAND_RADIUS -- the first band starts at the plateau edge
-	for order, band in bands do
-		local outer = Config.rangeRadius(band.studs)
-		local depth = outer - inner
-		if depth > 1 then
-			-- Rainbow near to far, so "how far did it get" is answerable at a
-			-- glance by which colour it sailed over.
-			local color = Color3.fromHSV((order - 1) / #bands * 0.86, 0.72, 1)
-			local mid = (inner + outer) * 0.5
-
-			-- Segment count scales with circumference: a fixed count would
-			-- make the inner rings needlessly dense and the outer ones coarse
-			-- enough to show as a polygon. The chord is sized for the band's
-			-- OUTER edge — at the midpoint it splays open into wedge gaps by
-			-- the outer rim, which the deep far bands made very visible.
-			local segments = math.clamp(math.floor(mid / 7), 48, 160)
-			local width = 2 * math.pi * outer / segments + 3
-
-			for index = 1, segments do
-				local angle = (index / segments) * math.pi * 2
-				local at = Vector3.new(math.cos(angle) * mid, Y.plain + 0.4, math.sin(angle) * mid)
-				local strip = block(
-					Vector3.new(depth + 1, 1.2, width),
-					CFrame.new(at) * CFrame.Angles(0, -angle, 0),
-					color,
-					markers
-				)
-				studded(decor(strip))
-			end
-
-			-- The number, lying on the band, once per plot bearing so whichever
-			-- way a cannon points there is a figure under it. Sat at the band's
-			-- OUTER edge: that is the line the distance actually means, and it
-			-- is the edge a squishy crosses.
-			for slot = 1, Island.PLOT_COUNT do
-				local angle = (slot - 1) / Island.PLOT_COUNT * math.pi * 2
-				local textRadius = outer - math.min(depth * 0.42, 34)
-				local at = Vector3.new(
-					math.cos(angle) * textRadius,
-					Y.plain + 1.1,
-					math.sin(angle) * textRadius
-				)
-
-				-- X runs radially, Z runs along the band, so the text reads
-				-- across the ring the way it does in a real distance marker.
-				local plateDepth = math.min(depth * 0.7, 56)
-				local plate = block(
-					Vector3.new(plateDepth, 0.6, plateDepth * 3.4),
-					CFrame.new(at) * CFrame.Angles(0, -angle, 0),
-					color,
-					markers
-				)
-				plate.Transparency = 1 -- the plate is only a surface to print on
-				decor(plate)
-
-				local surface = Instance.new("SurfaceGui")
-				surface.Face = Enum.NormalId.Top
-				-- Low, because the text has to be huge in world terms to be
-				-- read from the plaza a thousand studs away.
-				surface.PixelsPerStud = 12
-				surface.Parent = plate
-
-				local label = Instance.new("TextLabel")
-				label.Size = UDim2.fromScale(1, 1)
-				label.BackgroundTransparency = 1
-				label.Font = Enum.Font.FredokaOne
-				label.Text = ("%s Studs"):format(band.name)
-				label.TextColor3 = Color3.fromRGB(255, 255, 255)
-				label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
-				label.TextStrokeTransparency = 0
-				label.TextScaled = true
-				-- Printed to be read from the island looking OUT, not from the
-				-- horizon looking back.
-				label.Rotation = 180
-				label.Parent = surface
-			end
-		end
-		inner = outer
-	end
 end
 
 -- ---------- paths ----------
@@ -1039,90 +869,12 @@ end
 
 -- ---------- assembly ----------
 
--- ---------- range scenery ----------
--- The plain used to be an empty painted disc. These rock stacks and arches
--- fill the whole expanse — seeded, like the island, so every server grows
--- the same desert. They stand on the BISECTORS between the eight firing
--- lanes: the steering lane draws a quarter of the radius each side of a
--- plot's centre line, and the bisectors sit well outside that, so no
--- flight ever reads as clipping through a mountain. Named Canyon/CanyonLip
--- so the world repaint recolours them with the rest of the island.
-local function buildRangeScenery()
-	local props = group("RangeProps")
-	local rockRng = Random.new(4102)
-
-	local function rockStack(angle: number, radius: number, scale: number)
-		local at = Vector3.new(math.cos(angle) * radius, Y.plain, math.sin(angle) * radius)
-		local yaw = CFrame.Angles(0, rockRng:NextNumber() * math.pi * 2, 0)
-		local base = block(
-			Vector3.new(9, 7, 8) * scale,
-			CFrame.new(at + Vector3.new(0, 3.5 * scale, 0)) * yaw,
-			COLOR.rock,
-			props
-		)
-		base.Name = "Canyon"
-		decor(base)
-		local cap = block(
-			Vector3.new(6, 3, 5.4) * scale,
-			CFrame.new(at + Vector3.new(0, 8.5 * scale, 0)) * yaw,
-			COLOR.rockTop,
-			props
-		)
-		cap.Name = "CanyonLip"
-		decor(cap)
-	end
-
-	local function arch(angle: number, radius: number, scale: number)
-		local centre = Vector3.new(math.cos(angle) * radius, Y.plain, math.sin(angle) * radius)
-		local tangent = Vector3.new(-math.sin(angle), 0, math.cos(angle))
-		local up = 11 * scale
-		for _, flip in { -1, 1 } do
-			local pillar = block(
-				Vector3.new(4 * scale, up, 4 * scale),
-				CFrame.new(centre + tangent * (8 * scale * flip) + Vector3.new(0, up * 0.5, 0)),
-				COLOR.rock,
-				props
-			)
-			pillar.Name = "Canyon"
-			decor(pillar)
-		end
-		local lintel = block(
-			Vector3.new(4 * scale, 3 * scale, 21 * scale),
-			CFrame.lookAt(centre + Vector3.new(0, up + 1.5 * scale, 0), centre + tangent + Vector3.new(0, up + 1.5 * scale, 0)),
-			COLOR.rockTop,
-			props
-		)
-		lintel.Name = "CanyonLip"
-		decor(lintel)
-	end
-
-	for slot = 1, Island.PLOT_COUNT do
-		local bisector = (slot - 0.5) / Island.PLOT_COUNT * math.pi * 2
-		for _, radius in { 270, 360, 470, 600, 760, 930, 1200, 1550, 1950, 2400 } do
-			local angle = bisector + (rockRng:NextNumber() - 0.5) * 0.1
-			local spread = radius + (rockRng:NextNumber() - 0.5) * 40
-			-- Bigger further out, or the horizon formations vanish to specks.
-			local scale = 0.8 + rockRng:NextNumber() * 1.4 + spread / 700
-			if rockRng:NextNumber() < 0.25 then
-				arch(angle, spread, scale)
-			else
-				rockStack(angle, spread, scale)
-			end
-		end
-	end
-end
-
 -- ---------- barriers ----------
--- Two jobs, one force-field look: a ring at the island rim that stops anyone
--- walking off the plateau, and a divider on each bisector between
--- neighbouring plots that carries on across the range, so every cannon's
--- firing lane reads at a glance from the plaza.
---
--- The walls near players FADE: built at their "seen" transparency here, then
--- eased fully clear by the client (init.client.luau) whenever the character
--- is far away — the island shouldn't read as caged from across the plaza.
--- The range dividers hold a constant faint blue instead: they exist to be
--- seen from a distance, which is the one thing a proximity fade would undo.
+-- One job, one force-field look: a ring at the island rim that stops anyone
+-- walking off the plateau into the sea. The walls FADE: built at their
+-- "seen" transparency here, then eased fully clear by the client
+-- (init.client.luau) whenever the character is far away — the island
+-- shouldn't read as caged from across the plaza.
 local BARRIER_COLOR = Color3.fromRGB(96, 178, 255)
 local BARRIER_HEIGHT = 26
 
@@ -1154,33 +906,6 @@ local function buildBarriers()
 		)
 		wall.Transparency = 0.45
 		wall:SetAttribute("BarrierFade", true)
-	end
-
-	-- Lane dividers live entirely OUT on the range, from the island base to
-	-- the 1M band. They used to continue inward across the island between
-	-- the plots too, but a see-through wall cutting across walkable grass
-	-- read as clutter, not as a lane — the island keeps only its rim ring.
-	-- No collision: nobody can reach these, and the server's flights are
-	-- arithmetic, not physics, so there is nothing for them to block.
-	for slot = 1, Island.PLOT_COUNT do
-		local angle = (slot - 0.5) / Island.PLOT_COUNT * math.pi * 2
-		local yaw = CFrame.Angles(0, -angle, 0)
-
-		-- Two segments per divider: the full run to the far band is past the
-		-- 2048-stud Part clamp now, and a clamped wall would quietly stop
-		-- halfway down the range.
-		local rangeFrom, rangeTo = ISLAND_RADIUS + 4, Config.RangeFarRadius
-		local rangeMid = (rangeFrom + rangeTo) * 0.5
-		for _, span in { { rangeFrom, rangeMid }, { rangeMid, rangeTo } } do
-			local segMid = (span[1] + span[2]) * 0.5
-			local lane = barrierPart(
-				Vector3.new(span[2] - span[1], 30, 1.5),
-				CFrame.new(Vector3.new(math.cos(angle) * segMid, Y.plain + 15, math.sin(angle) * segMid)) * yaw,
-				barriers
-			)
-			lane.CanCollide = false
-			lane.Transparency = 0.7
-		end
 	end
 end
 
@@ -1307,11 +1032,8 @@ function Island.build()
 	group("Plots")
 
 	buildGround()
-	buildHorizon()
-	buildRangeMarkers()
 	buildPaths()
 	buildScenery()
-	buildRangeScenery()
 	buildSpawn()
 	buildBarriers()
 
