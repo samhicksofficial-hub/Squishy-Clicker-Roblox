@@ -357,7 +357,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 	local summary = UI.panel({
 		parent = gui,
 		name = "FlightSummary",
-		size = UDim2.new(0, 420, 0, 400),
+		size = UDim2.new(0, 420, 0, 430),
 		position = UDim2.fromScale(0.5, 0.5),
 		icon = "🚀",
 		title = "Landed!",
@@ -376,17 +376,35 @@ function Launch.mount(gui: GuiObject, scene: any)
 		Parent = summary.body,
 	})
 
-	-- One row per currency, so the reward reads as three separate wins rather
-	-- than one sentence nobody parses.
-	local function rewardRow(y: number, top: Color3, bottom: Color3): TextLabel
+	-- The reward rows STACK in a list rather than sitting at fixed heights:
+	-- most shots have no milestone bounty, and a fixed slot left a hole in
+	-- the card exactly where the bounty would have been. Hidden cards now
+	-- collapse and everything below rides up.
+	local rewards = UI.make("Frame", {
+		Size = UDim2.new(1, -24, 0, 220),
+		Position = UDim2.new(0, 12, 0, 78),
+		BackgroundTransparency = 1,
+		ZIndex = 33,
+		Parent = summary.body,
+	})
+	UI.make("UIListLayout", {
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = rewards,
+	})
+
+	-- One row per win, so the reward reads as separate prizes rather than
+	-- one sentence nobody parses.
+	local function rewardRow(order: number, top: Color3, bottom: Color3): TextLabel
 		local card = UI.card({
-			parent = summary.body,
-			size = UDim2.new(1, -24, 0, 44),
-			position = UDim2.new(0, 12, 0, y),
+			parent = rewards,
+			size = UDim2.new(1, 0, 0, 44),
+			position = UDim2.new(0, 0, 0, 0), -- the list drives placement
 			top = top,
 			bottom = bottom,
 			zIndex = 33,
 		})
+		card.LayoutOrder = order
 		return UI.label({
 			Size = UDim2.new(1, -20, 1, 0),
 			Position = UDim2.new(0, 12, 0, 0),
@@ -398,16 +416,15 @@ function Launch.mount(gui: GuiObject, scene: any)
 		})
 	end
 
-	-- One currency now: track Cash on top, milestone bounties beneath, and
-	-- the mid-air game's settled claim (steered pickups, boots, slams, less
-	-- bombs) on its own row once the server prices it.
-	local coinRow = rewardRow(78, C.cash, Color3.fromRGB(84, 186, 60))
-	local bountyRow = rewardRow(128, C.orange, C.orangeDeep)
-	local skillRow = rewardRow(178, C.purple, C.purpleDeep)
+	-- Track Cash on top, milestone bounties beneath, and the mid-air game's
+	-- settled claim (steered pickups, boots, slams, less bombs) under those.
+	local coinRow = rewardRow(1, C.cash, Color3.fromRGB(84, 186, 60))
+	local bountyRow = rewardRow(2, C.orange, C.orangeDeep)
+	local skillRow = rewardRow(3, C.purple, C.purpleDeep)
 
 	local breakdown = UI.label({
-		Size = UDim2.new(1, -24, 0, 66),
-		Position = UDim2.new(0, 12, 0, 228),
+		Size = UDim2.new(1, 0, 0, 66),
+		LayoutOrder = 10,
 		Text = "",
 		TextSize = 14,
 		TextColor3 = Color3.fromRGB(252, 226, 180),
@@ -416,7 +433,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 		TextYAlignment = Enum.TextYAlignment.Top,
 		StrokeThickness = 1.5,
 		ZIndex = 33,
-		Parent = summary.body,
+		Parent = rewards,
 	})
 
 	local againButton = UI.button({
@@ -656,7 +673,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 		local bonus = latestBonus
 		local card = skillRow.Parent :: Frame
 		if bonus and (bonus.cash or 0) > 0 then
-			skillRow.Text = ("🎮  +%s Flight Bonus!"):format(Format.abbreviate(bonus.cash))
+			skillRow.Text = ("🎯  +%s Mid-Air Bonus!"):format(Format.abbreviate(bonus.cash))
 			card.Visible = true
 		else
 			card.Visible = false
