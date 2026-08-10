@@ -227,7 +227,12 @@ local function buildGround()
 	local SKIRT_OUTER = 3000
 	local SKIRT_SEGMENTS = 96
 	local skirtMid = (PLAIN_RADIUS - 5 + SKIRT_OUTER) * 0.5
-	local skirtWidth = 2 * math.pi * skirtMid / SKIRT_SEGMENTS + 6
+	-- Chord sized for the OUTER rim, not the midpoint: straight segments on
+	-- a ring splay apart as the radius grows, and a mid-sized chord left
+	-- widening wedge gaps of void along the whole outer half of the skirt.
+	-- The overlap this piles up at the inner edge is invisible — same
+	-- height, same colour, nothing to fight about.
+	local skirtWidth = 2 * math.pi * SKIRT_OUTER / SKIRT_SEGMENTS + 6
 	for index = 1, SKIRT_SEGMENTS do
 		local angle = (index / SKIRT_SEGMENTS) * math.pi * 2
 		local at = Vector3.new(math.cos(angle) * skirtMid, slabAt(Y.plain - 0.1, 12), math.sin(angle) * skirtMid)
@@ -369,9 +374,11 @@ local function buildRangeMarkers()
 
 			-- Segment count scales with circumference: a fixed count would
 			-- make the inner rings needlessly dense and the outer ones coarse
-			-- enough to show as a polygon.
+			-- enough to show as a polygon. The chord is sized for the band's
+			-- OUTER edge — at the midpoint it splays open into wedge gaps by
+			-- the outer rim, which the deep far bands made very visible.
 			local segments = math.clamp(math.floor(mid / 7), 48, 160)
-			local width = 2 * math.pi * mid / segments + 3
+			local width = 2 * math.pi * outer / segments + 3
 
 			for index = 1, segments do
 				local angle = (index / segments) * math.pi * 2
