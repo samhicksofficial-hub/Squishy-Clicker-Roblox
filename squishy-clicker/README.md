@@ -351,6 +351,9 @@ Three models live in `assets/`, each needing the same one-time import:
 | `ice-cube/` | `IceCubeSquishy` | Ice Cube Squishy | one baked texture |
 | `squishy-cannon/` | `SquishyCannon` | every plot's cannon | one baked texture |
 | `capsule-pod/` | `CapsulePod` | the launch station beside each cannon | one baked texture |
+| `cash-stack/` | `CashStack` | the Cash pickups on the range | one baked texture |
+| `boost-boot/` | `BoostBoot` | the Boost Boots on the range | one baked texture |
+| `cartoon-bomb/` | `CartoonBomb` | the bombs on the range | one baked texture |
 
 Do all of this in **Edit mode, with the playtest stopped** — anything you create
 while the game is running is discarded the moment you press Stop.

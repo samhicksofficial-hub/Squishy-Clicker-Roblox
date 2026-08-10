@@ -300,6 +300,78 @@ local pickupCollecting: { [number]: number } = {}
 -- these, so layout writes here and animation never fights it.
 local pickupBase: { [number]: Vector3 } = {}
 
+-- ---------- imported track models ----------
+-- The cash stack, boost boot and cartoon bomb ride in from Meshy the same
+-- way the cannon did: imported by hand into ReplicatedStorage, adopted by a
+-- tolerant name match, cloned per pool slot. Only the LARGEST part of a
+-- template is taken — Meshy image-to-3d exports are a single mesh, and one
+-- part keeps every pool's BasePart logic (CFrame bobbing, transparency
+-- toggles, billboards) working unchanged. Clones are geometry-only:
+-- stowaway scripts stripped, anchored, inert. No template imported yet =
+-- the shaped-part fallbacks, exactly as before.
+local meshTemplates: { [string]: BasePart | false } = {}
+
+local function templatePart(cacheKey: string, looseNames: { string }, target: number): BasePart?
+	local cached = meshTemplates[cacheKey]
+	if cached == false then
+		return nil
+	end
+	if cached then
+		return (cached :: BasePart):Clone()
+	end
+
+	for _, looseName in looseNames do
+		local wanted = looseName:lower():gsub("[%s_]", "")
+		for _, descendant in ReplicatedStorage:GetDescendants() do
+			if
+				(descendant:IsA("Model") or descendant:IsA("BasePart"))
+				and descendant.Name:lower():gsub("[%s_]", "") == wanted
+			then
+				local source: BasePart? = if descendant:IsA("BasePart") then descendant else nil
+				if not source and descendant:IsA("Model") then
+					local biggest = -1
+					for _, piece in descendant:GetDescendants() do
+						if piece:IsA("BasePart") then
+							local bulk = piece.Size.X * piece.Size.Y * piece.Size.Z
+							if bulk > biggest then
+								biggest = bulk
+								source = piece
+							end
+						end
+					end
+				end
+				if source then
+					local master = source:Clone()
+					for _, stowaway in master:GetDescendants() do
+						if stowaway:IsA("LuaSourceContainer") then
+							stowaway:Destroy()
+						end
+					end
+					master.Anchored = true
+					master.CanCollide = false
+					master.CanQuery = false
+					master.CanTouch = false
+					master.Transparency = 1
+					local longest = math.max(master.Size.X, master.Size.Y, master.Size.Z)
+					if longest > 0.05 then
+						master.Size = master.Size * (target / longest)
+					end
+					-- The flag layout reads to know "this is a real model":
+					-- meshes keep their painted size and colour, where the
+					-- fallback blocks get resized and tinted per entry.
+					master:SetAttribute("MeshBase", master.Size)
+					meshTemplates[cacheKey] = master
+					return master:Clone()
+				end
+			end
+		end
+	end
+
+	meshTemplates[cacheKey] = false
+	print(("[SquishyClicker] No '%s' model in ReplicatedStorage — using the built-in shape."):format(looseNames[1]))
+	return nil
+end
+
 -- Double the base count: headroom for the extra pickups VIP zones add.
 -- (This line once multiplied by the Cash Rain density constant — reading a
 -- REMOVED config key made it nil arithmetic, which killed this module at
@@ -307,15 +379,21 @@ local pickupBase: { [number]: Vector3 } = {}
 -- error visible past the Output.)
 local POOL = Config.LaunchPickupCount * 2 + Config.VipZoneCount * Config.VipZoneDensityMultiplier
 for _ = 1, POOL do
-	local prize = Instance.new("Part")
-	prize.Size = Vector3.one * 4
-	prize.Material = Enum.Material.Neon
-	prize.Anchored = true
-	prize.CanCollide = false
-	prize.CanQuery = false
-	prize.CanTouch = false
-	prize.Transparency = 1
-	prize.Parent = stage
+	-- The imported cash-stack model when it exists; the neon block until.
+	local prize = templatePart("cash", { "CashStack", "Cash" }, 4.2)
+	if not prize then
+		local block = Instance.new("Part")
+		block.Size = Vector3.one * 4
+		block.Material = Enum.Material.Neon
+		prize = block
+	end
+	local prizePart = prize :: BasePart
+	prizePart.Anchored = true
+	prizePart.CanCollide = false
+	prizePart.CanQuery = false
+	prizePart.CanTouch = false
+	prizePart.Transparency = 1
+	prizePart.Parent = stage
 
 	-- The 💵 over each block is what says "this is money" from any range.
 	-- Stud-sized, so it shrinks with distance like the block it labels.
@@ -325,7 +403,7 @@ for _ = 1, POOL do
 	icon.StudsOffset = Vector3.new(0, 3.4, 0)
 	icon.LightInfluence = 0
 	icon.Enabled = false
-	icon.Parent = prize
+	icon.Parent = prizePart
 	local face = Instance.new("TextLabel")
 	face.Size = UDim2.fromScale(1, 1)
 	face.BackgroundTransparency = 1
@@ -343,7 +421,7 @@ for _ = 1, POOL do
 	pic.Visible = false
 	pic.Parent = icon
 
-	table.insert(pickupParts, prize)
+	table.insert(pickupParts, prizePart)
 end
 
 -- ---------- the steerable extras ----------
@@ -381,10 +459,28 @@ end
 local bootParts: { BasePart } = {}
 local bombParts: { BasePart } = {}
 for _ = 1, 4 do
-	table.insert(bootParts, makeExtraPart(Enum.PartType.Block, 4.5, Color3.fromRGB(88, 232, 96), Enum.Material.Neon, "⬆️", 4))
+	local boot = templatePart("boot", { "BoostBoot", "Boost" }, 5.2)
+	if boot then
+		boot.Parent = stage
+		table.insert(bootParts, boot)
+	else
+		table.insert(
+			bootParts,
+			makeExtraPart(Enum.PartType.Block, 4.5, Color3.fromRGB(88, 232, 96), Enum.Material.Neon, "⬆️", 4)
+		)
+	end
 end
 for _ = 1, 14 do
-	table.insert(bombParts, makeExtraPart(Enum.PartType.Ball, 5, Color3.fromRGB(52, 52, 58), Enum.Material.SmoothPlastic, "💣", 3.6))
+	local bomb = templatePart("bomb", { "CartoonBomb", "Bomb" }, 5.4)
+	if bomb then
+		bomb.Parent = stage
+		table.insert(bombParts, bomb)
+	else
+		table.insert(
+			bombParts,
+			makeExtraPart(Enum.PartType.Ball, 5, Color3.fromRGB(52, 52, 58), Enum.Material.SmoothPlastic, "💣", 3.6)
+		)
+	end
 end
 
 local bootField: { BootEntry } = {}
@@ -720,10 +816,18 @@ local function layoutField()
 			and not pickupTaken[index]
 			and Config.rangeRadius(entry.distance) > muzzleRadius + 6
 		if entry and drawable then
-			-- Cash green for the ordinary ones, gold for the VIP stretch.
-			prize.Color = entry.vip and VIP_GOLD or (PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
-			prize.Size = Vector3.one * (entry.vip and 6.5 or 4)
-			prize.Transparency = 0.1
+			-- A real cash-stack model keeps its own paint and proportions —
+			-- VIPs just come bigger. The fallback blocks get the tint-and-
+			-- resize treatment as before.
+			local meshBase = prize:GetAttribute("MeshBase") :: Vector3?
+			if meshBase then
+				prize.Size = meshBase * (entry.vip and 1.6 or 1)
+				prize.Transparency = 0
+			else
+				prize.Color = entry.vip and VIP_GOLD or (PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
+				prize.Size = Vector3.one * (entry.vip and 6.5 or 4)
+				prize.Transparency = 0.1
+			end
 			-- Laid out against the field's own tallest, so the strung-out
 			-- pickups sit at a readable height whatever the power level —
 			-- and out at their LANE offset, where the steering game lives.
@@ -735,11 +839,14 @@ local function layoutField()
 
 			local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
 			if icon then
-				icon.Enabled = true
-				-- The uploaded stack image for ordinary cash once its id is
-				-- in Config; the 💰 emoji stays on VIPs either way, so the
-				-- jackpot stretch keeps its own face.
-				local useImage = Config.CashIconImage ~= "" and not entry.vip
+				-- A real model needs no floating marker — the geometry IS
+				-- the marker — except the 💰 on VIPs, which stays as the
+				-- jackpot flag. The fallback blocks keep the full billboard
+				-- treatment: the uploaded image for ordinary cash when its
+				-- id is in Config, emoji otherwise.
+				local meshy = prize:GetAttribute("MeshBase") ~= nil
+				icon.Enabled = not meshy or entry.vip
+				local useImage = Config.CashIconImage ~= "" and not entry.vip and not meshy
 				local face = icon:FindFirstChildOfClass("TextLabel")
 				local pic = icon:FindFirstChild("Pic") :: ImageLabel?
 				if pic then
