@@ -549,6 +549,24 @@ local touchAt: number? = nil
 local touchTravel = 0
 local touchBegan = 0
 
+-- ---------- the streaming escort ----------
+-- With StreamingEnabled places, the world loads in around the CHARACTER —
+-- who is standing back at the plot while the chase camera crosses two and a
+-- half thousand studs of range. Without help, the far ground simply has not
+-- streamed in by the time the shot arrives, and the flight plays over void.
+-- This asks the server to stream around a point just AHEAD of the shot, so
+-- the ground lands before the camera does. Fire-and-forget in its own
+-- thread (the call yields), pcall'd (it can throw during teardown), and a
+-- clean no-op in places with streaming off.
+local lastStreamAsk = 0
+local function askStreaming(position: Vector3)
+	task.spawn(function()
+		pcall(function()
+			player:RequestStreamAroundAsync(position, 0.1)
+		end)
+	end)
+end
+
 -- The character's own controls, borrowed while a shot is being steered:
 -- A/D belongs to the squishy mid-flight and SPACE is a slam, not a jump —
 -- without this the character sprinted around the plot with every steer.
@@ -1292,6 +1310,11 @@ function Flight.play(plan: {
 	-- The character stands down while the squishy takes the controls.
 	borrowCharacterControls(true)
 
+	-- Get the first stretch of range streaming in before the shot reaches
+	-- it; the loop keeps feeding the escort from there.
+	lastStreamAsk = os.clock()
+	askStreaming(worldAt(math.min(shot.distance * 0.15, shot.distance), 0))
+
 	-- The camera starts AT the barrel and whips back into its chase seat
 	-- through the glide — the first half-second reads as being fired WITH
 	-- the squishy rather than teleporting to a viewing position.
@@ -1537,6 +1560,14 @@ RunService.RenderStepped:Connect(function(dt)
 		elseif steerPos <= -Config.SteerHalfWidth then
 			steerPos = -Config.SteerHalfWidth
 			steerVel = math.max(steerVel, 0)
+		end
+
+		-- Keep the streaming escort fed: a fresh ask every third of a
+		-- second, always a stride ahead of where the shot actually is.
+		if os.clock() - lastStreamAsk > 0.35 then
+			lastStreamAsk = os.clock()
+			local ahead = math.min(shot.flown + math.max(shot.distance * 0.1, 60), shot.distance)
+			askStreaming(worldAt(ahead, 0))
 		end
 	end
 
