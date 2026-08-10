@@ -581,6 +581,15 @@ local function laneSide(): Vector3
 	return Vector3.new(-outward.Z, 0, outward.X)
 end
 
+-- Lane units → world studs at a given track distance. The range fans out
+-- (and the log compression bunches it), so a fixed stud width drew the
+-- whole game as a thread down the centre line; scaling with the visual
+-- radius spreads it across the player's wedge instead. Gameplay and the
+-- server's checks stay in lane units — this is purely the drawing map.
+local function laneScaleAt(distance: number): number
+	return math.max(Config.rangeRadius(distance) * Config.LaneVisualFraction / Config.SteerHalfWidth, 1)
+end
+
 -- Lay the boots and bombs along the track. Before a shot they preview at a
 -- modest hover; during one, play() re-lays them ON the flight's own visual
 -- arc, so steering laterally is genuinely the way to hit or dodge them.
@@ -601,7 +610,7 @@ local function layoutExtras(heightFor: ((distance: number) -> number)?)
 				local lift = if heightFor then heightFor(entry.distance) else 14
 				bases[index] = worldAt(entry.distance, 0)
 					+ Vector3.new(0, math.max(lift, 6), 0)
-					+ side * entry.lane
+					+ side * (entry.lane * laneScaleAt(entry.distance))
 				part.Position = bases[index] :: Vector3
 				part.Transparency = 0
 				if icon then
@@ -654,7 +663,7 @@ local function layoutField()
 			local lift = entry.height / tallest * 90
 			pickupBase[index] = worldAt(entry.distance, 0)
 				+ Vector3.new(0, lift, 0)
-				+ side * (entry.lane or 0)
+				+ side * ((entry.lane or 0) * laneScaleAt(entry.distance))
 			prize.Position = pickupBase[index] :: Vector3
 
 			local icon = prize:FindFirstChild("CashIcon") :: BillboardGui?
@@ -1223,6 +1232,10 @@ RunService.RenderStepped:Connect(function(dt)
 	local toy = model
 	local flying = shot.progress < 1
 	local side = laneSide()
+	-- Where the shot was at the top of the frame: touches are judged by
+	-- CROSSING an entry's distance, so a fast segment that passes a whole
+	-- cluster in one frame still counts every member it swept.
+	local flownBefore = shot.flown
 
 	if shot.active then
 		shot.progress += dt / shot.seconds
@@ -1271,11 +1284,14 @@ RunService.RenderStepped:Connect(function(dt)
 
 	-- The slam's dive and recovery. The arc itself never changes — the dive
 	-- scales the drawn height down to the ground and eases it back after.
+	-- The steering offset in world studs, at the shot's current distance.
+	local steerWorld = steerPos * laneScaleAt(shot.flown)
+
 	if slamActive then
 		slamDrop = math.min(slamDrop + dt * 5, 1)
 		if slamDrop >= 1 then
 			slamActive = false
-			local ground = worldAt(shot.flown, 0) + side * steerPos
+			local ground = worldAt(shot.flown, 0) + side * steerWorld
 			splat(ground, Config.LaunchSplatRadius * 0.9)
 			squash = 1
 			shakeAmp = Config.ImpactShakeMagnitude
@@ -1310,24 +1326,33 @@ RunService.RenderStepped:Connect(function(dt)
 		arcAt.X,
 		groundLevel + (arcAt.Y - groundLevel) * (1 - slamDrop) + extraLift,
 		arcAt.Z
-	) + side * steerPos
+	) + side * steerWorld
 
 	-- Steering through things: whatever the drawn squishy touches, the claim
 	-- remembers. The server re-prices all of it; these are the visuals.
+	-- Judged in LANE UNITS and by crossing, never world proximity — the
+	-- lane's world width varies with distance now, so a fixed world radius
+	-- would be untouchable far out and unmissable up close.
 	if flying and toy then
-		local touchRadius = Config.CollectTouchRadius
+		local laneTouch = Config.LaneTouchWidth
+		local function crossed(distance: number, lane: number): boolean
+			return distance > flownBefore
+				and distance <= shot.flown
+				and math.abs(lane - steerPos) <= laneTouch
+		end
+
 		for index, entry in pickupField do
 			local base = pickupBase[index]
 			if base and not pickupTaken[index] and pickupCollecting[index] == nil then
-				if (base - at).Magnitude <= touchRadius + (entry.vip and 3 or 2) then
+				if crossed(entry.distance, entry.lane or 0) and math.abs(base.Y - at.Y) <= 16 then
 					takePickupVisual(index, entry)
 					table.insert(flightEvents, { kind = "pickup", index = index })
 				end
 			end
 		end
-		for index in bootField do
+		for index, entry in bootField do
 			local base = bootBase[index]
-			if base and not bootTaken[index] and (base - at).Magnitude <= touchRadius + 2 then
+			if base and not bootTaken[index] and crossed(entry.distance, entry.lane) and math.abs(base.Y - at.Y) <= 15 then
 				bootTaken[index] = true
 				bootBase[index] = nil
 				bootParts[index].Transparency = 1
@@ -1344,9 +1369,9 @@ RunService.RenderStepped:Connect(function(dt)
 				table.insert(flightEvents, { kind = "boot", index = index })
 			end
 		end
-		for index in bombField do
+		for index, entry in bombField do
 			local base = bombBase[index]
-			if base and not bombHit[index] and (base - at).Magnitude <= touchRadius + 2.5 then
+			if base and not bombHit[index] and crossed(entry.distance, entry.lane) and math.abs(base.Y - at.Y) <= 15 then
 				bombHit[index] = true
 				bombBase[index] = nil
 				bombParts[index].Transparency = 1

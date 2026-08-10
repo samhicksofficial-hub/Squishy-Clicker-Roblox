@@ -196,11 +196,18 @@ local Config = {
 	-- bombs), and the claims are settled AFTER landing, validated against
 	-- what the steering speed could physically have reached in the time the
 	-- flight allowed. A claim the physics couldn't make is simply not paid.
-	SteerHalfWidth = 15, -- studs either side of the lane's centre line
-	SteerSpeed = 26, -- lateral studs/sec — the client's control AND the server's reachability check
+	SteerHalfWidth = 15, -- LANE UNITS either side of the centre line (see LaneVisualFraction)
+	SteerSpeed = 26, -- lane units/sec — the client's control AND the server's reachability check
 	ClaimLaneSlack = 6, -- forgiveness in that check, so honest play never loses a claim to rounding
 	ClaimHeightWindow = 60, -- vertical generosity when validating a claimed pickup against the arc
-	CollectTouchRadius = 8, -- world studs at which the flying squishy touches a pickup
+	LaneTouchWidth = 3.4, -- lane units within which a crossed pickup counts as touched
+
+	-- How wide the lane DRAWS, as a fraction of the visual radius at that
+	-- distance. The lane's abstract units never change — this is only the
+	-- map from lane units to world studs, and it grows with the range's fan
+	-- so the track fills the player's whole wedge instead of bunching into
+	-- a thread down the centre line (which is exactly how it shipped first).
+	LaneVisualFraction = 0.25,
 
 	-- The fraction of pickups laid dead on the centre line, where the
 	-- fire-time magnet still sweeps them passively. The rest spread UNIFORM

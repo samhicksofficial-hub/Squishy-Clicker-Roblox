@@ -1028,6 +1028,79 @@ end
 
 -- ---------- assembly ----------
 
+-- ---------- range scenery ----------
+-- The plain used to be an empty painted disc. These rock stacks and arches
+-- fill the whole expanse — seeded, like the island, so every server grows
+-- the same desert. They stand on the BISECTORS between the eight firing
+-- lanes: the steering lane draws a quarter of the radius each side of a
+-- plot's centre line, and the bisectors sit well outside that, so no
+-- flight ever reads as clipping through a mountain. Named Canyon/CanyonLip
+-- so the world repaint recolours them with the rest of the island.
+local function buildRangeScenery()
+	local props = group("RangeProps")
+	local rockRng = Random.new(4102)
+
+	local function rockStack(angle: number, radius: number, scale: number)
+		local at = Vector3.new(math.cos(angle) * radius, Y.plain, math.sin(angle) * radius)
+		local yaw = CFrame.Angles(0, rockRng:NextNumber() * math.pi * 2, 0)
+		local base = block(
+			Vector3.new(9, 7, 8) * scale,
+			CFrame.new(at + Vector3.new(0, 3.5 * scale, 0)) * yaw,
+			COLOR.rock,
+			props
+		)
+		base.Name = "Canyon"
+		decor(base)
+		local cap = block(
+			Vector3.new(6, 3, 5.4) * scale,
+			CFrame.new(at + Vector3.new(0, 8.5 * scale, 0)) * yaw,
+			COLOR.rockTop,
+			props
+		)
+		cap.Name = "CanyonLip"
+		decor(cap)
+	end
+
+	local function arch(angle: number, radius: number, scale: number)
+		local centre = Vector3.new(math.cos(angle) * radius, Y.plain, math.sin(angle) * radius)
+		local tangent = Vector3.new(-math.sin(angle), 0, math.cos(angle))
+		local up = 11 * scale
+		for _, flip in { -1, 1 } do
+			local pillar = block(
+				Vector3.new(4 * scale, up, 4 * scale),
+				CFrame.new(centre + tangent * (8 * scale * flip) + Vector3.new(0, up * 0.5, 0)),
+				COLOR.rock,
+				props
+			)
+			pillar.Name = "Canyon"
+			decor(pillar)
+		end
+		local lintel = block(
+			Vector3.new(4 * scale, 3 * scale, 21 * scale),
+			CFrame.lookAt(centre + Vector3.new(0, up + 1.5 * scale, 0), centre + tangent + Vector3.new(0, up + 1.5 * scale, 0)),
+			COLOR.rockTop,
+			props
+		)
+		lintel.Name = "CanyonLip"
+		decor(lintel)
+	end
+
+	for slot = 1, Island.PLOT_COUNT do
+		local bisector = (slot - 0.5) / Island.PLOT_COUNT * math.pi * 2
+		for _, radius in { 270, 360, 470, 600, 760, 930 } do
+			local angle = bisector + (rockRng:NextNumber() - 0.5) * 0.1
+			local spread = radius + (rockRng:NextNumber() - 0.5) * 40
+			-- Bigger further out, or the horizon formations vanish to specks.
+			local scale = 0.8 + rockRng:NextNumber() * 1.4 + spread / 700
+			if rockRng:NextNumber() < 0.25 then
+				arch(angle, spread, scale)
+			else
+				rockStack(angle, spread, scale)
+			end
+		end
+	end
+end
+
 -- ---------- barriers ----------
 -- Two jobs, one force-field look: a ring at the island rim that stops anyone
 -- walking off the plateau, and a divider on each bisector between
@@ -1221,6 +1294,7 @@ function Island.build()
 	buildRangeMarkers()
 	buildPaths()
 	buildScenery()
+	buildRangeScenery()
 	buildSpawn()
 	buildBarriers()
 
