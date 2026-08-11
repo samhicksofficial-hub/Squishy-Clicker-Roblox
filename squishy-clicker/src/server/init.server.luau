@@ -282,7 +282,13 @@ end
 -- every star earned shaves a percentage back off (the payoff loop). Prestige
 -- enough and you stay roughly level; hoard copies instead and you slow down.
 local function clicksToOpen(data: PlayerData): number
-	local raw = Config.BaseClicksToOpen + data.totalOpens * Config.ClicksAddedPerOpen
+	-- The treadmill counts every steamer EARNED — opened or still banked in
+	-- the tray — so filling the bar raises the next bar there and then.
+	-- Counting opens alone let a player bank basket after basket at a
+	-- frozen price and never feel the climb. (Unboxing moves one from
+	-- banked to opened, so the sum — and the price — holds steady at the
+	-- moment of opening.)
+	local raw = Config.BaseClicksToOpen + (data.totalOpens + data.unopened) * Config.ClicksAddedPerOpen
 	local discount = math.min(totalStars(data) * Config.StarDiscountPerStar, Config.MaxStarDiscount)
 	local needed = math.ceil(raw * (1 - discount))
 	return math.clamp(needed, Config.MinClicksToOpen, Config.MaxClicksToOpen)
@@ -1424,8 +1430,9 @@ UnboxSteamer.OnServerEvent:Connect(function(player)
 	end
 
 	data.unopened -= 1
-	-- The treadmill ticks on the OPEN, not the bank: hoarding unopened
-	-- steamers never makes the current one more expensive.
+	-- One moves from banked to opened; the treadmill counts their SUM, so
+	-- opening never changes the current bar's price — earning did, back
+	-- when the bar filled.
 	data.totalOpens += 1
 
 	local squishy = Squishies.roll(rng)

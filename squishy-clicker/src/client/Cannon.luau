@@ -691,15 +691,16 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	})
 
 	-- ---------- the lobby feed ----------
-	-- Bottom-left CORNER, beside the nav rail: x starts at 124 because the
-	-- rail spans 16..108, so the two can never share a pixel however short
-	-- the window gets — the old position floated the box higher, where it
-	-- sat level with the rail's bottom buttons and crowded them.
+	-- TOP edge, between the chat (left) and the Best banner (centred):
+	-- anchored at a fraction of the width rather than a pixel count, so it
+	-- keeps that left-of-middle seat at every window size. The flight
+	-- progress ruler owns the bottom of the screen now, and the feed's old
+	-- bottom-left corner put the two shoulder to shoulder.
 	local feed = UI.make("Frame", {
 		Name = "LaunchFeed",
 		Size = UDim2.new(0, 250, 0, 26 + Config.LobbyFeedSize * 22),
-		Position = UDim2.new(0, 124, 1, -16),
-		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0.24, 0, 0, 14),
+		AnchorPoint = Vector2.new(0, 0),
 		BackgroundColor3 = C.body,
 		BackgroundTransparency = 0.25,
 		ZIndex = 4,

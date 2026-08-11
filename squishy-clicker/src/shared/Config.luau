@@ -9,8 +9,9 @@ local Config = {
 	-- The steamer can never get faster than this many clicks.
 	MinClicksToOpen = 3,
 
-	-- THE TREADMILL: every steamer you open makes the next one cost this many
-	-- more clicks, forever. Opening 20 steamers adds 20 clicks to the price.
+	-- THE TREADMILL: every steamer you EARN — opened or still banked in the
+	-- tray — makes the next one cost this many more clicks, forever. Earning
+	-- 20 steamers adds 20 clicks to the price, the moment each bar fills.
 	ClicksAddedPerOpen = 1,
 
 	-- Hard ceiling, so the treadmill can never make the game unplayable.
