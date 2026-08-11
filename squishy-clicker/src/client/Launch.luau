@@ -305,7 +305,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 	-- has to be legible at a glance on a phone.
 	local flightHud = UI.make("Frame", {
 		Name = "FlightHud",
-		Size = UDim2.new(0, 460, 0, 224),
+		Size = UDim2.new(0, 460, 0, 158),
 		Position = UDim2.new(0.5, 0, 0, 20),
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 1,
@@ -350,22 +350,25 @@ function Launch.mount(gui: GuiObject, scene: any)
 	})
 
 	-- ---------- the flight progress bar ----------
-	-- A rainbow ruler under the readout, running the LEG of the milestone
-	-- ladder the flight is currently on (0→100, 100→1K, 1K→10K, ...): the
-	-- You marker crawls it, and filling the bar leaps the labels to the next
-	-- leg. Legs rather than one fixed track, because an endless flight
-	-- against a single 0-to-1M bar would sit at "empty" for its whole early
-	-- life — this way the bar is always mid-story.
+	-- A rainbow ruler along the BOTTOM of the screen, running the LEG of
+	-- the milestone ladder the flight is currently on (0→100, 100→1K,
+	-- 1K→10K, ...): the You marker crawls it, and filling the bar leaps the
+	-- labels to the next leg. Legs rather than one fixed track, because an
+	-- endless flight against a single 0-to-1M bar would sit at "empty" for
+	-- its whole early life — this way the bar is always mid-story. Its own
+	-- screen-wide frame rather than a child of the readout, shown and
+	-- hidden by the same stage that shows the readout.
 	local progressTrack = UI.make("Frame", {
-		Name = "ProgressTrack",
-		Size = UDim2.new(1, -20, 0, 26),
-		Position = UDim2.new(0.5, 0, 0, 192),
-		AnchorPoint = Vector2.new(0.5, 0),
+		Name = "FlightProgress",
+		Size = UDim2.new(0.7, 0, 0, 36),
+		Position = UDim2.new(0.5, 0, 1, -26),
+		AnchorPoint = Vector2.new(0.5, 1),
 		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-		ZIndex = 21,
-		Parent = flightHud,
+		Visible = false,
+		ZIndex = 20,
+		Parent = gui,
 	})
-	UI.corner(13, progressTrack)
+	UI.corner(18, progressTrack)
 	UI.stroke(progressTrack)
 	UI.make("UIGradient", {
 		Color = ColorSequence.new({
@@ -386,11 +389,11 @@ function Launch.mount(gui: GuiObject, scene: any)
 	for index = 1, 5 do
 		local fraction = (index - 1) / 4
 		progressTicks[index] = UI.label({
-			Size = UDim2.new(0, 80, 1, 0),
-			Position = UDim2.new(fraction, 0, 0, 0),
+			Size = UDim2.new(0, 110, 1, 0),
+			Position = UDim2.new(fraction, if index == 1 then 10 elseif index == 5 then -10 else 0, 0, 0),
 			AnchorPoint = Vector2.new(if index == 1 then 0 elseif index == 5 then 1 else 0.5, 0),
 			Text = "",
-			TextSize = 15,
+			TextSize = 21,
 			StrokeThickness = 2,
 			ZIndex = 23,
 			Parent = progressTrack,
@@ -400,27 +403,27 @@ function Launch.mount(gui: GuiObject, scene: any)
 	-- The You marker riding above the ruler, screenshot-style.
 	local youMarker = UI.make("Frame", {
 		Name = "You",
-		Size = UDim2.new(0, 48, 0, 30),
-		Position = UDim2.new(0, 0, 0, -32),
+		Size = UDim2.new(0, 64, 0, 42),
+		Position = UDim2.new(0, 0, 0, -44),
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 1,
 		ZIndex = 24,
 		Parent = progressTrack,
 	})
 	UI.label({
-		Size = UDim2.new(1, 0, 0, 16),
+		Size = UDim2.new(1, 0, 0, 22),
 		Text = "You",
-		TextSize = 15,
+		TextSize = 21,
 		TextColor3 = Color3.fromRGB(255, 196, 72),
-		StrokeThickness = 2,
+		StrokeThickness = 3,
 		ZIndex = 24,
 		Parent = youMarker,
 	})
 	UI.label({
-		Size = UDim2.new(1, 0, 0, 14),
-		Position = UDim2.new(0, 0, 0, 15),
+		Size = UDim2.new(1, 0, 0, 18),
+		Position = UDim2.new(0, 0, 0, 21),
 		Text = "▼",
-		TextSize = 13,
+		TextSize = 17,
 		TextColor3 = Color3.fromRGB(255, 196, 72),
 		StrokeThickness = 2,
 		ZIndex = 24,
@@ -450,7 +453,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 			end
 		end
 		local fraction = math.clamp((distance - from) / math.max(to - from, 1), 0, 1)
-		youMarker.Position = UDim2.new(fraction, 0, 0, -32)
+		youMarker.Position = UDim2.new(fraction, 0, 0, -44)
 	end
 
 	-- ---------- the end-of-flight summary ----------
@@ -569,6 +572,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 		tapCatcher.Visible = panel.Visible
 		cancelButton.button.Visible = panel.Visible
 		flightHud.Visible = atValley and next == "flying"
+		progressTrack.Visible = atValley and next == "flying"
 		summary.root.Visible = atValley and next == "summary"
 		bestBanner.Visible = controls and (next == "idle" or next == "aim")
 		launchButton.button.Visible = controls and next == "idle"
