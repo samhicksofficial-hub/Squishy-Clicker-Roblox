@@ -729,21 +729,59 @@ do
 	end
 end
 
--- The corridor wears the active world's colours. Fed from Cannon.update's
--- world-change detection, beside the island repaint.
+-- The corridor's opening stretch wears the active world's colours. Fed
+-- from Cannon.update's world-change detection, beside the island repaint.
+-- No repaint loop needed: the window pass paints every tile per frame from
+-- the biome its distance lies in, and the first biome reads this theme.
 function Flight.setWorld(world: { grass: Color3, grassDark: Color3, canyon: Color3 })
 	corridorTheme.grass = world.grass
 	corridorTheme.grassDark = world.grassDark
 	corridorTheme.canyon = world.canyon
-	for index, tile in corridorTiles do
-		tile.Color = index % 2 == 0 and corridorTheme.grass or corridorTheme.grassDark
-		local walls = corridorWalls[index]
-		walls.left.Color = corridorTheme.canyon
-		walls.right.Color = corridorTheme.canyon
-		walls.leftLip.Color = corridorTheme.grassDark
-		walls.rightLip.Color = corridorTheme.grassDark
-	end
 end
+
+-- ---------- biomes ----------
+-- The land changes as a flight gets far: Config.CorridorBiomes bands the
+-- track by REAL distance, and the window pass below paints each tile from
+-- the band its own distance lies in — so the desert scrolls in tile by
+-- tile at 1K studs rather than the whole world blinking over at once.
+type Biome = {
+	at: number,
+	name: string,
+	emoji: string,
+	floor: Color3?,
+	floorAlt: Color3?,
+	wall: Color3?,
+	lip: Color3?,
+	haze: Color3?,
+}
+
+local function biomeAt(d: number): Biome
+	local biomes = Config.CorridorBiomes :: { Biome }
+	local current = biomes[1]
+	for _, biome in biomes do
+		if d >= biome.at then
+			current = biome
+		end
+	end
+	return current
+end
+
+-- A biome's palette. The first band carries no colours of its own and
+-- wears the active world's theme, so world unlocks still repaint the
+-- opening stretch of every flight.
+local function biomePalette(biome: Biome): (Color3, Color3, Color3, Color3)
+	if biome.floor then
+		return biome.floor :: Color3,
+			biome.floorAlt or biome.floor :: Color3,
+			biome.wall or biome.floor :: Color3,
+			biome.lip or biome.floor :: Color3
+	end
+	return corridorTheme.grass, corridorTheme.grassDark, corridorTheme.canyon, corridorTheme.grassDark
+end
+
+-- The band the squishy is currently IN, for the "entering the desert!"
+-- announcement the moment a new one starts scrolling underfoot.
+local currentBiomeAt = 0
 
 -- Ground-owned FX ride the treadmill: a splat must recede with the floor it
 -- landed on, or it appears to glide forward against the scroll. Each entry
@@ -1393,6 +1431,7 @@ function Flight.play(plan: {
 	slamFxPending = false
 	slamManualPending = false
 	touchAt = nil
+	currentBiomeAt = 0
 
 	-- The milestones this account has NOT yet earned, straight from the
 	-- server with their positions — the popup fires at the sign the moment
@@ -1598,9 +1637,16 @@ RunService.RenderStepped:Connect(function(dt)
 			local tile = corridorTiles[slot]
 			local centreD = (tileIndex + 0.5) * tileLength
 			local base = corridorAt(centreD, 0)
-			tile.Color = tileIndex % 2 == 0 and corridorTheme.grass or corridorTheme.grassDark
+			-- Painted from the biome THIS tile's distance lies in, so a new
+			-- land scrolls in tile by tile across its boundary.
+			local floorA, floorB, wallColor, lipColor = biomePalette(biomeAt(centreD))
+			tile.Color = tileIndex % 2 == 0 and floorA or floorB
 			tile.CFrame = CFrame.new(base - Vector3.new(0, 1, 0))
 			local walls = corridorWalls[slot]
+			walls.left.Color = wallColor
+			walls.right.Color = wallColor
+			walls.leftLip.Color = lipColor
+			walls.rightLip.Color = lipColor
 			walls.left.CFrame = CFrame.new(base + SIDE * (-width / 2 - 3) + Vector3.new(0, wallHeight / 2, 0))
 			walls.right.CFrame = CFrame.new(base + SIDE * (width / 2 + 3) + Vector3.new(0, wallHeight / 2, 0))
 			walls.leftLip.CFrame = CFrame.new(base + SIDE * (-width / 2 - 3) + Vector3.new(0, wallHeight + 2, 0))
@@ -1631,12 +1677,18 @@ RunService.RenderStepped:Connect(function(dt)
 			end
 		end
 
-		-- The static depth dressing rides at fixed offsets from the origin.
+		-- The static depth dressing rides at fixed offsets from the origin,
+		-- hazed in the colour of the biome it is looking INTO — desert air
+		-- ahead of the desert, the near-black of space ahead of space.
+		local hazeBiome = biomeAt(shot.flown + Config.CorridorViewAhead)
+		local haze = hazeBiome.haze or Color3.fromRGB(206, 226, 246)
+		corridorCap.Color = haze
 		corridorCap.CFrame = CFrame.new(
 			CORRIDOR_ORIGIN + FORWARD * Config.CorridorViewAhead + Vector3.new(0, wallHeight / 2, 0)
 		)
 		for _, plane in corridorFog do
 			local fraction = plane:GetAttribute("AheadFraction") :: number
+			plane.Color = haze
 			plane.CFrame = CFrame.new(
 				CORRIDOR_ORIGIN + FORWARD * (Config.CorridorViewAhead * fraction) + Vector3.new(0, wallHeight / 2, 0)
 			)
@@ -1890,6 +1942,24 @@ RunService.RenderStepped:Connect(function(dt)
 			-- squishy lives on the cushion and in the collection; the cannon
 			-- carries it only mid-flight.
 			Models.apply(toy.rig, CFrame.new(0, -500, 0), Vector3.one * 0.001)
+		end
+	end
+
+	-- Entering a new biome announces itself the moment the new land starts
+	-- scrolling underfoot — the flight's "you got somewhere" beat.
+	if flying then
+		local nowBiome = biomeAt(shot.flown)
+		if nowBiome.at ~= currentBiomeAt then
+			currentBiomeAt = nowBiome.at
+			if nowBiome.at > 0 then
+				floatPopup(
+					at + Vector3.new(0, 16, 0),
+					("%s  %s!"):format(nowBiome.emoji, nowBiome.name:upper()),
+					nowBiome.lip or Color3.fromRGB(255, 220, 120)
+				)
+				comboPing.PlaybackSpeed = 0.7
+				comboPing:Play()
+			end
 		end
 	end
 

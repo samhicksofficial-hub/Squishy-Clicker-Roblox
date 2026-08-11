@@ -305,7 +305,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 	-- has to be legible at a glance on a phone.
 	local flightHud = UI.make("Frame", {
 		Name = "FlightHud",
-		Size = UDim2.new(0, 460, 0, 158),
+		Size = UDim2.new(0, 460, 0, 224),
 		Position = UDim2.new(0.5, 0, 0, 20),
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 1,
@@ -348,6 +348,110 @@ function Launch.mount(gui: GuiObject, scene: any)
 		ZIndex = 21,
 		Parent = flightHud,
 	})
+
+	-- ---------- the flight progress bar ----------
+	-- A rainbow ruler under the readout, running the LEG of the milestone
+	-- ladder the flight is currently on (0→100, 100→1K, 1K→10K, ...): the
+	-- You marker crawls it, and filling the bar leaps the labels to the next
+	-- leg. Legs rather than one fixed track, because an endless flight
+	-- against a single 0-to-1M bar would sit at "empty" for its whole early
+	-- life — this way the bar is always mid-story.
+	local progressTrack = UI.make("Frame", {
+		Name = "ProgressTrack",
+		Size = UDim2.new(1, -20, 0, 26),
+		Position = UDim2.new(0.5, 0, 0, 192),
+		AnchorPoint = Vector2.new(0.5, 0),
+		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+		ZIndex = 21,
+		Parent = flightHud,
+	})
+	UI.corner(13, progressTrack)
+	UI.stroke(progressTrack)
+	UI.make("UIGradient", {
+		Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(238, 72, 200)),
+			ColorSequenceKeypoint.new(0.16, Color3.fromRGB(150, 82, 240)),
+			ColorSequenceKeypoint.new(0.36, Color3.fromRGB(72, 130, 245)),
+			ColorSequenceKeypoint.new(0.52, Color3.fromRGB(62, 202, 220)),
+			ColorSequenceKeypoint.new(0.66, Color3.fromRGB(92, 225, 100)),
+			ColorSequenceKeypoint.new(0.82, Color3.fromRGB(245, 210, 70)),
+			ColorSequenceKeypoint.new(0.92, Color3.fromRGB(245, 150, 60)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(240, 72, 60)),
+		}),
+		Parent = progressTrack,
+	})
+
+	-- The ruler's numbers, five across the leg.
+	local progressTicks: { TextLabel } = {}
+	for index = 1, 5 do
+		local fraction = (index - 1) / 4
+		progressTicks[index] = UI.label({
+			Size = UDim2.new(0, 80, 1, 0),
+			Position = UDim2.new(fraction, 0, 0, 0),
+			AnchorPoint = Vector2.new(if index == 1 then 0 elseif index == 5 then 1 else 0.5, 0),
+			Text = "",
+			TextSize = 15,
+			StrokeThickness = 2,
+			ZIndex = 23,
+			Parent = progressTrack,
+		})
+	end
+
+	-- The You marker riding above the ruler, screenshot-style.
+	local youMarker = UI.make("Frame", {
+		Name = "You",
+		Size = UDim2.new(0, 48, 0, 30),
+		Position = UDim2.new(0, 0, 0, -32),
+		AnchorPoint = Vector2.new(0.5, 0),
+		BackgroundTransparency = 1,
+		ZIndex = 24,
+		Parent = progressTrack,
+	})
+	UI.label({
+		Size = UDim2.new(1, 0, 0, 16),
+		Text = "You",
+		TextSize = 15,
+		TextColor3 = Color3.fromRGB(255, 196, 72),
+		StrokeThickness = 2,
+		ZIndex = 24,
+		Parent = youMarker,
+	})
+	UI.label({
+		Size = UDim2.new(1, 0, 0, 14),
+		Position = UDim2.new(0, 0, 0, 15),
+		Text = "▼",
+		TextSize = 13,
+		TextColor3 = Color3.fromRGB(255, 196, 72),
+		StrokeThickness = 2,
+		ZIndex = 24,
+		Parent = youMarker,
+	})
+
+	-- The ladder itself: 0 plus every milestone distance, in order.
+	local progressLadder: { number } = { 0 }
+	for _, milestone in Config.DistanceMilestones do
+		table.insert(progressLadder, milestone.at)
+	end
+	local progressLeg = 0 -- 0 = unlabelled, forces the first relabel
+
+	local function updateProgress(distance: number)
+		local leg = #progressLadder - 1
+		for index = 1, #progressLadder - 1 do
+			if distance < progressLadder[index + 1] then
+				leg = index
+				break
+			end
+		end
+		local from, to = progressLadder[leg], progressLadder[leg + 1]
+		if leg ~= progressLeg then
+			progressLeg = leg
+			for index, tick in progressTicks do
+				tick.Text = Format.abbreviate(from + (to - from) * (index - 1) / 4)
+			end
+		end
+		local fraction = math.clamp((distance - from) / math.max(to - from, 1), 0, 1)
+		youMarker.Position = UDim2.new(fraction, 0, 0, -32)
+	end
 
 	-- ---------- the end-of-flight summary ----------
 	local summary = UI.panel({
@@ -541,6 +645,8 @@ function Launch.mount(gui: GuiObject, scene: any)
 		setStage("flying")
 		distanceLabel.Text = "0"
 		vitalsLabel.Text = ""
+		progressLeg = 0
+		updateProgress(0)
 		bonusDeadline = nil
 		currentSerial = -1 -- unknown until the server's answer names it
 		shotRemote:FireServer(power, Config.LaunchFixedAngle)
@@ -630,6 +736,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 				Format.abbreviate(math.floor(Flight.speed())),
 				bounces > 0 and ("   ↻ %d bounce%s"):format(bounces, bounces == 1 and "" or "s") or ""
 			)
+			updateProgress(Flight.distance())
 			-- The landing watch: the flight is over when the sim says so —
 			-- no timer knew in advance. From that moment the settlement has
 			-- this long to arrive with the summary's numbers. (Before the

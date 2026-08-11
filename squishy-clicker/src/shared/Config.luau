@@ -45,8 +45,15 @@ local Config = {
 
 	-- What one stud of distance pays in steamer clicks. Deliberately tiny:
 	-- distances run to six figures late on, and the steamer bar is not meant
-	-- to be won by launching.
-	LaunchClicksPerStud = 0.004,
+	-- to be won by launching. (Cut from 0.004 when flights went endless — at
+	-- the old rate one good run banked several baskets on its own.)
+	LaunchClicksPerStud = 0.0012,
+
+	-- The hard lid on that: however far a flight goes, it can never feed the
+	-- steamer more than this fraction of the CURRENT basket's click cost.
+	-- Scale-proof where a flat cap is not — the treadmill raises the cost,
+	-- and the lid rises with it while staying under half a basket per shot.
+	SteamerFlightCapFraction = 0.4,
 
 	-- Gravity the shot arcs under. Raising it shortens every flight at once,
 	-- so it is the single blunt lever over the whole distance economy.
@@ -205,7 +212,11 @@ local Config = {
 	-- Pickups further down the track are worth more, by this fraction of
 	-- their base value per 1000 studs out. Without it, a 50,000-stud run pays
 	-- the same per pickup as a 500-stud one and the track stops mattering.
-	PickupValuePer1kStuds = 0.35,
+	-- (Trimmed from 0.35: track income grows roughly with distance SQUARED —
+	-- more pickups crossed, each worth more — while upgrade costs grow ~10%
+	-- a level early. At 0.35 the mid-game bought itself in a sitting; this
+	-- stretches the climb without touching the first hour's feel.)
+	PickupValuePer1kStuds = 0.25,
 
 	-- ===== The flight corridor =====
 	-- Your own shot plays in a private, client-local walled corridor — the
@@ -223,6 +234,58 @@ local Config = {
 	CorridorViewBehind = 160, -- studs kept behind, so a bounce just passed doesn't visibly vanish
 	CorridorMarkerCount = 14, -- road numbers per EXPECTED flight; spacing snaps to a 1/2.5/5 ladder of REAL studs
 	CorridorCutDelay = 0.35, -- seconds of island ignition (smoke, flash, bang) before the hard cut to the corridor
+
+	-- ----- Corridor biomes -----
+	-- The land CHANGES as a flight gets far: each band begins at a real
+	-- distance and repaints the floor, the canyon walls and the haze ahead.
+	-- Band starts sit exactly on the milestone ladder on purpose — crossing
+	-- 10K studs pays a bounty AND flies you somewhere that looks new, which
+	-- is the sense of getting somewhere. The first band carries no colours:
+	-- it wears the active World's palette, so world unlocks still repaint
+	-- the opening stretch of every flight.
+	CorridorBiomes = {
+		{ at = 0, name = "Meadow", emoji = "🌱" },
+		{
+			at = 1000,
+			name = "The Desert",
+			emoji = "🏜️",
+			floor = Color3.fromRGB(238, 206, 132),
+			floorAlt = Color3.fromRGB(224, 186, 108),
+			wall = Color3.fromRGB(216, 152, 92),
+			lip = Color3.fromRGB(238, 206, 132),
+			haze = Color3.fromRGB(248, 226, 180),
+		},
+		{
+			at = 10000,
+			name = "The Frostlands",
+			emoji = "❄️",
+			floor = Color3.fromRGB(214, 238, 248),
+			floorAlt = Color3.fromRGB(184, 220, 240),
+			wall = Color3.fromRGB(148, 196, 232),
+			lip = Color3.fromRGB(230, 244, 252),
+			haze = Color3.fromRGB(226, 242, 252),
+		},
+		{
+			at = 100000,
+			name = "The Volcano",
+			emoji = "🌋",
+			floor = Color3.fromRGB(96, 80, 80),
+			floorAlt = Color3.fromRGB(78, 64, 64),
+			wall = Color3.fromRGB(142, 72, 56),
+			lip = Color3.fromRGB(236, 122, 60),
+			haze = Color3.fromRGB(255, 152, 92),
+		},
+		{
+			at = 1000000,
+			name = "Deep Space",
+			emoji = "🌌",
+			floor = Color3.fromRGB(70, 66, 110),
+			floorAlt = Color3.fromRGB(54, 50, 88),
+			wall = Color3.fromRGB(44, 40, 72),
+			lip = Color3.fromRGB(152, 132, 232),
+			haze = Color3.fromRGB(28, 24, 50),
+		},
+	},
 
 	-- ===== Mid-air controls =====
 	-- The client steers its local sim and reports every touch as an event
@@ -293,6 +356,7 @@ local Config = {
 		{ at = 10000, name = "10K", cash = 25000 },
 		{ at = 100000, name = "100K", cash = 250000 },
 		{ at = 1000000, name = "1M", cash = 2500000 },
+		{ at = 10000000, name = "10M", cash = 25000000 },
 	},
 
 	-- ===== Rebirth =====

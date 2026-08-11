@@ -1101,8 +1101,13 @@ settleFlight = function(player: Player, data: PlayerData, events: { any })
 	end
 
 	-- The two halves of the game still touch: distance nudges the steamer
-	-- bar along, at a rate small enough that nobody launches to fill it.
-	local steamerBonus = math.floor(finalDistance * Config.LaunchClicksPerStud + 0.5)
+	-- bar along, at a rate small enough that nobody launches to fill it —
+	-- and CAPPED per flight as a fraction of the current basket, so an
+	-- endless run can never carpet-bomb the tray with steamers.
+	local steamerBonus = math.min(
+		math.floor(finalDistance * Config.LaunchClicksPerStud + 0.5),
+		math.floor(clicksToOpen(data) * Config.SteamerFlightCapFraction)
+	)
 	addProgress(data, steamerBonus)
 
 	local record = finalDistance > data.bestDistance
