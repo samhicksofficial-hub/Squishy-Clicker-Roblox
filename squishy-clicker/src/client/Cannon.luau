@@ -691,15 +691,16 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	})
 
 	-- ---------- the lobby feed ----------
-	-- TOP edge, between the chat (left) and the Best banner (centred):
-	-- anchored at a fraction of the width rather than a pixel count, so it
-	-- keeps that left-of-middle seat at every window size. The flight
-	-- progress ruler owns the bottom of the screen now, and the feed's old
-	-- bottom-left corner put the two shoulder to shoulder.
+	-- TOP edge, tucked in right after the Debug chip (which ends at x 480;
+	-- see Debug.luau) so the strip reads chat → Debug → feed. Pixel-anchored
+	-- like its neighbours, and the spot holds in published games too, where
+	-- the Debug chip simply isn't there. The flight progress ruler owns the
+	-- bottom of the screen now, and the feed's old bottom-left corner put
+	-- the two shoulder to shoulder.
 	local feed = UI.make("Frame", {
 		Name = "LaunchFeed",
 		Size = UDim2.new(0, 250, 0, 26 + Config.LobbyFeedSize * 22),
-		Position = UDim2.new(0.24, 0, 0, 14),
+		Position = UDim2.new(0, 492, 0, 14),
 		AnchorPoint = Vector2.new(0, 0),
 		BackgroundColor3 = C.body,
 		BackgroundTransparency = 0.25,
