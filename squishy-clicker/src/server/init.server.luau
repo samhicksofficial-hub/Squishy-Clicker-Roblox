@@ -950,7 +950,12 @@ settleFlight = function(player: Player, data: PlayerData, events: { any })
 				table.insert(touches, { kind = kind, id = id, t = t, lane = lane })
 			end
 		end
-		if #touches >= 500 then
+		-- Generous on purpose: a deep run steers through hundreds of pickups,
+		-- and events arrive in flight order, so a cap that truncates drops
+		-- the END of the longest flights — the exact runs that most deserve
+		-- their pay. Sized so an honest marathon fits with headroom; only a
+		-- fabricated flood ever meets it.
+		if #touches >= 1200 then
 			break
 		end
 	end
