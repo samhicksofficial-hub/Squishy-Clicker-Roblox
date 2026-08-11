@@ -1819,8 +1819,8 @@ RunService.RenderStepped:Connect(function(dt)
 		-- Re-kick the shake oscillator, scaled by how fast the hit was.
 		shakeAmp = Config.ImpactShakeMagnitude * (0.4 + 0.6 * impactStrength)
 		shakePhase = 0
-		-- The hit costs spin (bounce friction, made visible) and buys squash.
-		spinRate *= 0.78
+		-- The hit buys squash. (Spin is no longer bled here — the tumble
+		-- re-grips the ground speed at every contact in the toy block below.)
 		squash = 0.5 + 0.5 * impactStrength
 		-- And a knock you can HEAR, pitched by how hard it landed — the
 		-- skips make a decelerating drum line down the range.
@@ -1908,15 +1908,20 @@ RunService.RenderStepped:Connect(function(dt)
 		local lift = -toy.lowestY * scaleVec.Y
 
 		if flying then
-			-- The somersault runs at the spin the LAUNCH gave it, not on a
-			-- timer — each bounce has already bled some off above — and once
-			-- the shot is down in its final roll, the turn rate locks to the
-			-- TREADMILL's drawn ground speed, like a wheel. The corridor is
-			-- 1:1 longitudinally, so the sim's own delta IS the visual speed.
+			-- The somersault GRIPS the floor at every contact: the final
+			-- roll locks to the treadmill's true ground speed like a wheel,
+			-- and every skip re-spins the tumble toward that same rate
+			-- (capped, or a six-figure flight would strobe). It used to only
+			-- BLEED spin per bounce — ten skips into a long tail the tumble
+			-- had all but stopped, and a ball skimming the floor in one
+			-- frozen pose reads as gliding, never as hitting.
 			local radiusWorld = math.max(-toy.lowestY * applied, 0.5)
+			local groundRate = if dt > 0 then (shot.flown - flownBefore) / dt / radiusWorld else 0
 			local rollingNow = live ~= nil and live.rolling
-			if rollingNow and dt > 0 then
-				spinRate = (shot.flown - flownBefore) / dt / radiusWorld
+			if rollingNow then
+				spinRate = groundRate
+			elseif hitThisFrame then
+				spinRate = math.clamp(groundRate, -math.pi * 10, math.pi * 10)
 			end
 			spinAngle += spinRate * dt
 
