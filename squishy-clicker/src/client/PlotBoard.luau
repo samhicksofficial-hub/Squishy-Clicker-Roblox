@@ -34,10 +34,11 @@ local BuyPower = Remotes:WaitForChild("BuyPower") :: RemoteEvent
 
 local C = UI.color
 
--- Where the stand sits, relative to the plot: off the pad's side edge,
--- nudged a touch outward so it lines up beside the cannon's carriage.
-local BOARD_SIDE = 14
-local BOARD_OUT = 2
+-- Where the stand sits, relative to the plot: the FRONT-LEFT corner as a
+-- player walks in from the path (the name sign holds the front-right one),
+-- angled 45° to greet them on the way in.
+local BOARD_SIDE = -14 -- along the pad's side axis; negative = the walk-in left
+local BOARD_IN = 12 -- inward of the plot centre, toward the entrance path
 
 local folder: Folder? = nil
 local surface: SurfaceGui? = nil
@@ -142,7 +143,7 @@ function PlotBoard.setPlot(centre: Vector3)
 	stand.Parent = workspace
 	folder = stand
 
-	local at = flat + sideWorld * BOARD_SIDE + outward * BOARD_OUT
+	local at = flat - outward * BOARD_IN + sideWorld * BOARD_SIDE
 
 	local function woodPart(size: Vector3, cframe: CFrame): Part
 		local part = Instance.new("Part")
@@ -158,8 +159,10 @@ function PlotBoard.setPlot(centre: Vector3)
 		return part
 	end
 
-	-- Faces across the pad, where the player walks up from.
-	local face = CFrame.lookAt(at + Vector3.new(0, 6, 0), at + Vector3.new(0, 6, 0) - sideWorld)
+	-- Faces 45° between the entrance path (inward) and the pad's centre
+	-- line — square-on to a player walking in, whichever corner it holds.
+	local facing = (-outward - sideWorld * math.sign(BOARD_SIDE)).Unit
+	local face = CFrame.lookAt(at + Vector3.new(0, 6, 0), at + Vector3.new(0, 6, 0) + facing)
 	woodPart(Vector3.new(0.7, 7, 0.7), face * CFrame.new(-4.6, -2.4, 0.6))
 	woodPart(Vector3.new(0.7, 7, 0.7), face * CFrame.new(4.6, -2.4, 0.6))
 	local board = woodPart(Vector3.new(11, 6.4, 0.5), face)
