@@ -76,9 +76,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 	-- whether the shot it was armed for is still the one in the air.
 	local shotToken = 0
 
-	-- The meter's state: where the needle is in its sweep, and the accuracy
-	-- locked in by each tap so far.
-	local needlePhase = 0
+	-- The accuracy locked in by each tap so far.
 	local tapsLocked: { number } = {}
 
 	-- The landing watch. A living flight promises no duration, so the
@@ -117,116 +115,22 @@ function Launch.mount(gui: GuiObject, scene: any)
 		Parent = bestBanner,
 	})
 
-	-- ---------- the precision meter ----------
-	-- Bottom centre, where the old charge panel stood. The panel is display
-	-- only: while it is up, INPUT belongs to the full-screen tap catcher
-	-- below, because the instruction is "tap anywhere" and it has to mean it.
-	local panel = UI.make("Frame", {
-		Name = "PrecisionPanel",
-		Size = UDim2.new(0, 440, 0, 148),
-		Position = UDim2.new(0.5, 0, 1, -104),
-		AnchorPoint = Vector2.new(0.5, 1),
-		BackgroundColor3 = C.body,
-		Visible = false,
-		ZIndex = 8,
-		Parent = gui,
-	})
-	UI.corner(16, panel)
-	UI.gradient(panel, C.body, C.bodyDark)
-	UI.stroke(panel, 4)
-
-	-- Pulsed on every locked tap: the whole panel breathes once, which is a
-	-- cheaper and louder acknowledgement than any label change.
-	--
-	-- This UIScale is SHARED: the HUD fitter in init.client.luau owns its
-	-- resting value (it sizes every fixed-pixel panel to the window), and the
-	-- pulse only breathes around that rest. The rest is captured between
-	-- pulses, never mid-pulse, so overlapping taps can't inflate it.
-	local panelScale = UI.make("UIScale", { Scale = 1, Parent = panel }) :: UIScale
-	local pulseRest = 1
-	local pulseLive = false
-
-	local title = UI.label({
-		Size = UDim2.new(1, -20, 0, 30),
-		Position = UDim2.new(0, 10, 0, 8),
-		Text = "",
-		TextSize = 21,
-		ZIndex = 9,
-		Parent = panel,
-	})
-
-	-- The bar: red edges through yellow to a bright green dead centre, as one
-	-- gradient rather than painted segments, so the colour under the needle is
-	-- exactly the accuracy it would score.
-	local track = UI.make("Frame", {
-		Size = UDim2.new(1, -40, 0, 34),
-		Position = UDim2.new(0, 20, 0, 52),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-		ZIndex = 9,
-		Parent = panel,
-	})
-	UI.corner(12, track)
-	UI.stroke(track)
-	UI.make("UIGradient", {
-		Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, Color3.fromRGB(226, 62, 62)),
-			ColorSequenceKeypoint.new(0.26, Color3.fromRGB(248, 206, 68)),
-			ColorSequenceKeypoint.new(0.5, Color3.fromRGB(96, 240, 72)),
-			ColorSequenceKeypoint.new(0.74, Color3.fromRGB(248, 206, 68)),
-			ColorSequenceKeypoint.new(1, Color3.fromRGB(226, 62, 62)),
-		}),
-		Parent = track,
-	})
-
-	-- The needle: a white line through the bar with a triangular pointer
-	-- riding above it. Positioned by scale, so the same 0-1 needle value
-	-- works at any panel width.
-	local needleLine = UI.make("Frame", {
-		Size = UDim2.new(0, 4, 1, 8),
-		Position = UDim2.new(0.5, 0, 0.5, 0),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-		BorderSizePixel = 0,
-		ZIndex = 11,
-		Parent = track,
-	})
-	UI.stroke(needleLine, 2)
-
-	local needleArrow = UI.label({
-		Size = UDim2.new(0, 30, 0, 24),
-		Position = UDim2.new(0.5, 0, 0, -4),
-		AnchorPoint = Vector2.new(0.5, 1),
-		Text = "▼",
-		TextSize = 22,
-		StrokeThickness = 3,
-		ZIndex = 11,
-		Parent = track,
-	})
-
-	-- Live accuracy under the bar, coloured to match where the needle is —
-	-- the number and the colour agree by construction.
-	local precisionLabel = UI.label({
-		Size = UDim2.new(0, 120, 0, 30),
-		Position = UDim2.new(0.5, 0, 0, 96),
-		AnchorPoint = Vector2.new(0.5, 0),
-		Text = "0%",
-		TextSize = 26,
-		StrokeThickness = 3,
-		ZIndex = 9,
-		Parent = panel,
-	})
-
-	-- What each tap scored, filled in left to right, so the average being
-	-- sent is legible rather than a mystery.
+	-- ---------- the locked scores ----------
+	-- The rhythm duel needs no panel and no instructions — the numbered
+	-- circles ARE the instructions. All that shows is what each catch
+	-- scored, filled in left to right above the launch button, so the
+	-- average being sent is legible rather than a mystery.
 	local locksLabel = UI.label({
-		Size = UDim2.new(0, 180, 0, 26),
-		Position = UDim2.new(0, 20, 0, 98),
+		Size = UDim2.new(0, 320, 0, 30),
+		Position = UDim2.new(0.5, 0, 1, -116),
+		AnchorPoint = Vector2.new(0.5, 1),
 		Text = "",
-		TextSize = 16,
+		TextSize = 22,
 		TextColor3 = Color3.fromRGB(252, 224, 140),
-		TextXAlignment = Enum.TextXAlignment.Left,
+		StrokeThickness = 3,
+		Visible = false,
 		ZIndex = 9,
-		Parent = panel,
+		Parent = gui,
 	})
 
 	-- ---------- the tap catcher ----------
@@ -267,18 +171,17 @@ function Launch.mount(gui: GuiObject, scene: any)
 	tapSound.Volume = 0.3
 	tapSound.Parent = SoundService
 
-	-- ---------- the rhythm aim (high power) ----------
-	-- Past Config.RhythmAimMinPower the needle retires and aiming becomes a
-	-- rhythm duel: numbered circles appear one after another at random
-	-- spots, each with an approach ring shrinking onto it, and the press is
-	-- scored by how CLOSED the ring was at that instant. The ring travels
-	-- faster the stronger the cannon (linearly), so the game the meter
-	-- taught keeps escalating instead of topping out. Only the SHAPE of the
-	-- skill changes — three scored taps still average into the same 0-1
-	-- power the server validates regardless.
+	-- ---------- the rhythm aim ----------
+	-- THE aim game, from the very first shot: numbered circles appear one
+	-- after another at random spots, each with an approach ring shrinking
+	-- onto it, and the press is scored by how CLOSED the ring was at that
+	-- instant. The ring travels at a gentle fixed pace until the cannon
+	-- passes Config.RhythmPowerReference, then LINEARLY faster with power,
+	-- so the duel keeps escalating instead of topping out. Three scored
+	-- catches average into the same 0-1 power the server validates
+	-- regardless.
 	local RHYTHM_CIRCLE = 84 -- the target circle's diameter, in pixels
 	local RHYTHM_RING_FROM = 3.4 -- the approach ring starts this many circles wide
-	local rhythmMode = false
 	local rhythmDuration = 1
 	local rhythmStart = 0
 	local rhythmCircle: Frame? = nil
@@ -299,7 +202,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 		clearRhythmCircle()
 		rhythmStart = os.clock()
 		-- A random seat in the middle band of the screen — never under the
-		-- rails, the wallet or the meter panel at the bottom.
+		-- rails, the wallet or the launch controls at the bottom.
 		local x = 0.24 + math.random() * 0.52
 		local y = 0.2 + math.random() * 0.42
 
@@ -633,13 +536,6 @@ function Launch.mount(gui: GuiObject, scene: any)
 	-- walk away and the controls go with you.
 	local nearCannon = false
 
-	local function remainingText(): string
-		local left = Config.LaunchTapsRequired - #tapsLocked
-		if rhythmMode then
-			return ("⭕ Catch the ring as it closes — %d more!"):format(left)
-		end
-		return ("Click/Tap anywhere %d more time%s to Launch"):format(left, left == 1 and "" or "s")
-	end
 
 	local function setStage(next: Stage)
 		stage = next
@@ -648,9 +544,10 @@ function Launch.mount(gui: GuiObject, scene: any)
 			clearRhythmCircle()
 		end
 		local controls = atValley and nearCannon
-		panel.Visible = controls and next == "aim"
-		tapCatcher.Visible = panel.Visible
-		cancelButton.button.Visible = panel.Visible
+		local aiming = controls and next == "aim"
+		tapCatcher.Visible = aiming
+		cancelButton.button.Visible = aiming
+		locksLabel.Visible = aiming
 		flightHud.Visible = atValley and next == "flying"
 		progressTrack.Visible = atValley and next == "flying"
 		summary.root.Visible = atValley and next == "summary"
@@ -660,9 +557,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 			notice.Visible = false
 		end
 
-		if next == "aim" then
-			title.Text = remainingText()
-		elseif next == "idle" then
+		if next == "idle" then
 			launchButton.button.Text = "🚀 LAUNCH!"
 		end
 	end
@@ -710,24 +605,17 @@ function Launch.mount(gui: GuiObject, scene: any)
 
 	local function beginAiming()
 		tapsLocked = {}
-		needlePhase = 0
 		locksLabel.Text = ""
 
-		-- Which aim game this cannon has earned. The needle's furniture
-		-- steps aside in rhythm mode; the panel stays for the title, the
-		-- locked scores and Cancel.
-		rhythmMode = launchPower >= Config.RhythmAimMinPower
-		track.Visible = not rhythmMode
-		precisionLabel.Visible = not rhythmMode
-		if rhythmMode then
-			-- Ring speed grows LINEARLY with power past the threshold,
-			-- floored so the duel stays humanly winnable.
-			rhythmDuration = math.max(
-				Config.RhythmApproachSeconds * Config.RhythmAimMinPower / math.max(launchPower, 1),
-				Config.RhythmApproachMinSeconds
-			)
-			spawnRhythmCircle()
-		end
+		-- Ring speed: a gentle fixed pace until RhythmPowerReference, then
+		-- LINEARLY faster with power, floored so the duel stays humanly
+		-- winnable however monstrous the cannon gets.
+		rhythmDuration = math.clamp(
+			Config.RhythmApproachSeconds * Config.RhythmPowerReference / math.max(launchPower, 1),
+			Config.RhythmApproachMinSeconds,
+			Config.RhythmApproachSeconds
+		)
+		spawnRhythmCircle()
 
 		scene.setView("main")
 		setStage("aim")
@@ -766,49 +654,24 @@ function Launch.mount(gui: GuiObject, scene: any)
 		end)
 	end
 
-	-- `forced` is the rhythm game's timeout path: a ring that fully slipped
-	-- past scores as the fumble it was, and the shot still always fires.
+	-- `forced` is the timeout path: a ring that fully slipped past scores
+	-- as the fumble it was, and the shot still always fires.
 	local function lockTap(forced: number?)
 		if stage ~= "aim" then
 			return
 		end
 
-		local precision
-		if forced then
-			precision = forced
-		elseif rhythmMode then
-			-- Scored by how CLOSED the approach ring was at the press: 1 at
-			-- the instant it meets the circle, falling off on both sides.
+		-- Scored by how CLOSED the approach ring was at the press: 1 at the
+		-- instant it meets the circle, falling off on both sides.
+		local precision = forced
+		if not precision then
 			local p = (os.clock() - rhythmStart) / math.max(rhythmDuration, 1e-3)
 			precision = math.clamp(1 - math.abs(1 - p) * 2.4, 0, 1)
-		else
-			-- Accuracy is distance from the green centre: 1 dead-on, 0 at
-			-- either red edge. Read at the instant of the press, not on the
-			-- next frame.
-			local position = 0.5 + 0.5 * math.sin(needlePhase)
-			precision = 1 - math.abs(position - 0.5) * 2
 		end
 		table.insert(tapsLocked, precision)
 
-		-- Feedback: the panel breathes once, and the tick pitches up with
-		-- each tap so a full set makes a little ascending phrase. The breath
-		-- is RELATIVE to the fitted rest — the first pass tweened to a hard
-		-- 1, which erased the HUD fitter's scale on the very first tap and
-		-- left the meter oversized for every shot after the first.
-		if not pulseLive then
-			pulseRest = panelScale.Scale
-		end
-		pulseLive = true
-		panelScale.Scale = pulseRest * 1.06
-		local pulse = TweenService:Create(panelScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-			Scale = pulseRest,
-		})
-		pulse.Completed:Connect(function(playback)
-			if playback == Enum.PlaybackState.Completed then
-				pulseLive = false
-			end
-		end)
-		pulse:Play()
+		-- The tick pitches up with each catch, so a full set makes a little
+		-- ascending phrase.
 		tapSound.PlaybackSpeed = 0.9 + #tapsLocked * 0.18 + precision * 0.25
 		tapSound:Play()
 
@@ -821,11 +684,8 @@ function Launch.mount(gui: GuiObject, scene: any)
 		if #tapsLocked >= Config.LaunchTapsRequired then
 			fireShot()
 		else
-			title.Text = remainingText()
-			if rhythmMode then
-				-- The next circle of the sequence, somewhere new.
-				spawnRhythmCircle()
-			end
+			-- The next circle of the sequence, somewhere new.
+			spawnRhythmCircle()
 		end
 	end
 
@@ -846,7 +706,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 
 	-- The sweep runs on the render step so the needle moves smoothly; it is
 	-- only ever a display, and the value is read at the instant of the tap.
-	RunService.RenderStepped:Connect(function(dt)
+	RunService.RenderStepped:Connect(function()
 		if stage == "flying" then
 			-- Counting up beside the shot is the whole feedback loop of a
 			-- distance game, so it reads the stage's live position rather than
@@ -878,36 +738,18 @@ function Launch.mount(gui: GuiObject, scene: any)
 			return
 		end
 
-		if rhythmMode then
-			-- The approach ring closes on the circle over rhythmDuration;
-			-- past a grace beyond the meeting point the catch is scored as
-			-- the fumble it was and the duel moves on.
-			local ring = rhythmRing
-			if ring then
-				local p = (os.clock() - rhythmStart) / math.max(rhythmDuration, 1e-3)
-				local scale = math.max(RHYTHM_RING_FROM - (RHYTHM_RING_FROM - 1) * p, 1)
-				ring.Size = UDim2.new(0, RHYTHM_CIRCLE * scale, 0, RHYTHM_CIRCLE * scale)
-				if p > 1.3 then
-					lockTap(0.05)
-				end
+		-- The approach ring closes on the circle over rhythmDuration; past
+		-- a grace beyond the meeting point the catch is scored as the
+		-- fumble it was and the duel moves on.
+		local ring = rhythmRing
+		if ring then
+			local p = (os.clock() - rhythmStart) / math.max(rhythmDuration, 1e-3)
+			local scale = math.max(RHYTHM_RING_FROM - (RHYTHM_RING_FROM - 1) * p, 1)
+			ring.Size = UDim2.new(0, RHYTHM_CIRCLE * scale, 0, RHYTHM_CIRCLE * scale)
+			if p > 1.3 then
+				lockTap(0.05)
 			end
-			return
 		end
-
-		-- A sine sweep: smooth turnarounds at the edges, fastest through the
-		-- green centre — which is exactly what makes the centre hard. Every
-		-- locked tap steps the speed up, so the shot escalates as it goes.
-		local sweepHz = Config.LaunchNeedleHz * Config.LaunchNeedleGrowth ^ #tapsLocked
-		needlePhase += dt * math.pi * 2 * sweepHz
-		local position = 0.5 + 0.5 * math.sin(needlePhase)
-		local precision = 1 - math.abs(position - 0.5) * 2
-
-		needleLine.Position = UDim2.new(position, 0, 0.5, 0)
-		needleArrow.Position = UDim2.new(position, 0, 0, -4)
-		precisionLabel.Text = ("%d%%"):format(math.floor(precision * 100 + 0.5))
-		-- Hue runs red to green with the accuracy, so the number and the bar
-		-- under the needle always agree.
-		precisionLabel.TextColor3 = Color3.fromHSV(precision * 0.33, 0.72, 1)
 	end)
 
 	-- ---------- the settlement, which IS the summary now ----------

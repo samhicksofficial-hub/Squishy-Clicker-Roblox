@@ -77,21 +77,13 @@ local Config = {
 	LaunchMinAngle = 15,
 	LaunchMaxAngle = 75,
 
-	-- ----- The precision meter -----
-	-- Aiming is a timing game now: a needle sweeps a red-yellow-green bar and
-	-- every tap locks in how close to the green centre it was. The AVERAGE of
-	-- the taps is the power sent to the server, so one lucky tap cannot carry
-	-- a shot and one slip cannot sink it.
+	-- ----- The rhythm aim -----
+	-- Aiming is a rhythm duel: numbered circles appear one after another at
+	-- random spots, each with an approach ring shrinking onto it, and every
+	-- press is scored by how CLOSED the ring was at that instant. The
+	-- AVERAGE of the catches is the power sent to the server, so one lucky
+	-- catch cannot carry a shot and one slip cannot sink it.
 	LaunchTapsRequired = 3,
-
-	-- Full needle sweeps per second. Faster is harder: the green window
-	-- passes under the needle more often but for less time.
-	LaunchNeedleHz = 0.55,
-
-	-- Each locked tap multiplies the sweep speed by this, so a shot gets
-	-- harder as it goes: the first tap is the read, the last is the test.
-	-- At 1.35 the third tap sweeps at nearly double the first's speed.
-	LaunchNeedleGrowth = 1.35,
 
 	-- The launch elevation, as the same 0-1 fraction of the angle span the
 	-- old dial sent. Fixed since the meter took over aiming: the skill moved
@@ -100,17 +92,13 @@ local Config = {
 	-- payload — this is a default the client sends, not a rule it enforces.
 	LaunchFixedAngle = 0.55,
 
-	-- ----- Rhythm aim (high power) -----
-	-- Past this much launch power the sweeping needle retires and aiming
-	-- becomes a rhythm duel: numbered circles appear one after another at
-	-- random spots, each with an approach ring shrinking onto it, and the
-	-- press is scored by how CLOSED the ring was at the instant. Same
-	-- contract underneath — the scored taps average into the same 0-1
-	-- power the server validates — only the shape of the skill changes.
-	-- Ring speed scales LINEARLY with launch power past the threshold.
-	RhythmAimMinPower = 50000,
-	RhythmApproachSeconds = 1.15, -- ring travel time at exactly the threshold power
-	RhythmApproachMinSeconds = 0.36, -- the speed cap, however strong the cannon gets
+	-- How fast the ring closes. A gentle fixed pace until launch power
+	-- reaches the reference, then LINEARLY faster with power — double the
+	-- power past the line, half the travel time — floored so the duel
+	-- stays humanly winnable however monstrous the cannon gets.
+	RhythmPowerReference = 50000,
+	RhythmApproachSeconds = 1.15, -- ring travel time at (and below) the reference power
+	RhythmApproachMinSeconds = 0.36, -- the speed cap
 
 	-- ----- Flight feel (client-side FX tuning) -----
 	-- The chase camera's field of view: base at rest, plus this much stretch
