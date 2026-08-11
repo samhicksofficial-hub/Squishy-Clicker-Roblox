@@ -110,8 +110,9 @@ local function repaint()
 		end
 	end
 
-	-- What the team is worth, as the finished numbers the server sent.
-	(buffsLabel :: TextLabel).Text = ("🚀 +%d%% power    💵 ×%.2f cash    🧲 +%.1f magnet\n🎁 collection ×%.2f    🌍 world ×%s"):format(
+	-- What the team is worth, as the finished numbers the server sent —
+	-- three lines, so the TextScaled label renders each one fat.
+	(buffsLabel :: TextLabel).Text = ("🚀 +%d%% power    💵 ×%.2f cash\n🧲 +%.1f magnet    🎁 ×%.2f collection\n🌍 world ×%s"):format(
 		math.floor(((state.teamPower or 0)) * 100 + 0.5),
 		state.teamCash or 1,
 		state.teamMagnet or 0,
@@ -179,6 +180,11 @@ function PlotBoard.setPlot(centre: Vector3)
 	local gui = Instance.new("SurfaceGui")
 	gui.Name = "PlotBoardGui"
 	gui.Face = Enum.NormalId.Front
+	-- The MODE, not just the number: SurfaceGuis default to a fixed 800×600
+	-- canvas and quietly ignore PixelsPerStud until this is set — which is
+	-- how the first board drew its content in the top half and left the
+	-- bottom as bare wood.
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
 	gui.PixelsPerStud = 40
 	gui.Adornee = board
 	gui.Parent = player:WaitForChild("PlayerGui")
@@ -193,47 +199,47 @@ function PlotBoard.setPlot(centre: Vector3)
 	UI.stroke(body, 4)
 
 	UI.label({
-		Size = UDim2.new(1, 0, 0, 44),
-		Position = UDim2.new(0, 0, 0, 4),
+		Size = UDim2.new(1, 0, 0, 38),
+		Position = UDim2.new(0, 0, 0, 2),
 		Text = "⬆️ UPGRADES",
-		TextSize = 30,
+		TextSize = 28,
 		StrokeThickness = 3,
 		Parent = body,
 	})
 
 	levelLabel = UI.label({
-		Size = UDim2.new(1, -24, 0, 26),
-		Position = UDim2.new(0, 12, 0, 52),
+		Size = UDim2.new(1, -24, 0, 24),
+		Position = UDim2.new(0, 12, 0, 42),
 		Text = "",
-		TextSize = 22,
+		TextSize = 20,
 		TextColor3 = Color3.fromRGB(252, 214, 132),
 		Parent = body,
 	})
 	powerLabel = UI.label({
-		Size = UDim2.new(1, -24, 0, 24),
-		Position = UDim2.new(0, 12, 0, 80),
+		Size = UDim2.new(1, -24, 0, 22),
+		Position = UDim2.new(0, 12, 0, 66),
 		Text = "",
-		TextSize = 20,
+		TextSize = 18,
 		Parent = body,
 	})
 
 	buyOne = UI.button({
 		parent = body,
-		size = UDim2.new(0.5, -18, 0, 62),
-		position = UDim2.new(0, 12, 0, 112),
+		size = UDim2.new(0.5, -18, 0, 54),
+		position = UDim2.new(0, 12, 0, 94),
 		text = "BUY 1",
-		textSize = 20,
+		textSize = 19,
 		top = C.green,
 		bottom = C.greenDeep,
 		radius = 12,
 	})
 	buyMax = UI.button({
 		parent = body,
-		size = UDim2.new(0.5, -18, 0, 62),
-		position = UDim2.new(1, -12, 0, 112),
+		size = UDim2.new(0.5, -18, 0, 54),
+		position = UDim2.new(1, -12, 0, 94),
 		anchor = Vector2.new(1, 0),
 		text = "BUY MAX",
-		textSize = 20,
+		textSize = 19,
 		top = C.orange,
 		bottom = C.orangeDeep,
 		radius = 12,
@@ -246,19 +252,21 @@ function PlotBoard.setPlot(centre: Vector3)
 		BuyPower:FireServer("max")
 	end)
 
+	-- The team's buffs own the whole lower board: header plus three fat
+	-- TextScaled lines that stretch to whatever height the sign gives them.
 	UI.label({
-		Size = UDim2.new(1, -24, 0, 24),
-		Position = UDim2.new(0, 12, 0, 182),
+		Size = UDim2.new(1, -24, 0, 26),
+		Position = UDim2.new(0, 12, 0, 154),
 		Text = "— YOUR TEAM'S BUFFS —",
-		TextSize = 17,
+		TextSize = 20,
 		TextColor3 = Color3.fromRGB(214, 236, 255),
 		Parent = body,
 	})
 	buffsLabel = UI.label({
-		Size = UDim2.new(1, -24, 0, 46),
-		Position = UDim2.new(0, 12, 0, 206),
+		Size = UDim2.new(1, -32, 1, -190),
+		Position = UDim2.new(0, 16, 0, 182),
 		Text = "",
-		TextSize = 17,
+		TextScaled = true,
 		Parent = body,
 	})
 
