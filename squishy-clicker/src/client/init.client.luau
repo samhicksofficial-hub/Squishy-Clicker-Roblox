@@ -29,6 +29,7 @@ local Launch = require(script:WaitForChild("Launch"))
 local King = require(script:WaitForChild("King"))
 local Cannon = require(script:WaitForChild("Cannon"))
 local Market = require(script:WaitForChild("Market"))
+local PlotBoard = require(script:WaitForChild("PlotBoard"))
 -- Required up here as well as inside the plot wiring below, because refresh()
 -- needs it to keep the flying squishy matched to the equipped one.
 local ClientFlight = require(script:WaitForChild("Flight"))
@@ -985,6 +986,7 @@ local function refresh()
 	Launch.setBest(state.bestDistance or 0)
 	Cannon.update(state)
 	Market.update(state)
+	PlotBoard.update(state)
 
 	unboxButton.Text = ("📦 Unbox (%d)"):format(state.unopened)
 	unboxButton.BackgroundColor3 = state.unopened > 0 and COLOR.mint or COLOR.locked
@@ -1172,6 +1174,8 @@ do
 		local centre = plot:GetAttribute("PlotCenter")
 		if typeof(centre) == "Vector3" then
 			Flight.setPlot(centre)
+			-- The upgrade board stands itself up beside the same cannon.
+			PlotBoard.setPlot(centre)
 		end
 	end
 

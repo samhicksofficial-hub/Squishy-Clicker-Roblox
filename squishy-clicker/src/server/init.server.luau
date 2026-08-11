@@ -579,6 +579,7 @@ local function sync(player: Player)
 	if not data then
 		return
 	end
+	local bonuses = squishyBonuses(data)
 	SyncData:FireClient(player, {
 		counts = data.counts,
 		stars = data.stars,
@@ -608,6 +609,11 @@ local function sync(player: Player)
 		-- The collection's permanent cash bonus, as a finished multiplier —
 		-- the market menu shows it as the reason to keep meeting new faces.
 		collectionBonus = collectionBonus(data),
+		-- The summoned team's combined buffs, finished numbers for the
+		-- plot-side upgrade board.
+		teamPower = bonuses.power,
+		teamCash = bonuses.coins,
+		teamMagnet = bonuses.magnet,
 		-- The active world and what it pays, as finished numbers: the Worlds
 		-- panel and the island repaint both key off these.
 		worldId = data.worldId,
@@ -1278,25 +1284,33 @@ end)
 
 -- ---------- Cannon progression ----------
 
--- Buying power. The client sends nothing at all: it cannot name a level, a
--- price or a quantity, so the only thing it can do is ask for the next one.
-BuyPower.OnServerEvent:Connect(function(player)
+-- Buying power. The client names an INTENT and nothing else: no level, no
+-- price, no count. Bare = one level; "max" = walk the ladder level by
+-- level until the wallet says stop, each step priced and checked HERE.
+BuyPower.OnServerEvent:Connect(function(player, mode)
 	local data = dataByPlayer[player]
 	if not data or overRate(data, "buyPower", 8) then
 		return
 	end
-	if data.powerLevel >= Config.LaunchMaxPowerLevel then
-		return
-	end
 
-	local cost = powerUpgradeCost(data.powerLevel)
-	if data.coins < cost then
-		return -- server says no
-	end
+	local wantMax = mode == "max"
+	local bought = 0
+	repeat
+		if data.powerLevel >= Config.LaunchMaxPowerLevel then
+			break
+		end
+		local cost = powerUpgradeCost(data.powerLevel)
+		if data.coins < cost then
+			break
+		end
+		data.coins -= cost
+		data.powerLevel += 1
+		bought += 1
+	until not wantMax or bought >= 500
 
-	data.coins -= cost
-	data.powerLevel += 1
-	sync(player)
+	if bought > 0 then
+		sync(player)
+	end
 end)
 
 -- Rebirth: spend the cannon's whole run for a permanent multiplier. Gated on
