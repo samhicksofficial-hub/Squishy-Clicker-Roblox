@@ -168,6 +168,10 @@ function PlotBoard.setPlot(centre: Vector3)
 	local board = woodPart(Vector3.new(11, 6.4, 0.5), face)
 	board.Color = Color3.fromRGB(92, 62, 40)
 	board.Material = Enum.Material.WoodPlanks
+	-- The one part that must be raycast-visible: the gui's buttons only
+	-- receive clicks if the mouse can HIT the Adornee, and woodPart's
+	-- CanQuery=false (right for the posts) made every click sail through.
+	board.CanQuery = true
 
 	-- The gui lives under PlayerGui with the board as Adornee — parented to
 	-- the part itself, buttons stop receiving input (the same lesson the
