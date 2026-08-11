@@ -8,11 +8,12 @@
 --  and the cannon buffs it grants while summoned — plus the
 --  MY SQUISHY TEAM strip up top showing the three slots.
 --
---  Pure viewing glass over the server's numbers: the only remote
---  it ever fires is SetActive (add to / drop from the team), and
---  the server re-checks ownership and the slot limit regardless.
---  Copies, stars and buffs are all read from the same SyncData
---  snapshot the collection panel draws from.
+--  Pure viewing glass over the server's numbers: the only remotes
+--  it ever fires are SetActive (add to / drop from the team) and
+--  SetClicker (make it the MAIN squisher), and the server re-checks
+--  ownership and the slot limit regardless. Copies, stars and buffs
+--  are all read from the same SyncData snapshot the collection
+--  panel draws from.
 -- ============================================================
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -55,6 +56,7 @@ local rerender: () -> () = function() end
 function Market.mount(gui: GuiObject)
 	local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 	local SetActive = Remotes:WaitForChild("SetActive") :: RemoteEvent
+	local SetClicker = Remotes:WaitForChild("SetClicker") :: RemoteEvent
 
 	local Z = 30 -- above the nav-rail panels, which sit in the low twenties
 
@@ -505,9 +507,32 @@ function Market.mount(gui: GuiObject)
 				Vector3.one * preview.sizeScale
 			)
 
+			-- The camera frames the model's REAL bounds rather than sitting at
+			-- a fixed seat: the fixed seat was tuned on a dumpling, and every
+			-- taller squishy since lost its head off the top of the window.
+			local top, radius = 1.6, 2
+			for _, part in stageModels:GetDescendants() do
+				if part:IsA("BasePart") and part ~= cushion then
+					local half = part.Size * 0.5
+					top = math.max(top, part.Position.Y + half.Y)
+					radius = math.max(
+						radius,
+						math.abs(part.Position.X) + half.X,
+						math.abs(part.Position.Z) + half.Z
+					)
+				end
+			end
+			-- Vertical half-extent from cushion bottom to crown, plus a
+			-- breath of margin; the distance that fits it in a 32° lens.
+			local halfSpan = math.max((top + 0.5) * 0.5 + 0.5, radius * 0.55)
+			local centreY = (top - 0.5) * 0.5
+			local distance = halfSpan / math.tan(math.rad(16))
 			local camera = Instance.new("Camera")
 			camera.FieldOfView = 32
-			camera.CFrame = CFrame.lookAt(Vector3.new(0, 2.1, 6.4), Vector3.new(0, 0.5, 0))
+			camera.CFrame = CFrame.lookAt(
+				Vector3.new(0, centreY + distance * 0.24, distance),
+				Vector3.new(0, centreY, 0)
+			)
 			camera.Parent = stageFrame
 			stageFrame.CurrentCamera = camera
 
@@ -707,6 +732,32 @@ function Market.mount(gui: GuiObject)
 			ZIndex = Z + 3,
 			Parent = detail,
 		})
+
+		-- ---------- main-squisher button ----------
+		-- The barrel'd squishy is picked HERE too, not only by tapping a
+		-- face in the collection list: this card is where its cannon
+		-- ability is being read, so the button belongs beside it. The
+		-- server re-checks ownership like always.
+		if discovered then
+			local isMain = latest.clickerId == squishy.id
+			local main = UI.button({
+				parent = detail,
+				size = UDim2.new(0, 240, 0, 40),
+				text = isMain and "★ YOUR MAIN SQUISHY" or "★ MAKE MAIN SQUISHY",
+				textSize = 16,
+				top = UI.color.purple,
+				bottom = UI.color.purpleDeep,
+				zIndex = Z + 3,
+			})
+			main.button.LayoutOrder = nextOrder()
+			if isMain then
+				UI.setButtonEnabled(main, false, UI.color.purple, UI.color.purpleDeep)
+			else
+				main.button.Activated:Connect(function()
+					SetClicker:FireServer(squishy.id)
+				end)
+			end
+		end
 
 		-- ---------- team button ----------
 		if discovered then
