@@ -992,8 +992,13 @@ local function drawTrackObjects(idleClock: number)
 				end
 			end
 			if part then
+				-- Seated no lower than its own half-height plus bob room: a
+				-- ground-line entry RESTS on the floor instead of sinking
+				-- through it — the cartoon bombs used to sit buried to the
+				-- fuse, because "height 2" meant the CENTRE of an 8-stud part.
+				local rest = math.max(entry.height, part.Size.Y * 0.5 + 1)
 				local base = corridorAt(entry.distance, 0)
-					+ Vector3.new(0, math.max(entry.height, 2), 0)
+					+ Vector3.new(0, rest, 0)
 					+ SIDE * laneToStuds(entry.lane)
 				bases[id] = base
 				part.Transparency = if part:GetAttribute("MeshBase") then 0 else fallbackTransparency
