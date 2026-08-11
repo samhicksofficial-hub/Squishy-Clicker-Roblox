@@ -71,6 +71,7 @@ function Launch.mount(gui: GuiObject, scene: any)
 	local stage: Stage = "idle"
 	local readyIn = 0 -- seconds left on the cooldown, straight from the server
 	local best = 0 -- furthest ever flown, straight from the server
+	local launchPower = 0 -- the cannon's power, straight from the server (picks the aim game)
 	-- Bumped on every shot AND every reply, so a late watchdog can tell
 	-- whether the shot it was armed for is still the one in the air.
 	local shotToken = 0
@@ -265,6 +266,78 @@ function Launch.mount(gui: GuiObject, scene: any)
 	tapSound.SoundId = "rbxasset://sounds/electronicpingshort.wav"
 	tapSound.Volume = 0.3
 	tapSound.Parent = SoundService
+
+	-- ---------- the rhythm aim (high power) ----------
+	-- Past Config.RhythmAimMinPower the needle retires and aiming becomes a
+	-- rhythm duel: numbered circles appear one after another at random
+	-- spots, each with an approach ring shrinking onto it, and the press is
+	-- scored by how CLOSED the ring was at that instant. The ring travels
+	-- faster the stronger the cannon (linearly), so the game the meter
+	-- taught keeps escalating instead of topping out. Only the SHAPE of the
+	-- skill changes — three scored taps still average into the same 0-1
+	-- power the server validates regardless.
+	local RHYTHM_CIRCLE = 84 -- the target circle's diameter, in pixels
+	local RHYTHM_RING_FROM = 3.4 -- the approach ring starts this many circles wide
+	local rhythmMode = false
+	local rhythmDuration = 1
+	local rhythmStart = 0
+	local rhythmCircle: Frame? = nil
+	local rhythmRing: Frame? = nil
+
+	local function clearRhythmCircle()
+		if rhythmCircle then
+			rhythmCircle:Destroy()
+			rhythmCircle = nil
+		end
+		if rhythmRing then
+			rhythmRing:Destroy()
+			rhythmRing = nil
+		end
+	end
+
+	local function spawnRhythmCircle()
+		clearRhythmCircle()
+		rhythmStart = os.clock()
+		-- A random seat in the middle band of the screen — never under the
+		-- rails, the wallet or the meter panel at the bottom.
+		local x = 0.24 + math.random() * 0.52
+		local y = 0.2 + math.random() * 0.42
+
+		local circle = UI.make("Frame", {
+			Size = UDim2.new(0, RHYTHM_CIRCLE, 0, RHYTHM_CIRCLE),
+			Position = UDim2.new(x, 0, y, 0),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundColor3 = C.green,
+			ZIndex = 52,
+			Parent = gui,
+		}) :: Frame
+		UI.make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = circle })
+		UI.stroke(circle, 4)
+		UI.label({
+			Size = UDim2.fromScale(1, 1),
+			Text = tostring(#tapsLocked + 1),
+			TextSize = 40,
+			StrokeThickness = 3,
+			ZIndex = 53,
+			Parent = circle,
+		})
+
+		-- The approach ring: an empty circle outline that the render loop
+		-- shrinks onto the target. Catch it at its smallest for the 100%.
+		local ring = UI.make("Frame", {
+			Size = UDim2.new(0, RHYTHM_CIRCLE * RHYTHM_RING_FROM, 0, RHYTHM_CIRCLE * RHYTHM_RING_FROM),
+			Position = UDim2.new(x, 0, y, 0),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundTransparency = 1,
+			ZIndex = 51,
+			Parent = gui,
+		}) :: Frame
+		UI.make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = ring })
+		UI.stroke(ring, 5, Color3.fromRGB(255, 255, 255))
+
+		rhythmCircle = circle
+		rhythmRing = ring
+	end
 
 	-- ---------- the notice line ----------
 	-- Sits just above the launch button and says why a shot did not happen.
@@ -562,11 +635,18 @@ function Launch.mount(gui: GuiObject, scene: any)
 
 	local function remainingText(): string
 		local left = Config.LaunchTapsRequired - #tapsLocked
+		if rhythmMode then
+			return ("⭕ Catch the ring as it closes — %d more!"):format(left)
+		end
 		return ("Click/Tap anywhere %d more time%s to Launch"):format(left, left == 1 and "" or "s")
 	end
 
 	local function setStage(next: Stage)
 		stage = next
+		-- Leaving the aim for ANY reason takes the rhythm circles with it.
+		if next ~= "aim" then
+			clearRhythmCircle()
+		end
 		local controls = atValley and nearCannon
 		panel.Visible = controls and next == "aim"
 		tapCatcher.Visible = panel.Visible
@@ -632,6 +712,23 @@ function Launch.mount(gui: GuiObject, scene: any)
 		tapsLocked = {}
 		needlePhase = 0
 		locksLabel.Text = ""
+
+		-- Which aim game this cannon has earned. The needle's furniture
+		-- steps aside in rhythm mode; the panel stays for the title, the
+		-- locked scores and Cancel.
+		rhythmMode = launchPower >= Config.RhythmAimMinPower
+		track.Visible = not rhythmMode
+		precisionLabel.Visible = not rhythmMode
+		if rhythmMode then
+			-- Ring speed grows LINEARLY with power past the threshold,
+			-- floored so the duel stays humanly winnable.
+			rhythmDuration = math.max(
+				Config.RhythmApproachSeconds * Config.RhythmAimMinPower / math.max(launchPower, 1),
+				Config.RhythmApproachMinSeconds
+			)
+			spawnRhythmCircle()
+		end
+
 		scene.setView("main")
 		setStage("aim")
 	end
@@ -669,15 +766,28 @@ function Launch.mount(gui: GuiObject, scene: any)
 		end)
 	end
 
-	local function lockTap()
+	-- `forced` is the rhythm game's timeout path: a ring that fully slipped
+	-- past scores as the fumble it was, and the shot still always fires.
+	local function lockTap(forced: number?)
 		if stage ~= "aim" then
 			return
 		end
 
-		-- Accuracy is distance from the green centre: 1 dead-on, 0 at either
-		-- red edge. Read at the instant of the press, not on the next frame.
-		local position = 0.5 + 0.5 * math.sin(needlePhase)
-		local precision = 1 - math.abs(position - 0.5) * 2
+		local precision
+		if forced then
+			precision = forced
+		elseif rhythmMode then
+			-- Scored by how CLOSED the approach ring was at the press: 1 at
+			-- the instant it meets the circle, falling off on both sides.
+			local p = (os.clock() - rhythmStart) / math.max(rhythmDuration, 1e-3)
+			precision = math.clamp(1 - math.abs(1 - p) * 2.4, 0, 1)
+		else
+			-- Accuracy is distance from the green centre: 1 dead-on, 0 at
+			-- either red edge. Read at the instant of the press, not on the
+			-- next frame.
+			local position = 0.5 + 0.5 * math.sin(needlePhase)
+			precision = 1 - math.abs(position - 0.5) * 2
+		end
 		table.insert(tapsLocked, precision)
 
 		-- Feedback: the panel breathes once, and the tick pitches up with
@@ -712,13 +822,21 @@ function Launch.mount(gui: GuiObject, scene: any)
 			fireShot()
 		else
 			title.Text = remainingText()
+			if rhythmMode then
+				-- The next circle of the sequence, somewhere new.
+				spawnRhythmCircle()
+			end
 		end
 	end
 
 	-- MouseButton1Down rather than Activated: a timing game has to read the
 	-- press, not the release, or fast taps score the wrong needle position.
-	-- (Touch taps fire this too.)
-	tapCatcher.MouseButton1Down:Connect(lockTap)
+	-- (Touch taps fire this too.) Wrapped, NOT connected directly: the
+	-- signal passes the click's x, y — which lockTap would read as its
+	-- `forced` score.
+	tapCatcher.MouseButton1Down:Connect(function()
+		lockTap()
+	end)
 
 	launchButton.button.Activated:Connect(function()
 		if stage == "idle" and readyIn <= 0 then
@@ -757,6 +875,22 @@ function Launch.mount(gui: GuiObject, scene: any)
 			return
 		end
 		if stage ~= "aim" then
+			return
+		end
+
+		if rhythmMode then
+			-- The approach ring closes on the circle over rhythmDuration;
+			-- past a grace beyond the meeting point the catch is scored as
+			-- the fumble it was and the duel moves on.
+			local ring = rhythmRing
+			if ring then
+				local p = (os.clock() - rhythmStart) / math.max(rhythmDuration, 1e-3)
+				local scale = math.max(RHYTHM_RING_FROM - (RHYTHM_RING_FROM - 1) * p, 1)
+				ring.Size = UDim2.new(0, RHYTHM_CIRCLE * scale, 0, RHYTHM_CIRCLE * scale)
+				if p > 1.3 then
+					lockTap(0.05)
+				end
+			end
 			return
 		end
 
@@ -886,6 +1020,12 @@ function Launch.mount(gui: GuiObject, scene: any)
 	function Launch.setBest(distance: number)
 		best = math.max(distance, 0)
 		bestLabel.Text = ("🏆 Best  %s Studs"):format(Format.abbreviate(math.floor(best)))
+	end
+
+	-- The server's launchPower, straight from sync: what decides whether
+	-- aiming is the needle or the rhythm duel, and how fast the ring flies.
+	function Launch.setPower(power: number)
+		launchPower = math.max(power or 0, 0)
 	end
 
 	function Launch.setNearCannon(near: boolean)

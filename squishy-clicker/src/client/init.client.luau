@@ -984,6 +984,7 @@ local function refresh()
 	-- server's to know, not ours to guess.
 	Launch.setReadyIn(state.launchReadyIn or 0)
 	Launch.setBest(state.bestDistance or 0)
+	Launch.setPower(state.launchPower or 0)
 	Cannon.update(state)
 	Market.update(state)
 	PlotBoard.update(state)

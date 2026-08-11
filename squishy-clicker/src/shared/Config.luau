@@ -100,6 +100,18 @@ local Config = {
 	-- payload — this is a default the client sends, not a rule it enforces.
 	LaunchFixedAngle = 0.55,
 
+	-- ----- Rhythm aim (high power) -----
+	-- Past this much launch power the sweeping needle retires and aiming
+	-- becomes a rhythm duel: numbered circles appear one after another at
+	-- random spots, each with an approach ring shrinking onto it, and the
+	-- press is scored by how CLOSED the ring was at the instant. Same
+	-- contract underneath — the scored taps average into the same 0-1
+	-- power the server validates — only the shape of the skill changes.
+	-- Ring speed scales LINEARLY with launch power past the threshold.
+	RhythmAimMinPower = 50000,
+	RhythmApproachSeconds = 1.15, -- ring travel time at exactly the threshold power
+	RhythmApproachMinSeconds = 0.36, -- the speed cap, however strong the cannon gets
+
 	-- ----- Flight feel (client-side FX tuning) -----
 	-- The chase camera's field of view: base at rest, plus this much stretch
 	-- at full launch speed (70 up to 92). It eases rather than jumps —
