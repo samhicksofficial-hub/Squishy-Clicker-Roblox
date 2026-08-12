@@ -171,6 +171,25 @@ local function decor(part: BasePart): BasePart
 	return part
 end
 
+-- The sea kills on contact: no barrier stops a player walking off the
+-- plateau's rim anymore, so the water is what ends the fall instead of
+-- Roblox's own kill-plane far below. CanTouch stays on (unlike decor()), and
+-- CanCollide off — the water should catch the fall as a touch, not as a
+-- floor to land and stand on.
+local function drowns(part: BasePart): BasePart
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = true
+	part.Touched:Connect(function(hit: BasePart)
+		local character = hit:FindFirstAncestorOfClass("Model")
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if humanoid and humanoid.Health > 0 then
+			humanoid.Health = 0
+		end
+	end)
+	return part
+end
+
 local function signPost(at: Vector3, text: string, color: Color3, parent: Instance, labelHeight: number?): TextLabel
 	local post = decor(block(Vector3.new(0.6, 7, 0.6), CFrame.new(at + Vector3.new(0, 3.5, 0)), COLOR.wood, parent))
 	post.Material = Enum.Material.Wood
@@ -222,7 +241,7 @@ local function buildGround()
 	local sea = cylinder(PLAIN_RADIUS * 2, 12, Vector3.new(0, slabAt(Y.plain - 4, 12), 0), COLOR.water, ground)
 	sea.Name = "Sea"
 	sea.Material = Enum.Material.SmoothPlastic
-	decor(sea)
+	drowns(sea)
 
 	-- The water carries to the horizon. The radial span (≈1985) sits just
 	-- under the 2048 Part clamp — one ring of segments carries it all, each
@@ -242,7 +261,7 @@ local function buildGround()
 		)
 		piece.Name = "Sea"
 		piece.Material = Enum.Material.SmoothPlastic
-		decor(piece)
+		drowns(piece)
 	end
 
 	-- The plateau the base sits on. A thick sand slab dropping to the plain,
@@ -260,21 +279,6 @@ local function buildGround()
 		cylinder((ISLAND_RADIUS - BEACH_WIDTH) * 2, 8, Vector3.new(0, slabAt(Y.field, 8), 0), COLOR.grass, ground)
 	field.Name = "Grass"
 	studded(field)
-
-	-- An invisible lip right at the plateau edge. The plain below is scenery
-	-- with no collision, so without this a player who wandered off the rim
-	-- would drop straight through it and fall until Roblox respawned them.
-	-- Invisible rather than a fence, because a fence is exactly the thing that
-	-- was blocking the view in the first place.
-	local SEGMENTS = 48
-	local width = 2 * math.pi * ISLAND_RADIUS / SEGMENTS + 3
-	for index = 1, SEGMENTS do
-		local angle = (index / SEGMENTS) * math.pi * 2
-		local at = Vector3.new(math.cos(angle) * ISLAND_RADIUS, GROUND_Y + 4, math.sin(angle) * ISLAND_RADIUS)
-		local rail = block(Vector3.new(2, 10, width), CFrame.new(at) * CFrame.Angles(0, -angle, 0), COLOR.sand, ground)
-		rail.Transparency = 1
-		rail.CanQuery = false
-	end
 
 	-- The plaza: a big stone disc with a path-coloured rim, and the event
 	-- floor for King of the Steamer. Its size is the reason the island is as
@@ -901,46 +905,6 @@ end
 
 -- ---------- assembly ----------
 
--- ---------- barriers ----------
--- One job, one force-field look: a ring at the island rim that stops anyone
--- walking off the plateau into the sea. The walls FADE: built at their
--- "seen" transparency here, then eased fully clear by the client
--- (init.client.luau) whenever the character is far away — the island
--- shouldn't read as caged from across the plaza.
-local BARRIER_COLOR = Color3.fromRGB(96, 178, 255)
-local BARRIER_HEIGHT = 26
-
-local function barrierPart(size: Vector3, cframe: CFrame, parent: Instance): Part
-	local wall = block(size, cframe, BARRIER_COLOR, parent)
-	wall.Material = Enum.Material.ForceField
-	wall.CastShadow = false
-	-- Collidable but otherwise inert: never catches clicks or touch events.
-	wall.CanQuery = false
-	wall.CanTouch = false
-	return wall
-end
-
-local function buildBarriers()
-	local barriers = group("Barriers")
-
-	-- The rim ring, just inside the beach edge so every walkable stud stays
-	-- inside it. Sunk a few studs so dips in the beach don't open a gap.
-	local SEGMENTS = 48
-	local radius = ISLAND_RADIUS - 2
-	local width = 2 * math.pi * radius / SEGMENTS + 1.5
-	for segment = 1, SEGMENTS do
-		local angle = segment / SEGMENTS * math.pi * 2
-		local at = Vector3.new(math.cos(angle) * radius, GROUND_Y + BARRIER_HEIGHT * 0.5 - 3, math.sin(angle) * radius)
-		local wall = barrierPart(
-			Vector3.new(2, BARRIER_HEIGHT, width),
-			CFrame.new(at) * CFrame.Angles(0, -angle, 0),
-			barriers
-		)
-		wall.Transparency = 0.45
-		wall:SetAttribute("BarrierFade", true)
-	end
-end
-
 -- The sky. Two paths, in order of preference:
 --
 -- 1. Config.SkyTextures filled in: the server BUILDS the sky from those ids
@@ -1185,7 +1149,6 @@ function Island.build()
 	buildPaths()
 	buildScenery()
 	buildSpawn()
-	buildBarriers()
 
 	for index = 1, Island.PLOT_COUNT do
 		table.insert(plots, buildPlot(index))

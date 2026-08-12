@@ -312,6 +312,13 @@ breaks. Glass and neon squishies are skipped deliberately — being see-through
 or glowing is the point of those — and an imported mesh with its own texture
 keeps that texture.
 
+## Guide path
+
+A trail of yellow ">" arrows (`GuidePath.luau`) points a player from wherever
+they are back to the centre of their own plot — a straight 3D line floating
+at chest height, arrows marching forward along it like a conveyor belt. Built
+entirely from parts, no import needed.
+
 ## Debug menu
 
 Press **F2** in Studio (or click 🐛 Debug, top of the screen) for a test menu:
