@@ -502,7 +502,7 @@ local MESH_SHAPES: { [string]: MeshConfig } = {
 	dropmesh = { template = "SparkleDrop", yaw = 0, fallback = "drop" },
 	brainmesh = { template = "SquishyBrain", yaw = 0, fallback = "brain" },
 	blobfishmesh = { template = "BlobfishSquishy", yaw = 0, fallback = "blobfish" },
-	cloudmesh = { template = "DoughCloud", yaw = 0, fallback = "cloud" },
+	cloudmesh = { template = "DoughCloud", yaw = 90, fallback = "cloud" },
 	strawberrymesh = { template = "StrawberrySquishy", yaw = 0, fallback = "strawberry" },
 	-- No pug among the primitives, so a plain ball stands in if the model
 	-- isn't in the place.
