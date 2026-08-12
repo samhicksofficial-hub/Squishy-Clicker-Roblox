@@ -1079,8 +1079,11 @@ settleFlight = function(player: Player, data: PlayerData, events: { any })
 		end
 	end
 
-	-- Each slam's burst: the untaken cash near its impact point.
-	local slamRadius = math.max(finalDistance * Config.SlamRadiusFraction, Config.SlamRadiusMin)
+	-- Each slam's burst: the untaken cash near its impact point. CLAMPED
+	-- both ways — the distance fraction alone grew into a thousand-stud
+	-- vacuum on endless flights.
+	local slamRadius =
+		math.clamp(finalDistance * Config.SlamRadiusFraction, Config.SlamRadiusMin, Config.SlamRadiusMax)
 	for _, centre in burstCentres do
 		local fromChunk = math.max(Track.chunkAt(centre.distance - slamRadius), 0)
 		for index = fromChunk, Track.chunkAt(centre.distance + slamRadius) do

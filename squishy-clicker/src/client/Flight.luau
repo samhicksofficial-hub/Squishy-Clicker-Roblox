@@ -1280,7 +1280,7 @@ end
 -- distance, unknown mid-flight, so this draws with the running distance —
 -- the settlement can only pay MORE than what pops here.
 local function slamBurst(atDistance: number, lane: number)
-	local radius = math.max(shot.flown * Config.SlamRadiusFraction, Config.SlamRadiusMin)
+	local radius = math.clamp(shot.flown * Config.SlamRadiusFraction, Config.SlamRadiusMin, Config.SlamRadiusMax)
 	local fromChunk = math.max(Track.chunkAt(atDistance - radius), 0)
 	for chunkIndex = fromChunk, Track.chunkAt(atDistance + radius) do
 		for _, entry in chunkFor(chunkIndex).pickups do

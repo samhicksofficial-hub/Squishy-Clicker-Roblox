@@ -313,8 +313,12 @@ local Config = {
 	-- ground and bursts the cash near the impact point off the track.
 	SlamMaxPerFlight = 3,
 	SlamDiveSpeed = 95, -- the dive's downward speed, in the live sim's studs/sec
-	SlamRadiusFraction = 0.05, -- of the shot's distance...
-	SlamRadiusMin = 12, -- ...but never tighter than this, in sim studs
+	SlamRadiusFraction = 0.02, -- of the shot's distance...
+	SlamRadiusMin = 12, -- ...never tighter than this, in sim studs...
+	-- ...and never wider than this. The fraction alone was tuned for the
+	-- bounded range; against endless flights it scaled into a vacuum that
+	-- swept cash from thousands of studs away. A slam is a local burst.
+	SlamRadiusMax = 90,
 	SlamLaneRadius = 14,
 
 	-- ===== Boost Boots =====
