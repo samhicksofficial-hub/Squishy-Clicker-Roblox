@@ -615,10 +615,14 @@ function Launch.mount(gui: GuiObject, scene: any)
 			Config.RhythmApproachMinSeconds,
 			Config.RhythmApproachSeconds
 		)
-		spawnRhythmCircle()
 
+		-- Stage FIRST, circle second. setView re-fires the view listener,
+		-- and that listener re-runs setStage with whatever stage is current
+		-- — which was "idle", and leaving-aim cleanup ate a circle spawned
+		-- any earlier: an aim with no ring, no timeout and no way to fire.
 		scene.setView("main")
 		setStage("aim")
+		spawnRhythmCircle()
 	end
 
 	local function fireShot()
@@ -742,13 +746,17 @@ function Launch.mount(gui: GuiObject, scene: any)
 		-- a grace beyond the meeting point the catch is scored as the
 		-- fumble it was and the duel moves on.
 		local ring = rhythmRing
-		if ring then
-			local p = (os.clock() - rhythmStart) / math.max(rhythmDuration, 1e-3)
-			local scale = math.max(RHYTHM_RING_FROM - (RHYTHM_RING_FROM - 1) * p, 1)
-			ring.Size = UDim2.new(0, RHYTHM_CIRCLE * scale, 0, RHYTHM_CIRCLE * scale)
-			if p > 1.3 then
-				lockTap(0.05)
-			end
+		if not ring then
+			-- Belt and braces: an aim stage with no ring would otherwise
+			-- sit forever — no circle, no timeout, no way to fire.
+			spawnRhythmCircle()
+			return
+		end
+		local p = (os.clock() - rhythmStart) / math.max(rhythmDuration, 1e-3)
+		local scale = math.max(RHYTHM_RING_FROM - (RHYTHM_RING_FROM - 1) * p, 1)
+		ring.Size = UDim2.new(0, RHYTHM_CIRCLE * scale, 0, RHYTHM_CIRCLE * scale)
+		if p > 1.3 then
+			lockTap(0.05)
 		end
 	end)
 
