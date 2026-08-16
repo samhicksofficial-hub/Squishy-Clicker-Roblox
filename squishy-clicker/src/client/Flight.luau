@@ -1034,7 +1034,23 @@ function Flight.setPlot(centre: Vector3, plotFolder: Instance?)
 	-- generated world) falls back to the badge's classic perch.
 	capsuleSeat = nil
 	if plotFolder then
-		local capsule = findLoose(plotFolder, "capsule")
+		-- Matched by GEOMETRY, not by folder: the capsule models' parents
+		-- and positions can disagree after hand-editing (they did), and the
+		-- server's rescue guarantees the one actually STANDING at this plot
+		-- is the one to dress. Nearest capsule model within the plot wins.
+		local capsule: Instance? = nil
+		local bestAway = 40
+		local plotsFolder = plotFolder.Parent or plotFolder
+		for _, descendant in plotsFolder:GetDescendants() do
+			if descendant:IsA("Model") and descendant.Name:lower():find("capsule", 1, true) then
+				local pivot = descendant:GetPivot().Position
+				local away = Vector3.new(pivot.X - flat.X, 0, pivot.Z - flat.Z).Magnitude
+				if away < bestAway then
+					bestAway = away
+					capsule = descendant
+				end
+			end
+		end
 		if capsule then
 			local boundsCF: CFrame? = nil
 			local boundsSize: Vector3? = nil

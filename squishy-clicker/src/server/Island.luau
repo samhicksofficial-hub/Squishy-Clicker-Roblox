@@ -1084,41 +1084,77 @@ local function adoptPlots(map: Folder): boolean
 			owner = nil,
 		})
 
-		-- The plot's hand-placed capsule model, RESCUED if it never got
-		-- moved: pasting a model into a plot's folder leaves its geometry
-		-- wherever it stood, and eight pasted copies stack into a tower at
-		-- the original's spot. A capsule found standing OUTSIDE its own
-		-- plot is seated at the station — on the pad, facing outward,
-		-- sized like the pod it replaces. One already standing within its
-		-- plot is the builder's own placement and is left exactly alone.
-		local capsule: Model? = nil
-		for _, descendant in folder:GetDescendants() do
-			if descendant:IsA("Model") and descendant.Name:lower():find("capsule", 1, true) then
-				capsule = descendant
-				break
-			end
-		end
-		if capsule then
-			for _, part in capsule:GetDescendants() do
+	end
+
+	-- ---------- the plot capsules ----------
+	-- Hand-placed capsule models, matched to plots by GEOMETRY rather than
+	-- by folder: paste-and-drag leaves parents and positions disagreeing in
+	-- every direction (the builder's posed capsule sat in one plot's folder
+	-- while standing at another plot's station, and a folder-trusting
+	-- rescue hauled it away from the pose it was dialled into). A capsule
+	-- STANDING in a plot is the builder's reference and is never touched;
+	-- its pose — read live off the model, no hand-derived Euler angles to
+	-- get wrong — replays onto a spare for every plot without one, each in
+	-- its own frame (local +X = outward).
+	local function plotFrame(centre: Vector3): CFrame
+		return CFrame.new(centre.X, 0, centre.Z) * CFrame.Angles(0, -math.atan2(centre.Z, centre.X), 0)
+	end
+
+	local capsules: { Model } = {}
+	for _, descendant in plotsFolder:GetDescendants() do
+		if descendant:IsA("Model") and descendant.Name:lower():find("capsule", 1, true) then
+			for _, part in descendant:GetDescendants() do
 				if part:IsA("BasePart") then
 					part.Anchored = true
 				end
 			end
-			local pivot = capsule:GetPivot().Position
-			local flatAway = Vector3.new(pivot.X - plotCentre.X, 0, pivot.Z - plotCentre.Z).Magnitude
-			if flatAway > PLOT_SIZE then
-				-- The pose the builder dialled in BY HAND on one plot,
-				-- read back into the plot's own frame (local +X = outward)
-				-- and replayed for every capsule that never got moved:
-				-- pivot 14 studs inward at height 5.9, orientation
-				-- (0, 180, 90) against the outward axis, model scale
-				-- 1.571. Round-trips to exactly the hand-placed one's
-				-- (0, 5.9, 138) / (0, 90, 90) on its own plot.
-				capsule:ScaleTo(1.571)
-				local frame = CFrame.new(plotCentre.X, 0, plotCentre.Z)
-					* CFrame.Angles(0, -math.atan2(plotCentre.Z, plotCentre.X), 0)
-				capsule:PivotTo(frame * CFrame.new(-14, 5.9, 0) * CFrame.fromOrientation(0, math.pi, math.rad(90)))
+			table.insert(capsules, descendant)
+		end
+	end
+
+	local function nearestPlot(position: Vector3): (number?, number)
+		local bestIndex: number? = nil
+		local bestAway = math.huge
+		for index, plot in plots do
+			local away = Vector3.new(position.X - plot.centre.X, 0, position.Z - plot.centre.Z).Magnitude
+			if away < bestAway then
+				bestAway = away
+				bestIndex = index
 			end
+		end
+		return bestIndex, bestAway
+	end
+
+	local seated: { [number]: boolean } = {}
+	local spares: { Model } = {}
+	local referenceRelative: CFrame? = nil
+	local referenceScale = 1
+	for _, capsule in capsules do
+		local index, away = nearestPlot(capsule:GetPivot().Position)
+		if index and away <= PLOT_SIZE then
+			seated[index] = true
+			if not referenceRelative then
+				referenceRelative = plotFrame(plots[index].centre):ToObjectSpace(capsule:GetPivot())
+				referenceScale = capsule:GetScale()
+			end
+		else
+			table.insert(spares, capsule)
+		end
+	end
+
+	-- No reference placed yet: an approximation of the dialled pose keeps
+	-- fresh worlds presentable until the builder stands one somewhere.
+	local relative = referenceRelative
+		or CFrame.new(-14, 5.9, 0) * CFrame.fromOrientation(0, math.pi, math.rad(90))
+	local scale = if referenceRelative then referenceScale else 1.571
+	for index, plot in plots do
+		if not seated[index] then
+			local spare = table.remove(spares)
+			if not spare then
+				break
+			end
+			spare:ScaleTo(scale)
+			spare:PivotTo(plotFrame(plot.centre) * relative)
 		end
 	end
 
