@@ -4,6 +4,12 @@
 *.rbxm
 *.rbxmx
 
+# EXCEPT the real place file: since the world went BAKED, the place holds
+# hand-imported models and the hand-edited map — irreplaceable, not
+# generated. Save it here via File → Save to File As in Studio.
+!place/*.rbxl
+!place/*.rbxlx
+
 # Rojo build lock
 *.lock
 
