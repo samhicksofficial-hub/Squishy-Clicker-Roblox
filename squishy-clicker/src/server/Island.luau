@@ -1125,36 +1125,44 @@ local function adoptPlots(map: Folder): boolean
 		return bestIndex, bestAway
 	end
 
-	local seated: { [number]: boolean } = {}
+	-- ONE MASTER POSE, every plot identical. The capsule standing closest
+	-- to its plot is the master; every plot's capsule — already standing
+	-- or drawn from the spares — snaps to exactly that pose in its own
+	-- plot's frame. Re-posing the whole ring is therefore one job: move
+	-- the master in Studio and every station follows at the next startup.
+	local seatedBy: { [number]: Model } = {}
 	local spares: { Model } = {}
-	local referenceRelative: CFrame? = nil
-	local referenceScale = 1
+	local masterRelative: CFrame? = nil
+	local masterScale = 1
+	local masterAway = math.huge
 	for _, capsule in capsules do
 		local index, away = nearestPlot(capsule:GetPivot().Position)
 		if index and away <= PLOT_SIZE then
-			seated[index] = true
-			if not referenceRelative then
-				referenceRelative = plotFrame(plots[index].centre):ToObjectSpace(capsule:GetPivot())
-				referenceScale = capsule:GetScale()
+			if seatedBy[index] then
+				table.insert(spares, capsule)
+			else
+				seatedBy[index] = capsule
+			end
+			if away < masterAway then
+				masterAway = away
+				masterRelative = plotFrame(plots[index].centre):ToObjectSpace(capsule:GetPivot())
+				masterScale = capsule:GetScale()
 			end
 		else
 			table.insert(spares, capsule)
 		end
 	end
 
-	-- No reference placed yet: an approximation of the dialled pose keeps
-	-- fresh worlds presentable until the builder stands one somewhere.
-	local relative = referenceRelative
+	-- No master placed yet: an approximation of the dialled pose keeps a
+	-- fresh world presentable until the builder stands one somewhere.
+	local relative = masterRelative
 		or CFrame.new(-14, 5.9, 0) * CFrame.fromOrientation(0, math.pi, math.rad(90))
-	local scale = if referenceRelative then referenceScale else 1.571
+	local scale = if masterRelative then masterScale else 1.571
 	for index, plot in plots do
-		if not seated[index] then
-			local spare = table.remove(spares)
-			if not spare then
-				break
-			end
-			spare:ScaleTo(scale)
-			spare:PivotTo(plotFrame(plot.centre) * relative)
+		local capsule = seatedBy[index] or table.remove(spares)
+		if capsule then
+			capsule:ScaleTo(scale)
+			capsule:PivotTo(plotFrame(plot.centre) * relative)
 		end
 	end
 
