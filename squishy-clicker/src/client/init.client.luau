@@ -311,6 +311,10 @@ clickArea.InputBegan:Connect(function(input)
 		pointerLastX = input.Position.X
 		pointerTravel = 0
 		pointerDragging = false
+		-- Hold-to-squish: the press pins the squisher flat until release.
+		if not Scene.atValley() then
+			Scene.setSquishHeld(true)
+		end
 	end
 end)
 
@@ -340,6 +344,9 @@ UserInputService.InputEnded:Connect(function(input)
 	end
 	pointerDown = false
 	pointerTouch = nil
+	-- Always released, whatever swallowed the press — a pinned squish with
+	-- no button down would read as stuck.
+	Scene.setSquishHeld(false)
 	if pointerDragging then
 		pointerDragging = false
 		Scene.releaseClicker()

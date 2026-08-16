@@ -129,12 +129,33 @@ local function axisScale(axis: Vector3, scale: Vector3): number
 	return math.abs(axis.X) * scale.X + math.abs(axis.Y) * scale.Y + math.abs(axis.Z) * scale.Z
 end
 
-function Models.apply(rig: Rig, cf: CFrame, scale: Vector3)
+-- The optional `shear` is the JELLY WAVE: a cf-local displacement applied
+-- per piece by its normalized height (to the power 1.5, so the top carries
+-- most of it) — a wobble travelling through a multi-part body, base
+-- staying planted while the crown sways. A single-piece rig (the imported
+-- meshes) takes half of it as plain sway instead.
+function Models.apply(rig: Rig, cf: CFrame, scale: Vector3, shear: Vector3?)
+	local lowY: number? = nil
+	local highY: number? = nil
+	if shear then
+		for _, piece in rig.pieces do
+			local y = piece.offset.Position.Y
+			lowY = if lowY and lowY < y then lowY else y
+			highY = if highY and highY > y then highY else y
+		end
+	end
+
 	for _, piece in rig.pieces do
 		local rot = piece.offset.Rotation
 		local pos = piece.offset.Position
 
-		piece.inst.CFrame = cf * CFrame.new(pos.X * scale.X, pos.Y * scale.Y, pos.Z * scale.Z) * rot
+		local placed = Vector3.new(pos.X * scale.X, pos.Y * scale.Y, pos.Z * scale.Z)
+		if shear and lowY and highY then
+			local span = highY - lowY
+			local heightFrac = if span > 0.05 then ((pos.Y - lowY) / span) ^ 1.5 else 0.5
+			placed += shear * heightFrac
+		end
+		piece.inst.CFrame = cf * CFrame.new(placed) * rot
 
 		local size = piece.size
 			* Vector3.new(

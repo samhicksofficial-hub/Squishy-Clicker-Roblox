@@ -26,6 +26,7 @@ local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
+local UserInputService = game:GetService("UserInputService")
 
 local Models = require(script.Parent:WaitForChild("Models"))
 
@@ -83,6 +84,24 @@ end
 
 local squash = spring(190, 15) -- the whole steamer compressing on a click
 local clickerSquash = spring(210, 13) -- the click toy, squishing harder
+
+-- The jello AFTERSHOCK: a slower, deliberately underdamped spring kicked
+-- with every click, whose ringing carries on after the compress itself has
+-- settled — the wobble that makes soft read as soft. It also drives the
+-- jelly wave through multi-part rigs (see Models.apply's shear).
+local clickerWobble = spring(46, 3.5)
+
+-- The poke LEAN: one signed spring per screen axis, kicked by where the
+-- press actually landed — poke the left cheek and the toy rocks away to
+-- the right, waggling back through centre. Underdamped on purpose.
+local leanRoll = spring(95, 5.5)
+local leanPitch = spring(95, 5.5)
+
+-- The camera frame the poke was judged in, captured at click time — the
+-- close-up cameras are fixed, but capturing beats hardcoding which way
+-- each one looks.
+local pokeRight = Vector3.xAxis
+local pokeForward = Vector3.zAxis
 local lidLift = spring(55, 8.5)
 local lidTilt = spring(48, 8)
 -- Slides the lid SIDEWAYS during a reveal. Without it the lid hovers directly
@@ -529,6 +548,9 @@ RunService.RenderStepped:Connect(function(deltaTime)
 
 	advance(squash, dt)
 	advance(clickerSquash, dt)
+	advance(clickerWobble, dt)
+	advance(leanRoll, dt)
+	advance(leanPitch, dt)
 	advance(viewYaw, dt)
 	advance(closeUp, dt)
 	advance(lidLift, dt)
@@ -620,15 +642,29 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	-- from it.
 	local toy = clickerModel
 	if toy then
-		local cs = clickerSquash.value
+		-- The squish COMPOSITE: the sharp compress plus the aftershock's
+		-- ringing. The sum swings NEGATIVE on the way back — the boing-back
+		-- overshoot stretches the toy taller and thinner than rest, which
+		-- is half of what rubber looks like.
+		local cs = math.clamp(clickerSquash.value + clickerWobble.value * 0.3, -0.5, 1.2)
 		local toyScale = Vector3.new(1 + cs * 0.28, 1 - cs * 0.34, 1 + cs * 0.28) * CLICKER_SCALE * toy.sizeScale
 		local restY = CLICKER_REST_Y - toy.lowestY * toyScale.Y
-		Models.apply(
-			toy.rig,
-			CFrame.new(CLICKER_SPOT + Vector3.new(0, restY + math.sin(elapsed * 2.1) * 0.05, 0))
-				* CFrame.fromEulerAnglesXYZ(0, spinAngle + math.sin(elapsed * 1.3) * 0.08 * swayAmount, 0),
-			toyScale
-		)
+
+		-- The poke lean rocks the whole toy on its base, about the camera
+		-- axes captured at click time — so left-right on screen is
+		-- left-right in the world whichever way the close-up faces.
+		local tilt = CFrame.fromAxisAngle(pokeForward, -leanRoll.value * 0.3)
+			* CFrame.fromAxisAngle(pokeRight, -leanPitch.value * 0.22)
+		local placed = CFrame.new(CLICKER_SPOT + Vector3.new(0, restY + math.sin(elapsed * 2.1) * 0.05, 0))
+			* tilt
+			* CFrame.fromEulerAnglesXYZ(0, spinAngle + math.sin(elapsed * 1.3) * 0.08 * swayAmount, 0)
+
+		-- The jelly wave: the aftershock's ringing sways the rig's upper
+		-- pieces further than its base (Models.apply spreads it by height),
+		-- in the direction the poke leaned it.
+		local swayWorld = (pokeRight * leanRoll.value + pokeForward * leanPitch.value * 0.6)
+			* (clickerWobble.value * 0.55 * toy.sizeScale)
+		Models.apply(toy.rig, placed, toyScale, placed:VectorToObjectSpace(swayWorld))
 	end
 
 	glowLight.Brightness = math.max(glow.value, 0)
@@ -794,6 +830,36 @@ function Scene.click()
 
 	if clickerModel then
 		kick(clickerSquash, 1)
+		kick(clickerWobble, 0.8)
+
+		-- The poke's direction, from where the press actually landed on
+		-- screen, judged in the camera's own axes captured NOW.
+		local camera = workspace.CurrentCamera
+		if camera then
+			local look = camera.CFrame.LookVector
+			local flat = Vector3.new(look.X, 0, look.Z)
+			if flat.Magnitude > 0.05 then
+				pokeForward = flat.Unit
+				pokeRight = Vector3.new(-pokeForward.Z, 0, pokeForward.X)
+			end
+			local viewport = camera.ViewportSize
+			local at = UserInputService:GetMouseLocation()
+			local dx = math.clamp((at.X / math.max(viewport.X, 1) - 0.5) * 2, -1, 1)
+			local dy = math.clamp((at.Y / math.max(viewport.Y, 1) - 0.5) * 2, -1, 1)
+			kick(leanRoll, dx * 0.9)
+			kick(leanPitch, dy * 0.6)
+		end
+	end
+end
+
+-- Hold-to-squish: while the pointer is down on the squisher the squash
+-- spring's TARGET pins it flat, and the release lets it boing back through
+-- the overshoot. The click's own kick still lands on top, so a quick tap
+-- and a long press read as the same motion at different lengths.
+function Scene.setSquishHeld(held: boolean)
+	clickerSquash.target = held and 0.85 or 0
+	if not held then
+		kick(clickerWobble, 0.5)
 	end
 end
 
