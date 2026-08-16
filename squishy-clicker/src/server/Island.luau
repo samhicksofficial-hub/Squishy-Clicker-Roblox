@@ -1083,6 +1083,44 @@ local function adoptPlots(map: Folder): boolean
 			prompt = plotPrompt,
 			owner = nil,
 		})
+
+		-- The plot's hand-placed capsule model, RESCUED if it never got
+		-- moved: pasting a model into a plot's folder leaves its geometry
+		-- wherever it stood, and eight pasted copies stack into a tower at
+		-- the original's spot. A capsule found standing OUTSIDE its own
+		-- plot is seated at the station — on the pad, facing outward,
+		-- sized like the pod it replaces. One already standing within its
+		-- plot is the builder's own placement and is left exactly alone.
+		local capsule: Model? = nil
+		for _, descendant in folder:GetDescendants() do
+			if descendant:IsA("Model") and descendant.Name:lower():find("capsule", 1, true) then
+				capsule = descendant
+				break
+			end
+		end
+		if capsule then
+			for _, part in capsule:GetDescendants() do
+				if part:IsA("BasePart") then
+					part.Anchored = true
+				end
+			end
+			local pivot = capsule:GetPivot().Position
+			local flatAway = Vector3.new(pivot.X - plotCentre.X, 0, pivot.Z - plotCentre.Z).Magnitude
+			if flatAway > PLOT_SIZE then
+				local outward = Vector3.new(plotCentre.X, 0, plotCentre.Z).Unit
+				local seat = Vector3.new(plotCentre.X, 0, plotCentre.Z) - outward * STATION_BACK
+				scaleImport(capsule, CAPSULE_TARGET_SIZE)
+				capsule:PivotTo(CFrame.lookAt(seat, seat + outward))
+				-- Stood on the pad by its own bounds, like the pod was —
+				-- `pad` is the PlotPad the centre was derived from above.
+				local padTopY = if pad and pad:IsA("BasePart")
+					then pad.Position.Y + pad.Size.Y * 0.5
+					else GROUND_Y + Y.plotPad
+				local boundsCF, boundsSize = capsule:GetBoundingBox()
+				local bottomY = boundsCF.Position.Y - boundsSize.Y * 0.5
+				capsule:PivotTo(capsule:GetPivot() + Vector3.new(0, padTopY - bottomY, 0))
+			end
+		end
 	end
 
 	return #plots > 0
