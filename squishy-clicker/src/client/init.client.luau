@@ -1182,7 +1182,9 @@ do
 		-- race behind "Launch with no plot adopted".
 		local centre = plot:GetAttribute("PlotCenter")
 		if typeof(centre) == "Vector3" then
-			Flight.setPlot(centre)
+			-- The folder rides along so Flight can find the hand-placed
+			-- capsule model inside this plot.
+			Flight.setPlot(centre, plot)
 			-- The upgrade board stands itself up beside the same cannon.
 			PlotBoard.setPlot(centre)
 			-- The guide trail now knows where home is.

@@ -127,66 +127,55 @@ stationAnchor.CanTouch = false
 stationAnchor.Position = Vector3.new(0, -500, 0) -- parked until a plot is adopted
 stationAnchor.Parent = stage
 
--- Parented to PLAYERGUI with the anchor as Adornee, not to the anchor
--- itself: a ViewportFrame inside a workspace-parented BillboardGui does not
--- reliably render its 3D scene — which is how the green ring shipped with
--- nothing inside it. Under PlayerGui the full GuiObject feature set applies.
+-- The badge over the capsule: the uploaded sign from Config, stud-sized
+-- (the Scale component of a BillboardGui's Size is studs) so it shrinks
+-- with perspective like the pod it sits on. The 3D portrait it used to
+-- carry is retired — the squishy stands IN the capsule itself now.
 local stationGui = Instance.new("BillboardGui")
 stationGui.Name = "CapsuleBadge"
--- Stud-sized (the Scale component of a BillboardGui's Size is studs), not
--- pixel-sized: a pixel badge keeps the same screen size at any range, so
--- from across the plaza it loomed as large as the cannon itself. In studs
--- it shrinks with perspective like the pod it sits on.
 stationGui.Size = UDim2.new(4, 0, 4, 0)
 stationGui.MaxDistance = 160
-stationGui.LightInfluence = 0 -- full brightness; an icon in shadow reads as broken
+stationGui.LightInfluence = 0 -- full brightness; a sign in shadow reads as broken
 stationGui.Adornee = stationAnchor
 stationGui.Parent = player:WaitForChild("PlayerGui")
 
-local stationIcon = Instance.new("ViewportFrame")
+local stationIcon = Instance.new("ImageLabel")
 stationIcon.Size = UDim2.fromScale(1, 1)
-stationIcon.BackgroundColor3 = Color3.fromRGB(252, 248, 244)
-stationIcon.BackgroundTransparency = 0
-stationIcon.Ambient = Color3.fromRGB(170, 165, 160)
-stationIcon.LightColor = Color3.fromRGB(255, 250, 244)
-stationIcon.LightDirection = Vector3.new(-0.5, -1, -0.6)
+stationIcon.BackgroundTransparency = 1
+stationIcon.Image = Config.CapsuleBadgeImage
+stationIcon.ScaleType = Enum.ScaleType.Fit
 stationIcon.Parent = stationGui
 
-local stationCorner = Instance.new("UICorner")
-stationCorner.CornerRadius = UDim.new(1, 0)
-stationCorner.Parent = stationIcon
+-- ---------- the capsule occupant ----------
+-- The player's chosen MAIN squishy stands inside the capsule pod behind
+-- their cannon: the badge names the station, the glass shows the goods.
+-- Client-local exactly like the badge — every player sees their own
+-- squishy in their own capsule. The capsule model is hand-placed in the
+-- baked world, so it is found in the plot's own folder by LOOSE name, and
+-- the placeholder toy it shipped with ("slime") is hidden locally rather
+-- than destroyed — those parts are the server's.
+local capsuleSeat: Vector3? = nil
+local capsuleHeight = 4 -- world height the occupant is scaled to stand at
 
-local stationRing = Instance.new("UIStroke")
-stationRing.Color = Color3.fromRGB(70, 200, 60)
--- Stroke pixels don't scale with the stud-sized badge, so a thick ring
--- would swallow the icon once distance shrinks it.
-stationRing.Thickness = 3
-stationRing.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-stationRing.Parent = stationIcon
-
-local stationCamera = Instance.new("Camera")
-stationCamera.FieldOfView = 28
-stationCamera.CFrame = CFrame.lookAt(Vector3.new(0, 0.9, 8), Vector3.zero)
-stationCamera.Parent = stationIcon
-stationIcon.CurrentCamera = stationCamera
-
-local stationStage: Folder? = nil
-
--- Rebuild the icon's little 3D scene for the current squishy. Same recipe as
--- the collection icons: the real model, narrow lens from further back so the
--- shape reads cleanly at icon size.
-local function refreshStationIcon()
-	if stationStage then
-		stationStage:Destroy()
+local function findLoose(container: Instance, needle: string): Instance?
+	for _, descendant in container:GetDescendants() do
+		if descendant.Name:lower():find(needle, 1, true) then
+			return descendant
+		end
 	end
-	local previewStage = Instance.new("Folder")
-	previewStage.Name = "Model"
-	previewStage.Parent = stationIcon
-	stationStage = previewStage
+	return nil
+end
 
-	local preview = Models.buildSquishy(previewStage, modelSpec.shape, modelSpec.color, modelSpec.sparkle, modelSpec.scale)
-	Models.apply(preview.rig, CFrame.identity, Vector3.one * preview.sizeScale)
-	stationIcon.BackgroundColor3 = modelSpec.color
+local occupant: Models.SquishyModel? = nil
+
+local function rebuildOccupant()
+	if occupant then
+		occupant.rig.folder:Destroy()
+		occupant = nil
+	end
+	if capsuleSeat then
+		occupant = Models.buildSquishy(stage, modelSpec.shape, modelSpec.color, modelSpec.sparkle, modelSpec.scale)
+	end
 end
 
 -- The live simulation itself (shared/Track), plus the mirror the drawing
@@ -1023,7 +1012,7 @@ end
 
 -- The plot to fire from. The direction is straight out from the island's
 -- centre, which is the way every plot's cannon already points.
-function Flight.setPlot(centre: Vector3)
+function Flight.setPlot(centre: Vector3, plotFolder: Instance?)
 	local flat = Vector3.new(centre.X, 0, centre.Z)
 	if flat.Magnitude < 1 then
 		return
@@ -1037,11 +1026,49 @@ function Flight.setPlot(centre: Vector3)
 	muzzle = centre + flat.Unit * 9 + Vector3.new(0, 13, 0)
 	smokeAnchor.Position = muzzle :: Vector3
 
-	-- The capsule display floats over the station, STATION_BACK inward of
-	-- the plot centre — the same spot Island.luau builds the pod. (The old
-	-- field layout call is gone: the track only draws inside the corridor
-	-- window mid-flight now, so there is nothing to lay out from a plot.)
-	stationAnchor.Position = centre - flat.Unit * STATION_BACK + Vector3.new(0, CAPSULE_ICON_HEIGHT, 0)
+	-- The capsule: found in the PLOT'S OWN folder by loose name when the
+	-- baked world carries one. Its bounds give everything — the occupant's
+	-- seat on its floor, the height the squishy is scaled to, and the perch
+	-- the badge floats at. Any placeholder toy inside ("slime") hides
+	-- locally. No capsule found (a plot still on the old pod, or the
+	-- generated world) falls back to the badge's classic perch.
+	capsuleSeat = nil
+	if plotFolder then
+		local capsule = findLoose(plotFolder, "capsule")
+		if capsule then
+			local boundsCF: CFrame? = nil
+			local boundsSize: Vector3? = nil
+			if capsule:IsA("Model") then
+				boundsCF, boundsSize = capsule:GetBoundingBox()
+			elseif capsule:IsA("BasePart") then
+				boundsCF, boundsSize = capsule.CFrame, capsule.Size
+			end
+			if boundsCF and boundsSize then
+				local floorY = boundsCF.Position.Y - boundsSize.Y * 0.5
+				capsuleSeat = Vector3.new(boundsCF.Position.X, floorY + boundsSize.Y * 0.14, boundsCF.Position.Z)
+				capsuleHeight = boundsSize.Y * 0.42
+				stationAnchor.Position = boundsCF.Position + Vector3.new(0, boundsSize.Y * 0.5 + 3, 0)
+
+				local slime = findLoose(capsule, "slime")
+				if slime then
+					if slime:IsA("BasePart") then
+						slime.LocalTransparencyModifier = 1
+					end
+					for _, part in slime:GetDescendants() do
+						if part:IsA("BasePart") then
+							part.LocalTransparencyModifier = 1
+						end
+					end
+				end
+			end
+		end
+	end
+	if not capsuleSeat then
+		-- The badge's classic perch: STATION_BACK inward of the plot
+		-- centre, the same spot Island.luau builds the pod.
+		stationAnchor.Position = centre - flat.Unit * STATION_BACK + Vector3.new(0, CAPSULE_ICON_HEIGHT, 0)
+	end
+	rebuildOccupant()
 end
 
 function Flight.setSquishy(shape: string?, color: Color3, sparkle: boolean, sizeScale: number?)
@@ -1054,8 +1081,8 @@ function Flight.setSquishy(shape: string?, color: Color3, sparkle: boolean, size
 	-- a squishy is equipped, not the moment one is fired.
 	model = Models.buildSquishy(stage, modelSpec.shape, modelSpec.color, modelSpec.sparkle, modelSpec.scale)
 
-	-- And the capsule's icon swaps with it.
-	refreshStationIcon()
+	-- And the one standing in the capsule swaps with it.
+	rebuildOccupant()
 end
 
 -- (Flight.setField and the field bundle are gone: there is no field to
@@ -1987,6 +2014,23 @@ RunService.RenderStepped:Connect(function(dt)
 				table.remove(pendingMilestones, index)
 			end
 		end
+	end
+
+	-- The capsule occupant: the chosen squishy turning gently on its seat
+	-- inside the pod's glass, scaled to the capsule that holds it.
+	local sitting = occupant
+	local seat = capsuleSeat
+	if sitting and seat then
+		local clock = os.clock()
+		local span = math.max(sitting.highestY - sitting.lowestY, 0.5)
+		local applied = capsuleHeight / span
+		local lift = -sitting.lowestY * applied
+		Models.apply(
+			sitting.rig,
+			CFrame.new(seat + Vector3.new(0, lift + math.sin(clock * 1.7) * 0.08, 0))
+				* CFrame.Angles(0, clock * 0.9, 0),
+			Vector3.one * applied
+		)
 	end
 
 	-- Summoned squishies trail the character in a loose wedge: first straight
