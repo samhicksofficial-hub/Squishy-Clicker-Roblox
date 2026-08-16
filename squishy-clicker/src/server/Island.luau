@@ -1107,6 +1107,18 @@ function Island.build()
 	-- owns the geometry and this run only adopts it.
 	local existing = workspace:FindFirstChild("Map")
 	if existing and existing:IsA("Folder") then
+		-- A baked world is GEOMETRY and nothing else: the bake writes no
+		-- scripts, so any script found here rode in inside a hand-placed
+		-- free model — which is exactly how Toolbox backdoors travel (one
+		-- shipped inside a capsule model, complete with a fake "Model Parse
+		-- Error" dialog begging to be pasted into the command bar). They
+		-- are destroyed LOUDLY before adoption, every startup.
+		for _, descendant in existing:GetDescendants() do
+			if descendant:IsA("LuaSourceContainer") then
+				warn(("[SquishyClicker] Destroyed a stowaway script in the baked world: %s"):format(descendant:GetFullName()))
+				descendant:Destroy()
+			end
+		end
 		if adoptPlots(existing) then
 			root = existing
 			for _, child in existing:GetChildren() do
