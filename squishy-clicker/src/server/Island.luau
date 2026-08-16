@@ -1107,18 +1107,17 @@ local function adoptPlots(map: Folder): boolean
 			local pivot = capsule:GetPivot().Position
 			local flatAway = Vector3.new(pivot.X - plotCentre.X, 0, pivot.Z - plotCentre.Z).Magnitude
 			if flatAway > PLOT_SIZE then
-				local outward = Vector3.new(plotCentre.X, 0, plotCentre.Z).Unit
-				local seat = Vector3.new(plotCentre.X, 0, plotCentre.Z) - outward * STATION_BACK
-				scaleImport(capsule, CAPSULE_TARGET_SIZE)
-				capsule:PivotTo(CFrame.lookAt(seat, seat + outward))
-				-- Stood on the pad by its own bounds, like the pod was —
-				-- `pad` is the PlotPad the centre was derived from above.
-				local padTopY = if pad and pad:IsA("BasePart")
-					then pad.Position.Y + pad.Size.Y * 0.5
-					else GROUND_Y + Y.plotPad
-				local boundsCF, boundsSize = capsule:GetBoundingBox()
-				local bottomY = boundsCF.Position.Y - boundsSize.Y * 0.5
-				capsule:PivotTo(capsule:GetPivot() + Vector3.new(0, padTopY - bottomY, 0))
+				-- The pose the builder dialled in BY HAND on one plot,
+				-- read back into the plot's own frame (local +X = outward)
+				-- and replayed for every capsule that never got moved:
+				-- pivot 14 studs inward at height 5.9, orientation
+				-- (0, 180, 90) against the outward axis, model scale
+				-- 1.571. Round-trips to exactly the hand-placed one's
+				-- (0, 5.9, 138) / (0, 90, 90) on its own plot.
+				capsule:ScaleTo(1.571)
+				local frame = CFrame.new(plotCentre.X, 0, plotCentre.Z)
+					* CFrame.Angles(0, -math.atan2(plotCentre.Z, plotCentre.X), 0)
+				capsule:PivotTo(frame * CFrame.new(-14, 5.9, 0) * CFrame.fromOrientation(0, math.pi, math.rad(90)))
 			end
 		end
 	end
