@@ -468,13 +468,12 @@ local costLabel = make("TextLabel", {
 })
 
 -- ---------- inventory / collection (right side) ----------
--- Starts BELOW the whole right column — wallet, Rebirth, Shop. The top is
--- MEASURED off the column's rendered bottom (see the watcher below), not
--- assumed: the column wears a UIScale and this panel doesn't, and every
--- overlap bug in this corner came from one side assuming the other's scale.
+-- Reaches the TOP of the screen now: the wallet moved to the top centre,
+-- so nothing stands above this panel any more. (The pin-to-the-column
+-- watcher that used to measure its top retired with the move.)
 local panel = make("Frame", {
-	Size = UDim2.new(0, 300, 1, -202),
-	Position = UDim2.new(1, -18, 0, 186),
+	Size = UDim2.new(0, 300, 1, -30),
+	Position = UDim2.new(1, -18, 0, 14),
 	AnchorPoint = Vector2.new(1, 0),
 	BackgroundColor3 = COLOR.panel,
 	BackgroundTransparency = 0.08,
@@ -483,30 +482,6 @@ local panel = make("Frame", {
 	Parent = gui,
 })
 corner(20, panel)
-
--- Pin the panel's top to the column's real rendered bottom, at every HUD
--- scale and window size. The column is built by Cannon.mount on another
--- thread, so this waits for it; until then the panel keeps its build-time
--- guess, which is correct at scale 1.
-task.spawn(function()
-	local column = gui:WaitForChild("RightColumn", 10)
-	if not column or not column:IsA("GuiObject") then
-		return
-	end
-	local function fit()
-		-- ROOT-relative, not raw AbsolutePosition: absolute coordinates are
-		-- reported in the inset-adjusted space while this panel's offsets
-		-- are in the Root's own, and mixing the two shifted the panel a
-		-- topbar's height upward — straight under the Cash chip.
-		local columnTop = column.AbsolutePosition.Y - gui.AbsolutePosition.Y
-		local top = math.floor(columnTop + column.AbsoluteSize.Y + 14 + 0.5)
-		panel.Position = UDim2.new(1, -18, 0, top)
-		panel.Size = UDim2.new(0, 300, 1, -(top + 16))
-	end
-	column:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
-	column:GetPropertyChangedSignal("AbsolutePosition"):Connect(fit)
-	fit()
-end)
 
 make("TextLabel", {
 	Size = UDim2.new(1, 0, 0, 32),

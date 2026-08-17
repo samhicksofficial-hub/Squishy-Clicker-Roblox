@@ -49,23 +49,8 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	-- ---------- the wallet ----------
 	-- TOP CENTRE and BIG: in a simulator the balance is the score, and the
 	-- score belongs where the eye rests — the genre's own convention. (The
-	-- right column frame it used to live in STAYS, empty: the collection
-	-- panel positions itself off that frame's rendered bottom, and moving
-	-- the frame would move the panel with it.)
-	local column = UI.make("Frame", {
-		Name = "RightColumn",
-		Size = UDim2.new(0, 300, 0, 40),
-		Position = UDim2.new(1, -18, 0, 16),
-		AnchorPoint = Vector2.new(1, 0),
-		BackgroundTransparency = 1,
-		ZIndex = 5,
-		Parent = gui,
-	})
-	UI.make("UIListLayout", {
-		Padding = UDim.new(0, 10),
-		SortOrder = Enum.SortOrder.LayoutOrder,
-		Parent = column,
-	})
+	-- old right column is gone entirely; the collection panel owns the
+	-- whole right edge now.)
 
 	-- ONE currency: the wallet is a single big Cash chip. Everything a shot
 	-- earns and everything the game sells meet in this number, which is

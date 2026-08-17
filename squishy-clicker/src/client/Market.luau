@@ -63,7 +63,8 @@ function Market.mount(gui: GuiObject)
 	local panel = UI.panel({
 		parent = gui,
 		name = "SquishyMarket",
-		size = UDim2.new(0, 780, 0, 560),
+		-- Wide enough for the fattened preview pane on the right.
+		size = UDim2.new(0, 980, 0, 620),
 		position = UDim2.new(0.5, 0, 0.5, 0),
 		icon = "🥟",
 		title = "SQUISHY MARKET",
@@ -392,7 +393,7 @@ function Market.mount(gui: GuiObject)
 
 	-- ---------- the grid and the detail pane ----------
 	local grid = UI.make("ScrollingFrame", {
-		Size = UDim2.new(1, -296, 1, -198),
+		Size = UDim2.new(1, -424, 1, -198),
 		Position = UDim2.new(0, 8, 0, 190),
 		BackgroundColor3 = UI.color.bodyDark,
 		BackgroundTransparency = 0.5,
@@ -406,7 +407,9 @@ function Market.mount(gui: GuiObject)
 	UI.corner(12, grid)
 
 	local detail = UI.make("ScrollingFrame", {
-		Size = UDim2.new(0, 272, 1, -198),
+		-- The preview pane, fattened: the spinnable stage is the market's
+		-- best moment and it was living in a sidebar.
+		Size = UDim2.new(0, 400, 1, -198),
 		Position = UDim2.new(1, -8, 0, 190),
 		AnchorPoint = Vector2.new(1, 0),
 		BackgroundColor3 = CARD,
@@ -471,7 +474,7 @@ function Market.mount(gui: GuiObject)
 			-- lazy idle turn — the same toy language as the squisher on its
 			-- cushion in the shop.
 			local stageFrame = UI.make("ViewportFrame", {
-				Size = UDim2.new(1, -20, 0, 168),
+				Size = UDim2.new(1, -20, 0, 300),
 				BackgroundColor3 = Color3.fromRGB(250, 244, 238),
 				Ambient = Color3.fromRGB(170, 165, 160),
 				LightColor = Color3.fromRGB(255, 250, 244),
