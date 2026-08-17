@@ -78,9 +78,11 @@ local Config = {
 	LaunchMaxAngle = 75,
 
 	-- ----- The rhythm aim -----
-	-- Aiming is a rhythm duel: numbered circles appear one after another at
-	-- random spots, each with an approach ring shrinking onto it, and every
-	-- press is scored by how CLOSED the ring was at that instant. The
+	-- BELOW RhythmPowerReference the cannon simply fires at full power — no
+	-- timing game, no timer on screen. AT the reference the rhythm duel
+	-- begins: numbered circles appear one after another at random spots,
+	-- each with an approach ring shrinking onto it, and every press is
+	-- scored by how CLOSED the ring was at that instant. The
 	-- AVERAGE of the catches is the power sent to the server, so one lucky
 	-- catch cannot carry a shot and one slip cannot sink it.
 	LaunchTapsRequired = 3,
@@ -92,12 +94,12 @@ local Config = {
 	-- payload — this is a default the client sends, not a rule it enforces.
 	LaunchFixedAngle = 0.55,
 
-	-- How fast the ring closes. A gentle fixed pace until launch power
-	-- reaches the reference, then LINEARLY faster with power — double the
-	-- power past the line, half the travel time — floored so the duel
-	-- stays humanly winnable however monstrous the cannon gets.
+	-- Where the duel begins, and how fast its ring closes: base pace AT the
+	-- reference power, then LINEARLY faster — double the power, half the
+	-- travel time — floored so the duel stays humanly winnable however
+	-- monstrous the cannon gets.
 	RhythmPowerReference = 50000,
-	RhythmApproachSeconds = 1.15, -- ring travel time at (and below) the reference power
+	RhythmApproachSeconds = 1.15, -- ring travel time at the reference power
 	RhythmApproachMinSeconds = 0.36, -- the speed cap
 
 	-- ----- Flight feel (client-side FX tuning) -----

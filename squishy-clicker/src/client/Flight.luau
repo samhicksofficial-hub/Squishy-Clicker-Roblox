@@ -64,6 +64,10 @@ local CORRIDOR_ORIGIN = Vector3.new(0, 9000, 0)
 local FORWARD = Vector3.xAxis
 local SIDE = Vector3.zAxis
 
+-- Where idle pooled corridor parts wait: far below the corridor, far above
+-- the island, seen by neither camera.
+local CORRIDOR_PARK = CORRIDOR_ORIGIN - Vector3.new(0, 800, 0)
+
 local stage = Instance.new("Folder")
 stage.Name = "FlightStage"
 stage.Parent = workspace
@@ -672,11 +676,12 @@ local function corridorPart(size: Vector3, color: Color3, material: Enum.Materia
 	part.CanCollide = false
 	part.CanQuery = false
 	part.CanTouch = false
-	-- Parked AT the corridor's altitude from birth. A fresh Part defaults
-	-- to the world origin — which is the middle of the plaza, where the end
-	-- cap and a canyon wall stood like monoliths until the first flight's
-	-- window pass finally seated them.
-	part.CFrame = CFrame.new(CORRIDOR_ORIGIN)
+	-- Parked at the PARK from birth — never at the world origin (the
+	-- middle of the plaza, where the first version stood monoliths) and
+	-- never at the corridor origin either (exactly where the squishy
+	-- flies: pool slots the window didn't claim stood as wall slabs three
+	-- studs either side of the lane).
+	part.CFrame = CFrame.new(CORRIDOR_PARK)
 	part.Parent = corridorFolder
 	return part
 end
@@ -1729,8 +1734,10 @@ RunService.RenderStepped:Connect(function(dt)
 		local wallHeight = Config.CorridorWallHeight
 		local firstTile = math.floor((shot.flown - Config.CorridorViewBehind) / tileLength)
 		local lastTile = math.floor((shot.flown + Config.CorridorViewAhead) / tileLength)
+		local usedSlots: { [number]: boolean } = {}
 		for tileIndex = firstTile, lastTile do
 			local slot = (tileIndex % CORRIDOR_POOL) + 1
+			usedSlots[slot] = true
 			local tile = corridorTiles[slot]
 			local centreD = (tileIndex + 0.5) * tileLength
 			local base = corridorAt(centreD, 0)
@@ -1749,7 +1756,24 @@ RunService.RenderStepped:Connect(function(dt)
 			walls.leftLip.CFrame = CFrame.new(base + SIDE * (-width / 2 - 3) + Vector3.new(0, wallHeight + 2, 0))
 			walls.rightLip.CFrame = CFrame.new(base + SIDE * (width / 2 + 3) + Vector3.new(0, wallHeight + 2, 0))
 		end
+		-- Slots the window did not claim go to the PARK. Left alone they
+		-- stand wherever they were last put — including the birth park at
+		-- the corridor origin, which is exactly where the squishy flies:
+		-- the first shot of a session flew between two full-height wall
+		-- slabs three studs either side of the lane.
+		for slot = 1, CORRIDOR_POOL do
+			if not usedSlots[slot] then
+				local park = CFrame.new(CORRIDOR_PARK)
+				corridorTiles[slot].CFrame = park
+				local walls = corridorWalls[slot]
+				walls.left.CFrame = park
+				walls.right.CFrame = park
+				walls.leftLip.CFrame = park
+				walls.rightLip.CFrame = park
+			end
+		end
 
+		local usedMarkers: { [number]: boolean } = {}
 		local firstMarker = math.max(math.floor((shot.flown - Config.CorridorViewBehind) / markerSpacing), 1)
 		-- Never more markers in the window than the pool holds — on a short
 		-- shot the ladder bottoms out at 25-stud spacing, and an uncapped
@@ -1760,6 +1784,7 @@ RunService.RenderStepped:Connect(function(dt)
 		)
 		for markerIndex = firstMarker, lastMarker do
 			local slot = (markerIndex % CORRIDOR_POOL) + 1
+			usedMarkers[slot] = true
 			local marker = corridorMarkers[slot]
 			local d = markerIndex * markerSpacing
 			local base = corridorAt(d, 0)
@@ -1771,6 +1796,13 @@ RunService.RenderStepped:Connect(function(dt)
 				-- Relabel only on slot reuse: TextLabel writes are not free.
 				marker.index = markerIndex
 				marker.label.Text = Format.abbreviate(d)
+			end
+		end
+		-- Unused marker slots park too: the panel part is invisible, but
+		-- its painted number is not.
+		for slot = 1, CORRIDOR_POOL do
+			if not usedMarkers[slot] then
+				corridorMarkers[slot].panel.CFrame = CFrame.new(CORRIDOR_PARK)
 			end
 		end
 

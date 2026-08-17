@@ -605,28 +605,6 @@ function Launch.mount(gui: GuiObject, scene: any)
 
 	-- ---------- the meter ----------
 
-	local function beginAiming()
-		tapsLocked = {}
-		locksLabel.Text = ""
-
-		-- Ring speed: a gentle fixed pace until RhythmPowerReference, then
-		-- LINEARLY faster with power, floored so the duel stays humanly
-		-- winnable however monstrous the cannon gets.
-		rhythmDuration = math.clamp(
-			Config.RhythmApproachSeconds * Config.RhythmPowerReference / math.max(launchPower, 1),
-			Config.RhythmApproachMinSeconds,
-			Config.RhythmApproachSeconds
-		)
-
-		-- Stage FIRST, circle second. setView re-fires the view listener,
-		-- and that listener re-runs setStage with whatever stage is current
-		-- — which was "idle", and leaving-aim cleanup ate a circle spawned
-		-- any earlier: an aim with no ring, no timeout and no way to fire.
-		scene.setView("main")
-		setStage("aim")
-		spawnRhythmCircle()
-	end
-
 	local function fireShot()
 		-- The AVERAGE of the locked taps is the power. The angle is a Config
 		-- constant — the meter owns the skill now — and the server validates
@@ -658,6 +636,39 @@ function Launch.mount(gui: GuiObject, scene: any)
 				abandonShot("No answer from the cannon — try again.")
 			end
 		end)
+	end
+
+	local function beginAiming()
+		tapsLocked = {}
+		locksLabel.Text = ""
+
+		-- Below the rhythm threshold the cannon just FIRES — full power, no
+		-- timing game, no timer on screen. The duel is the strong cannon's
+		-- burden: it begins at RhythmPowerReference and speeds up from
+		-- there. (Defined after fireShot on purpose; this path calls it.)
+		if launchPower < Config.RhythmPowerReference then
+			table.insert(tapsLocked, 1)
+			scene.setView("main")
+			fireShot()
+			return
+		end
+
+		-- Ring speed: base pace AT the threshold, LINEARLY faster past it,
+		-- floored so the duel stays humanly winnable however monstrous the
+		-- cannon gets.
+		rhythmDuration = math.clamp(
+			Config.RhythmApproachSeconds * Config.RhythmPowerReference / math.max(launchPower, 1),
+			Config.RhythmApproachMinSeconds,
+			Config.RhythmApproachSeconds
+		)
+
+		-- Stage FIRST, circle second. setView re-fires the view listener,
+		-- and that listener re-runs setStage with whatever stage is current
+		-- — which was "idle", and leaving-aim cleanup ate a circle spawned
+		-- any earlier: an aim with no ring, no timeout and no way to fire.
+		scene.setView("main")
+		setStage("aim")
+		spawnRhythmCircle()
 	end
 
 	-- `forced` is the timeout path: a ring that fully slipped past scores
