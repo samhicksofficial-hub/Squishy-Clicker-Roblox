@@ -63,9 +63,11 @@ function Market.mount(gui: GuiObject)
 	local panel = UI.panel({
 		parent = gui,
 		name = "SquishyMarket",
-		-- Wide enough for the fattened preview pane on the right.
-		size = UDim2.new(0, 980, 0, 620),
-		position = UDim2.new(0.5, 0, 0.5, 0),
+		-- Sized to the left lane alone: the preview is its OWN window now,
+		-- floated off the panel's right edge. Nudged left of centre so the
+		-- pair together sit centred-ish on screen.
+		size = UDim2.new(0, 622, 0, 620),
+		position = UDim2.new(0.5, -110, 0.5, 0),
 		icon = "🥟",
 		title = "SQUISHY MARKET",
 		top = UI.color.pink,
@@ -410,21 +412,23 @@ function Market.mount(gui: GuiObject)
 	UI.corner(12, grid)
 
 	local detail = UI.make("ScrollingFrame", {
-		-- A LONG PORTRAIT column running the panel's full height, beside
-		-- the team builder and the grid alike: the spinnable stage is the
-		-- market's best moment and it finally reads like one.
-		Size = UDim2.new(0, 350, 1, -16),
-		Position = UDim2.new(1, -8, 0, 8),
-		AnchorPoint = Vector2.new(1, 0),
+		-- ITS OWN WINDOW: a tall portrait card floated off the panel's
+		-- right edge, a sibling of the body under the same root — so it
+		-- pops, shows and hides with the market while standing apart from
+		-- it, exactly like an inspector beside a list.
+		Size = UDim2.new(0, 350, 1, -78),
+		Position = UDim2.new(1, 16, 0, 66),
+		AnchorPoint = Vector2.new(0, 0),
 		BackgroundColor3 = CARD,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 6,
 		CanvasSize = UDim2.new(0, 0, 0, 0),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		ZIndex = Z + 2,
-		Parent = panel.body,
+		Parent = panel.root,
 	}) :: ScrollingFrame
-	UI.corner(12, detail)
+	UI.corner(16, detail)
+	UI.stroke(detail, 4)
 	UI.make("UIListLayout", {
 		HorizontalAlignment = Enum.HorizontalAlignment.Center,
 		Padding = UDim.new(0, 6),
