@@ -141,9 +141,12 @@ function Market.mount(gui: GuiObject)
 	end
 
 	-- ---------- MY SQUISHY TEAM ----------
+	-- Everything on the LEFT side lives in a 594-wide lane: the detail
+	-- pane is a full-height portrait column on the right now, beside the
+	-- team builder and the grid alike, so nothing here spans the panel.
 	UI.label({
-		Size = UDim2.new(1, 0, 0, 26),
-		Position = UDim2.new(0, 0, 0, 6),
+		Size = UDim2.new(0, 594, 0, 26),
+		Position = UDim2.new(0, 8, 0, 6),
 		Text = "MY SQUISHY TEAM",
 		TextSize = 22,
 		ZIndex = Z + 2,
@@ -152,7 +155,7 @@ function Market.mount(gui: GuiObject)
 
 	local teamStrip = UI.make("Frame", {
 		Size = UDim2.new(0, 3 * 96 + 2 * 18, 0, 96),
-		Position = UDim2.new(0.5, 0, 0, 34),
+		Position = UDim2.new(0, 305, 0, 34),
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 1,
 		ZIndex = Z + 2,
@@ -357,7 +360,7 @@ function Market.mount(gui: GuiObject)
 	-- The collection's permanent cash bonus, right where new squishies are
 	-- browsed: the standing answer to "why buy another steamer".
 	local collectionLabel = UI.label({
-		Size = UDim2.new(1, -16, 0, 14),
+		Size = UDim2.new(0, 594, 0, 14),
 		Position = UDim2.new(0, 8, 0, 132),
 		Text = "",
 		TextSize = 14,
@@ -368,7 +371,7 @@ function Market.mount(gui: GuiObject)
 
 	-- ---------- category tabs ----------
 	local tabRow = UI.make("Frame", {
-		Size = UDim2.new(1, -16, 0, 34),
+		Size = UDim2.new(0, 594, 0, 34),
 		Position = UDim2.new(0, 8, 0, 148),
 		BackgroundTransparency = 1,
 		ZIndex = Z + 2,
@@ -393,7 +396,7 @@ function Market.mount(gui: GuiObject)
 
 	-- ---------- the grid and the detail pane ----------
 	local grid = UI.make("ScrollingFrame", {
-		Size = UDim2.new(1, -424, 1, -198),
+		Size = UDim2.new(0, 594, 1, -198),
 		Position = UDim2.new(0, 8, 0, 190),
 		BackgroundColor3 = UI.color.bodyDark,
 		BackgroundTransparency = 0.5,
@@ -407,10 +410,11 @@ function Market.mount(gui: GuiObject)
 	UI.corner(12, grid)
 
 	local detail = UI.make("ScrollingFrame", {
-		-- The preview pane, fattened: the spinnable stage is the market's
-		-- best moment and it was living in a sidebar.
-		Size = UDim2.new(0, 400, 1, -198),
-		Position = UDim2.new(1, -8, 0, 190),
+		-- A LONG PORTRAIT column running the panel's full height, beside
+		-- the team builder and the grid alike: the spinnable stage is the
+		-- market's best moment and it finally reads like one.
+		Size = UDim2.new(0, 350, 1, -16),
+		Position = UDim2.new(1, -8, 0, 8),
 		AnchorPoint = Vector2.new(1, 0),
 		BackgroundColor3 = CARD,
 		BorderSizePixel = 0,
@@ -474,7 +478,7 @@ function Market.mount(gui: GuiObject)
 			-- lazy idle turn — the same toy language as the squisher on its
 			-- cushion in the shop.
 			local stageFrame = UI.make("ViewportFrame", {
-				Size = UDim2.new(1, -20, 0, 300),
+				Size = UDim2.new(1, -20, 0, 400),
 				BackgroundColor3 = Color3.fromRGB(250, 244, 238),
 				Ambient = Color3.fromRGB(170, 165, 160),
 				LightColor = Color3.fromRGB(255, 250, 244),
