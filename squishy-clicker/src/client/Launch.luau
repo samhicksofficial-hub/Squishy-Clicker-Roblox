@@ -96,8 +96,9 @@ function Launch.mount(gui: GuiObject, scene: any)
 	-- ---------- the record banner ----------
 	local bestBanner = UI.make("Frame", {
 		Name = "BestBanner",
+		-- Below the wallet, which owns the top-centre now.
 		Size = UDim2.new(0, 240, 0, 44),
-		Position = UDim2.new(0.5, 0, 0, 16),
+		Position = UDim2.new(0.5, 0, 0, 72),
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundColor3 = C.orange,
 		ZIndex = 5,
@@ -281,8 +282,9 @@ function Launch.mount(gui: GuiObject, scene: any)
 	-- has to be legible at a glance on a phone.
 	local flightHud = UI.make("Frame", {
 		Name = "FlightHud",
+		-- Below the wallet, which owns the top-centre now.
 		Size = UDim2.new(0, 460, 0, 158),
-		Position = UDim2.new(0.5, 0, 0, 20),
+		Position = UDim2.new(0.5, 0, 0, 72),
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 1,
 		Visible = false,

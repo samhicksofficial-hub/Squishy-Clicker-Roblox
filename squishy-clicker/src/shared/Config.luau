@@ -445,11 +445,6 @@ local Config = {
 	-- 💰 either way — the jackpot stretch is supposed to look different.)
 	CashIconImage = "rbxassetid://131728154516680",
 
-	-- The badge floating over the capsule pod behind each cannon. Used to be
-	-- a live 3D portrait of the equipped squishy; the squishy STANDS IN the
-	-- capsule itself now, so the badge wears this uploaded sign instead.
-	CapsuleBadgeImage = "rbxassetid://113678193931676",
-
 	-- ===== The sky =====
 	-- The realistic sky ("AtmosphericClouds2"), owned by CODE: the server
 	-- rebuilds it from these ids at every startup, so it can never vanish

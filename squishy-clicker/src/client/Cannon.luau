@@ -47,16 +47,13 @@ function Cannon.mount(gui: GuiObject, scene: any)
 	local launchBroadcast = remotes:WaitForChild("LaunchBroadcast") :: RemoteEvent
 
 	-- ---------- the wallet ----------
-	-- Top right, always visible: in a simulator the balances are the score.
-	-- The wallet AND the three big buttons share one column with one layout.
-	-- They used to be positioned independently and drifted into each other the
-	-- moment the window was short — a list cannot overlap itself.
+	-- TOP CENTRE and BIG: in a simulator the balance is the score, and the
+	-- score belongs where the eye rests — the genre's own convention. (The
+	-- right column frame it used to live in STAYS, empty: the collection
+	-- panel positions itself off that frame's rendered bottom, and moving
+	-- the frame would move the panel with it.)
 	local column = UI.make("Frame", {
 		Name = "RightColumn",
-		-- Just the wallet now — Rebirth and Shop moved to the nav rail. As
-		-- wide as the collection panel below, so the whole right side reads
-		-- as one aligned stack. Sized to CONTENT: the collection panel
-		-- positions itself off this frame's real rendered bottom.
 		Size = UDim2.new(0, 300, 0, 40),
 		Position = UDim2.new(1, -18, 0, 16),
 		AnchorPoint = Vector2.new(1, 0),
@@ -70,64 +67,60 @@ function Cannon.mount(gui: GuiObject, scene: any)
 		Parent = column,
 	})
 
-	local wallet = column
+	-- ONE currency: the wallet is a single big Cash chip. Everything a shot
+	-- earns and everything the game sells meet in this number, which is
+	-- what makes spending it a decision.
+	local cashRow = UI.make("Frame", {
+		Name = "Wallet",
+		Size = UDim2.new(0, 330, 0, 58),
+		Position = UDim2.new(0.5, 0, 0, 8),
+		AnchorPoint = Vector2.new(0.5, 0),
+		BackgroundColor3 = C.cash,
+		ZIndex = 5,
+		Parent = gui,
+	}) :: Frame
+	UI.corner(18, cashRow)
+	UI.gradient(cashRow, C.cash, Color3.fromRGB(84, 186, 60))
+	UI.stroke(cashRow, 4)
 
-	local function walletRow(order: number, top: Color3, bottom: Color3, icon: string): TextLabel
-		local row = UI.make("Frame", {
-			Size = UDim2.new(1, 0, 0, 40),
-			BackgroundColor3 = top,
-			LayoutOrder = order,
-			ZIndex = 5,
-			Parent = wallet,
-		})
-		UI.corner(14, row)
-		UI.gradient(row, top, bottom)
-		UI.stroke(row)
-
-		-- The cash chip wears the uploaded stack image once Config carries
-		-- its id; the emoji stands in until then.
-		if icon == "💵" and Config.CashIconImage ~= "" then
-			UI.make("ImageLabel", {
-				Size = UDim2.new(0, 30, 0, 30),
-				Position = UDim2.new(0, 8, 0.5, 0),
-				AnchorPoint = Vector2.new(0, 0.5),
-				BackgroundTransparency = 1,
-				Image = Config.CashIconImage,
-				ScaleType = Enum.ScaleType.Fit,
-				ZIndex = 6,
-				Parent = row,
-			})
-		else
-			UI.label({
-				Size = UDim2.new(0, 34, 1, 0),
-				Position = UDim2.new(0, 6, 0, 0),
-				Text = icon,
-				TextSize = 22,
-				ZIndex = 6,
-				Parent = row,
-			})
-		end
-		return UI.label({
-			Size = UDim2.new(1, -46, 1, 0),
-			Position = UDim2.new(0, 42, 0, 0),
-			Text = "0",
-			TextSize = 20,
-			TextXAlignment = Enum.TextXAlignment.Left,
+	-- The chip wears the uploaded stack image once Config carries its id;
+	-- the emoji stands in until then.
+	if Config.CashIconImage ~= "" then
+		UI.make("ImageLabel", {
+			Size = UDim2.new(0, 44, 0, 44),
+			Position = UDim2.new(0, 10, 0.5, 0),
+			AnchorPoint = Vector2.new(0, 0.5),
+			BackgroundTransparency = 1,
+			Image = Config.CashIconImage,
+			ScaleType = Enum.ScaleType.Fit,
 			ZIndex = 6,
-			Parent = row,
+			Parent = cashRow,
+		})
+	else
+		UI.label({
+			Size = UDim2.new(0, 44, 1, 0),
+			Position = UDim2.new(0, 10, 0, 0),
+			Text = "💵",
+			TextSize = 32,
+			ZIndex = 6,
+			Parent = cashRow,
 		})
 	end
-
-	-- ONE currency: the wallet is a single Cash row now. TNT and gems are
-	-- gone — everything a shot earns and everything the game sells meet in
-	-- this number, which is what makes spending it a decision.
-	local coinLabel = walletRow(1, C.cash, Color3.fromRGB(84, 186, 60), "💵")
+	local coinLabel = UI.label({
+		Size = UDim2.new(1, -74, 1, 0),
+		Position = UDim2.new(0, 62, 0, 0),
+		Text = "0",
+		TextSize = 36,
+		StrokeThickness = 3,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 6,
+		Parent = cashRow,
+	})
 
 	-- ---------- the cash collect ----------
 	-- A shot's earnings FLY here: bills stream up from the summary into the
 	-- wallet, each arrival bumping the chip — the payout lands on the place
 	-- the number actually changes, so the eye follows the money home.
-	local cashRow = coinLabel.Parent :: Frame
 	local walletPulse = UI.make("UIScale", { Scale = 1, Parent = cashRow }) :: UIScale
 
 	-- ---------- the wallet's display ledger ----------
