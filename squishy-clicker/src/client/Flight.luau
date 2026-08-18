@@ -574,6 +574,15 @@ local function releaseEntry(alloc: Allocator, bases: { [number]: Vector3 }, id: 
 		if icon then
 			(icon :: BillboardGui).Enabled = false
 		end
+		-- Auras die with the borrow: highlights, emitters and lights all
+		-- keep rendering on an INVISIBLE part, so hiding the part alone
+		-- left a golden ghost (and its sparkles) hanging where a VIP was
+		-- released. Styling re-enables whatever the next entry earns.
+		for _, child in part:GetChildren() do
+			if child:IsA("ParticleEmitter") or child:IsA("PointLight") or child:IsA("Highlight") then
+				(child :: any).Enabled = false
+			end
+		end
 		table.insert(alloc.free, part)
 	end
 	bases[id] = nil
@@ -959,11 +968,13 @@ local function stylePickup(part: BasePart, entry: Track.Pickup)
 	-- keeps the shading. Made per-assignment and destroyed on reuse:
 	-- Roblox renders at most 31 Highlights at once, and only the handful
 	-- of VIPs inside the view window ever hold one.
-	local glow = part:FindFirstChild("VipGold")
+	local glow = part:FindFirstChild("VipGold") :: Highlight?
 	if meshBase then
 		part.Size = meshBase * (entry.vip and 1.6 or 1)
 		if entry.vip then
-			if not glow then
+			if glow then
+				glow.Enabled = true
+			else
 				local highlight = Instance.new("Highlight")
 				highlight.Name = "VipGold"
 				highlight.FillColor = VIP_GOLD
@@ -981,6 +992,50 @@ local function stylePickup(part: BasePart, entry: Track.Pickup)
 		part.Size = Vector3.one * (entry.vip and 9 or 5.5)
 		if glow then
 			glow:Destroy()
+		end
+	end
+
+	-- The jackpot AURA: a drizzle of golden sparkles and a warm glow, so
+	-- the 4× knots read from down the corridor. Built on assignment,
+	-- switched off on release, torn off when the part is reused for
+	-- ordinary cash.
+	local sparkle = part:FindFirstChild("VipSparkle") :: ParticleEmitter?
+	local lamp = part:FindFirstChild("VipLight") :: PointLight?
+	if entry.vip then
+		if sparkle then
+			sparkle.Enabled = true
+		else
+			local emitter = Instance.new("ParticleEmitter")
+			emitter.Name = "VipSparkle"
+			emitter.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+			emitter.Color = ColorSequence.new(VIP_GOLD)
+			emitter.Rate = 9
+			emitter.Lifetime = NumberRange.new(0.5, 0.9)
+			emitter.Speed = NumberRange.new(2, 4)
+			emitter.SpreadAngle = Vector2.new(180, 180)
+			emitter.Size = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1.4),
+				NumberSequenceKeypoint.new(1, 0),
+			})
+			emitter.LightEmission = 1
+			emitter.Parent = part
+		end
+		if lamp then
+			lamp.Enabled = true
+		else
+			local light = Instance.new("PointLight")
+			light.Name = "VipLight"
+			light.Color = VIP_GOLD
+			light.Brightness = 2
+			light.Range = 14
+			light.Parent = part
+		end
+	else
+		if sparkle then
+			sparkle:Destroy()
+		end
+		if lamp then
+			lamp:Destroy()
 		end
 	end
 	local icon = part:FindFirstChild("CashIcon") :: BillboardGui?
