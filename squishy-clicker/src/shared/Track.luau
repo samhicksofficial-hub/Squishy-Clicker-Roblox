@@ -238,7 +238,10 @@ function Track.chunk(seed: number, index: number): Chunk
 	end
 
 	-- Sometimes a VIP cluster: a golden knot worth several times over,
-	-- parked off-centre so it has to be steered for.
+	-- parked off-centre AND high — 58 studs and up, above anything the
+	-- launch arc alone reaches (its peak tops out around 45). The gold
+	-- belongs to the upper channel: catch a boost, then steer through it
+	-- while you still have the altitude.
 	if rng:NextNumber() < Config.ChunkVipChance then
 		local centre = from + 40 + rng:NextNumber() * (Config.ChunkLength - 80)
 		local lane = (rng:NextNumber() * 2 - 1) * half * 0.8
@@ -247,7 +250,7 @@ function Track.chunk(seed: number, index: number): Chunk
 			table.insert(pickups, {
 				id = nextId(),
 				distance = math.max(at, 1),
-				height = 6 + rng:NextNumber() * 30,
+				height = 58 + rng:NextNumber() * 42,
 				value = cashValue(at, true),
 				vip = true,
 				lane = math.clamp(lane + (rng:NextNumber() - 0.5) * 4, -half, half),
