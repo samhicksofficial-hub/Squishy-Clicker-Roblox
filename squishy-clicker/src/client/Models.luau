@@ -885,6 +885,26 @@ function Models.buildSquishy(
 	sparkles.Enabled = false
 	sparkles.Parent = primary
 
+	-- GOLD is treasure everywhere, not only on the track. A sparkle
+	-- squishy painted in the gold band — the Gold Glitter, and any future
+	-- golden variant — carries the same aura the 4× cash wears: its
+	-- sparkles run gold and a warm glow rides the body, wherever it is
+	-- built (the cushion, the capsule, the team, the flight). Judged by
+	-- hue so no list has to be maintained; the sparkle flag keeps plain
+	-- yellows like butter and cheese out of the club.
+	local hue, saturation, value = color:ToHSV()
+	if sparkle and hue > 0.09 and hue < 0.145 and saturation > 0.62 and value > 0.6 then
+		sparkles.Color = ColorSequence.new(Color3.fromRGB(240, 190, 70))
+		sparkles.Rate = 18
+		sparkles.LightEmission = 1
+		local lamp = Instance.new("PointLight")
+		lamp.Name = "GoldLight"
+		lamp.Color = Color3.fromRGB(240, 190, 70)
+		lamp.Brightness = 1.6
+		lamp.Range = 12
+		lamp.Parent = primary
+	end
+
 	local lowestY, highestY = verticalBounds(rig)
 
 	return {
