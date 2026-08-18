@@ -953,15 +953,39 @@ end
 -- treatment and the full billboard.
 local function stylePickup(part: BasePart, entry: Track.Pickup)
 	local meshBase = part:GetAttribute("MeshBase") :: Vector3?
+	-- VIP (4×) reads as GOLD, not as a floating money bag. The cash-stack
+	-- mesh wears a baked texture that plain recolouring can't touch, so
+	-- the gold is a Highlight tint — it multiplies over the texture and
+	-- keeps the shading. Made per-assignment and destroyed on reuse:
+	-- Roblox renders at most 31 Highlights at once, and only the handful
+	-- of VIPs inside the view window ever hold one.
+	local glow = part:FindFirstChild("VipGold")
 	if meshBase then
 		part.Size = meshBase * (entry.vip and 1.6 or 1)
+		if entry.vip then
+			if not glow then
+				local highlight = Instance.new("Highlight")
+				highlight.Name = "VipGold"
+				highlight.FillColor = VIP_GOLD
+				highlight.FillTransparency = 0.3
+				highlight.OutlineTransparency = 1
+				highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+				highlight.Adornee = part
+				highlight.Parent = part
+			end
+		elseif glow then
+			glow:Destroy()
+		end
 	else
 		part.Color = entry.vip and VIP_GOLD or (PICKUP_LOOK[entry.kind] or PICKUP_LOOK.coin)
 		part.Size = Vector3.one * (entry.vip and 9 or 5.5)
+		if glow then
+			glow:Destroy()
+		end
 	end
 	local icon = part:FindFirstChild("CashIcon") :: BillboardGui?
 	if icon then
-		local useImage = Config.CashIconImage ~= "" and not entry.vip and meshBase == nil
+		local useImage = Config.CashIconImage ~= "" and meshBase == nil
 		local face = icon:FindFirstChildOfClass("TextLabel")
 		local pic = icon:FindFirstChild("Pic") :: ImageLabel?
 		if pic then
@@ -969,9 +993,9 @@ local function stylePickup(part: BasePart, entry: Track.Pickup)
 		end
 		if face then
 			face.Visible = not useImage
-			face.Text = entry.vip and "💰" or "💵"
+			face.Text = "💵"
 		end
-		icon.Enabled = meshBase == nil or entry.vip
+		icon.Enabled = meshBase == nil
 	end
 end
 
