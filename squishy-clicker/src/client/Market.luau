@@ -411,24 +411,36 @@ function Market.mount(gui: GuiObject)
 	}) :: ScrollingFrame
 	UI.corner(12, grid)
 
-	local detail = UI.make("ScrollingFrame", {
-		-- ITS OWN WINDOW: a tall portrait card floated off the panel's
-		-- right edge, a sibling of the body under the same root — so it
-		-- pops, shows and hides with the market while standing apart from
-		-- it, exactly like an inspector beside a list.
+	-- ITS OWN WINDOW: a tall portrait card floated off the panel's right
+	-- edge, a sibling of the body under the same root — so it pops, shows
+	-- and hides with the market while standing apart from it, exactly like
+	-- an inspector beside a list. Three layers: the card shell, a
+	-- scrolling info area, and a FIXED action bar pinned to the bottom so
+	-- the buttons never scroll out from under the thumb.
+	local detailCard = UI.make("Frame", {
 		Size = UDim2.new(0, 350, 1, -78),
 		Position = UDim2.new(1, 16, 0, 66),
 		AnchorPoint = Vector2.new(0, 0),
 		BackgroundColor3 = CARD,
+		Active = true,
+		ZIndex = Z + 2,
+		Parent = panel.root,
+	}) :: Frame
+	UI.corner(16, detailCard)
+	UI.stroke(detailCard, 4)
+
+	-- Named `detail` on purpose: every piece of content the renderer
+	-- builds parents here, and the renderer predates the split.
+	local detail = UI.make("ScrollingFrame", {
+		Size = UDim2.new(1, 0, 1, -104),
+		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 6,
 		CanvasSize = UDim2.new(0, 0, 0, 0),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		ZIndex = Z + 2,
-		Parent = panel.root,
+		Parent = detailCard,
 	}) :: ScrollingFrame
-	UI.corner(16, detail)
-	UI.stroke(detail, 4)
 	UI.make("UIListLayout", {
 		HorizontalAlignment = Enum.HorizontalAlignment.Center,
 		Padding = UDim.new(0, 6),
@@ -441,11 +453,36 @@ function Market.mount(gui: GuiObject)
 		Parent = detail,
 	})
 
+	-- The pinned action bar: MAIN and TEAM live here, always on show.
+	local detailActions = UI.make("Frame", {
+		Size = UDim2.new(1, 0, 0, 104),
+		Position = UDim2.new(0, 0, 1, 0),
+		AnchorPoint = Vector2.new(0, 1),
+		BackgroundTransparency = 1,
+		ZIndex = Z + 3,
+		Parent = detailCard,
+	}) :: Frame
+	UI.make("UIListLayout", {
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		Padding = UDim.new(0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = detailActions,
+	})
+	UI.make("UIPadding", {
+		PaddingBottom = UDim.new(0, 12),
+		Parent = detailActions,
+	})
+
 	local function renderDetail()
 		-- The old stage is about to be destroyed with the rest of the pane;
 		-- the spin loop must not keep applying CFrames to a dead rig.
 		spin.model = nil
 		for _, child in detail:GetChildren() do
+			if not (child:IsA("UIListLayout") or child:IsA("UIPadding")) then
+				child:Destroy()
+			end
+		end
+		for _, child in detailActions:GetChildren() do
 			if not (child:IsA("UIListLayout") or child:IsA("UIPadding")) then
 				child:Destroy()
 			end
@@ -482,7 +519,7 @@ function Market.mount(gui: GuiObject)
 			-- lazy idle turn — the same toy language as the squisher on its
 			-- cushion in the shop.
 			local stageFrame = UI.make("ViewportFrame", {
-				Size = UDim2.new(1, -20, 0, 400),
+				Size = UDim2.new(1, -20, 0, 210),
 				BackgroundColor3 = Color3.fromRGB(250, 244, 238),
 				Ambient = Color3.fromRGB(170, 165, 160),
 				LightColor = Color3.fromRGB(255, 250, 244),
@@ -752,8 +789,8 @@ function Market.mount(gui: GuiObject)
 		if discovered then
 			local isMain = latest.clickerId == squishy.id
 			local main = UI.button({
-				parent = detail,
-				size = UDim2.new(0, 240, 0, 40),
+				parent = detailActions,
+				size = UDim2.new(1, -28, 0, 40),
 				text = isMain and "★ YOUR MAIN SQUISHY" or "★ MAKE MAIN SQUISHY",
 				textSize = 16,
 				top = UI.color.purple,
@@ -781,8 +818,8 @@ function Market.mount(gui: GuiObject)
 			local slotsLeft = #(latest.active or {}) < Config.MaxActiveSquishies
 
 			local action = UI.button({
-				parent = detail,
-				size = UDim2.new(0, 240, 0, 40),
+				parent = detailActions,
+				size = UDim2.new(1, -28, 0, 40),
 				text = summoned and "REMOVE FROM TEAM" or "ADD TO TEAM",
 				textSize = 17,
 				top = summoned and UI.color.orange or UI.color.green,
@@ -808,7 +845,9 @@ function Market.mount(gui: GuiObject)
 				TextWrapped = true,
 				LayoutOrder = nextOrder(),
 				ZIndex = Z + 3,
-				Parent = detail,
+				-- In the pinned bar, where the buttons would stand: the
+				-- card's bottom edge always says what to do next.
+				Parent = detailActions,
 			})
 		end
 	end
