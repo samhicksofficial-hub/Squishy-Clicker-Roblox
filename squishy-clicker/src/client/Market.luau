@@ -91,6 +91,10 @@ function Market.mount(gui: GuiObject)
 		model = nil :: any,
 		lift = 0,
 		scale = 1,
+		-- Fake sparkles for the stage: ViewportFrames render no real
+		-- ParticleEmitters, so a sparkle squishy's aura is played by tiny
+		-- neon motes orbiting the model, twinkled by the spin loop.
+		motes = {} :: { { part: BasePart, orbit: number, radius: number, height: number, phase: number, speed: number } },
 	}
 
 	-- The squishy's real 3D model in a round swatch — one recipe for the team
@@ -320,6 +324,22 @@ function Market.mount(gui: GuiObject)
 			CFrame.new(0, spin.lift, 0) * CFrame.Angles(0, spin.angle, 0),
 			Vector3.one * spin.scale
 		)
+
+		-- The fake sparkles: each mote orbits at its own pace and height,
+		-- bobbing gently, twinkling by size and transparency together.
+		local clock = os.clock()
+		for _, mote in spin.motes do
+			local angle = mote.orbit + clock * mote.speed
+			mote.part.Position = Vector3.new(
+				math.cos(angle) * mote.radius,
+				mote.height + math.sin(clock * 1.6 + mote.phase) * 0.18,
+				math.sin(angle) * mote.radius
+			)
+			local twinkle = 0.5 + 0.5 * math.sin(clock * 3.2 + mote.phase * 2)
+			mote.part.Transparency = 0.1 + 0.7 * (1 - twinkle)
+			local size = 0.09 + 0.15 * twinkle
+			mote.part.Size = Vector3.new(size, size, size)
+		end
 	end)
 
 	UserInputService.InputEnded:Connect(function(input)
@@ -475,8 +495,10 @@ function Market.mount(gui: GuiObject)
 
 	local function renderDetail()
 		-- The old stage is about to be destroyed with the rest of the pane;
-		-- the spin loop must not keep applying CFrames to a dead rig.
+		-- the spin loop must not keep applying CFrames to a dead rig — nor
+		-- twinkling dead motes.
 		spin.model = nil
+		table.clear(spin.motes)
 		for _, child in detail:GetChildren() do
 			if not (child:IsA("UIListLayout") or child:IsA("UIPadding")) then
 				child:Destroy()
@@ -583,6 +605,39 @@ function Market.mount(gui: GuiObject)
 			)
 			camera.Parent = stageFrame
 			stageFrame.CurrentCamera = camera
+
+			-- The sparkle aura, PLAYED rather than emitted: viewports
+			-- render no real particles, so a sparkle squishy gets a ring
+			-- of tiny neon motes orbiting the model — gold for the golden
+			-- club, white for the rest — twinkled by the spin loop. Built
+			-- AFTER the camera framing so they never inflate the bounds.
+			if squishy.sparkle then
+				local moteColor = if Models.isGolden(squishy.color, squishy.sparkle)
+					then Color3.fromRGB(240, 190, 70)
+					else Color3.fromRGB(255, 255, 255)
+				local low = spin.lift * 0.4
+				local high = top * 0.9
+				for index = 1, 7 do
+					local mote = Instance.new("Part")
+					mote.Name = "Mote"
+					mote.Shape = Enum.PartType.Ball
+					mote.Size = Vector3.new(0.16, 0.16, 0.16)
+					mote.Color = moteColor
+					mote.Material = Enum.Material.Neon
+					mote.Anchored = true
+					mote.CanCollide = false
+					mote.CastShadow = false
+					mote.Parent = stageModels
+					table.insert(spin.motes, {
+						part = mote,
+						orbit = index / 7 * math.pi * 2,
+						radius = radius * 0.75 + math.random() * radius * 0.45,
+						height = low + math.random() * math.max(high - low, 0.5),
+						phase = math.random() * math.pi * 2,
+						speed = 0.5 + math.random() * 0.5,
+					})
+				end
+			end
 
 			stageFrame.InputBegan:Connect(function(input)
 				if

@@ -795,6 +795,16 @@ local FACE_SHAPES: { [string]: boolean } = {
 	opalmesh = true,
 }
 
+-- The one verdict on gold: a SPARKLE squishy painted in the gold hue band.
+-- Judged by hue so no list has to be maintained; the sparkle flag keeps
+-- plain yellows like butter and cheese out of the club. Exported because
+-- the market's viewport fakes the same aura with motes (viewports render
+-- no real particles) and must agree on who gets it.
+function Models.isGolden(color: Color3, sparkle: boolean): boolean
+	local hue, saturation, value = color:ToHSV()
+	return sparkle and hue > 0.09 and hue < 0.145 and saturation > 0.62 and value > 0.6
+end
+
 function Models.buildSquishy(
 	parent: Instance,
 	shape: string?,
@@ -889,11 +899,8 @@ function Models.buildSquishy(
 	-- squishy painted in the gold band — the Gold Glitter, and any future
 	-- golden variant — carries the same aura the 4× cash wears: its
 	-- sparkles run gold and a warm glow rides the body, wherever it is
-	-- built (the cushion, the capsule, the team, the flight). Judged by
-	-- hue so no list has to be maintained; the sparkle flag keeps plain
-	-- yellows like butter and cheese out of the club.
-	local hue, saturation, value = color:ToHSV()
-	if sparkle and hue > 0.09 and hue < 0.145 and saturation > 0.62 and value > 0.6 then
+	-- built (the cushion, the capsule, the team, the flight).
+	if Models.isGolden(color, sparkle) then
 		sparkles.Color = ColorSequence.new(Color3.fromRGB(240, 190, 70))
 		sparkles.Rate = 18
 		sparkles.LightEmission = 1
