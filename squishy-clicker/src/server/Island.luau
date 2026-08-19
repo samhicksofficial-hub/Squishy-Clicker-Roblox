@@ -1169,6 +1169,202 @@ local function adoptPlots(map: Folder): boolean
 	return #plots > 0
 end
 
+-- ---------- the nature pass ----------
+-- Regreening for a BAKED world: the blocky built-from-parts trees, bushes
+-- and rocks in Props are cleared (the stalls, found by their own prompts,
+-- are spared) and the island is replanted from the hand-imported nature
+-- pack — trees where trees were, plus rocks, logs, bushes and flowers
+-- scattered across the grass between the plaza and the beach. Templates
+-- are found by LOOSE name wherever the pack was dropped and classified by
+-- keyword, so the pack needs no particular structure; every clone goes
+-- through prepareImport (scripts stripped, parts anchored), Toolbox
+-- hygiene being what it is. Runs at every startup until the world is
+-- BAKED with it (run Island.build() from the command bar in edit mode and
+-- save); the Nature folder is the already-dressed marker either way.
+local function dressNature(map: Folder)
+	if map:FindFirstChild("Nature") then
+		return
+	end
+
+	-- The pack, wherever it landed — and moved into ReplicatedStorage if
+	-- it is sitting in the world, where it does not belong.
+	local pack: Instance? = nil
+	for _, container in { ReplicatedStorage :: Instance, workspace :: Instance } do
+		for _, child in container:GetDescendants() do
+			if (child:IsA("Folder") or child:IsA("Model")) and child.Name:lower():find("nature", 1, true) then
+				pack = child
+				break
+			end
+		end
+		if pack then
+			break
+		end
+	end
+	if not pack then
+		return -- nothing imported yet; the blocky scenery keeps its job
+	end
+	if not pack:IsDescendantOf(ReplicatedStorage) then
+		(pack :: Instance).Parent = ReplicatedStorage
+	end
+
+	-- Classify the pack's models by name. Depth-first preorder means
+	-- parents come before children, so a matched tree's own "Trunk" or
+	-- "Leaves" submodels never get claimed twice.
+	local KEYWORDS: { [string]: { string } } = {
+		tree = { "tree", "pine", "oak", "birch", "palm", "spruce", "fir" },
+		rock = { "rock", "stone", "boulder", "pebble" },
+		flower = { "flower", "tulip", "daisy", "rose", "sunflower", "plant", "mushroom" },
+		log = { "log", "stump", "branch" },
+		bush = { "bush", "shrub", "fern", "grass" },
+	}
+	local kinds: { [string]: { Model } } = { tree = {}, rock = {}, flower = {}, log = {}, bush = {} }
+	local claimed: { [Instance]: boolean } = {}
+	for _, descendant in pack:GetDescendants() do
+		if descendant:IsA("Model") and descendant:FindFirstChildWhichIsA("BasePart", true) then
+			local ancestorClaimed = false
+			local walk = descendant.Parent
+			while walk and walk ~= pack do
+				if claimed[walk] then
+					ancestorClaimed = true
+					break
+				end
+				walk = walk.Parent
+			end
+			if not ancestorClaimed then
+				local name = descendant.Name:lower()
+				for kind, words in KEYWORDS do
+					local matched = false
+					for _, word in words do
+						if name:find(word, 1, true) then
+							matched = true
+							break
+						end
+					end
+					if matched then
+						table.insert(kinds[kind], descendant)
+						claimed[descendant] = true
+						break
+					end
+				end
+			end
+		end
+	end
+	if #kinds.tree == 0 then
+		warn("[SquishyClicker] Nature pack found but no models named like trees — the old scenery stays until there are replacements.")
+		return
+	end
+
+	-- The stalls, spared by position: theirs are the only parts in Props
+	-- worth keeping, and their prompts say exactly where they stand.
+	local stallAt: { Vector3 } = {}
+	for _, descendant in map:GetDescendants() do
+		if descendant:IsA("ProximityPrompt") and descendant.Name == "SquishyMarket" then
+			local host = descendant.Parent
+			if host and host:IsA("BasePart") then
+				table.insert(stallAt, host.Position)
+			end
+		end
+	end
+
+	local props = map:FindFirstChild("Props")
+	if props then
+		for _, child in props:GetChildren() do
+			if child:IsA("BasePart") then
+				local nearStall = false
+				for _, at in stallAt do
+					if Vector3.new(child.Position.X - at.X, 0, child.Position.Z - at.Z).Magnitude < 11 then
+						nearStall = true
+						break
+					end
+				end
+				if not nearStall then
+					child:Destroy()
+				end
+			end
+		end
+	end
+
+	local nature = Instance.new("Folder")
+	nature.Name = "Nature"
+	nature.Parent = map
+
+	-- Seeded, like the scenery it replaces: the island is laid out
+	-- identically on every server.
+	local rng = Random.new(20260821)
+
+	-- Clear of the plaza, the beach, the ring road, the spokes (their
+	-- width varies by how picky the caller is — flowers may hug paths
+	-- that trees must not), the plots and the stalls.
+	local function isClear(at: Vector3, minAcrossSpoke: number): boolean
+		local radius = Vector3.new(at.X, 0, at.Z).Magnitude
+		if radius < PLAZA_RADIUS + 4 or radius > ISLAND_RADIUS - BEACH_WIDTH - 6 then
+			return false
+		end
+		if math.abs(radius - RING_ROAD) < PATH_WIDTH then
+			return false
+		end
+		for _, plot in plots do
+			local offset = at - plot.centre
+			if math.abs(offset.X) < PLOT_SIZE * 0.75 and math.abs(offset.Z) < PLOT_SIZE * 0.75 then
+				return false
+			end
+		end
+		for _, stall in stallAt do
+			if Vector3.new(at.X - stall.X, 0, at.Z - stall.Z).Magnitude < 14 then
+				return false
+			end
+		end
+		local angle = math.atan2(at.Z, at.X)
+		local slot = angle / (math.pi * 2) * Island.PLOT_COUNT
+		local offBySlots = math.abs(slot - math.floor(slot + 0.5))
+		return offBySlots * (math.pi * 2 / Island.PLOT_COUNT) * radius > minAcrossSpoke
+	end
+
+	local planted: { [string]: number } = {}
+	local function plant(kind: string, targetSize: number, jitter: number, minAcross: number, tries: number)
+		local templates = kinds[kind]
+		if #templates == 0 then
+			return
+		end
+		planted[kind] = 0
+		for _ = 1, tries do
+			local angle = rng:NextNumber() * math.pi * 2
+			local radius = rng:NextNumber(PLAZA_RADIUS + 4, ISLAND_RADIUS - BEACH_WIDTH - 6)
+			local at = Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+			if isClear(at, minAcross) then
+				local clone = templates[rng:NextInteger(1, #templates)]:Clone()
+				if prepareImport(clone) then
+					scaleImport(clone, targetSize * rng:NextNumber(1 - jitter, 1 + jitter))
+					clone:PivotTo(CFrame.new(at) * CFrame.Angles(0, rng:NextNumber() * math.pi * 2, 0))
+					-- Stood on the grass by its own bounds, like everything
+					-- else hand-imported.
+					local boundsCF, boundsSize = clone:GetBoundingBox()
+					local bottomY = boundsCF.Position.Y - boundsSize.Y * 0.5
+					clone:PivotTo(clone:GetPivot() + Vector3.new(0, (GROUND_Y + Y.field) - bottomY, 0))
+					clone.Parent = nature
+					planted[kind] += 1
+				else
+					clone:Destroy()
+				end
+			end
+		end
+	end
+
+	plant("tree", 14, 0.3, PATH_WIDTH, 60)
+	plant("bush", 4.5, 0.35, PATH_WIDTH, 40)
+	plant("rock", 4.5, 0.4, PATH_WIDTH, 34)
+	plant("log", 5.5, 0.3, PATH_WIDTH, 20)
+	-- Flowers may crowd closer to the paths and the plaza rim than the
+	-- big stuff: they decorate the walk, not block it.
+	plant("flower", 2, 0.35, 8, 90)
+
+	local summary = {}
+	for kind, count in planted do
+		table.insert(summary, ("%d %s"):format(count, kind))
+	end
+	print(("[SquishyClicker] Nature pass planted: %s. Bake it in with Island.build() from the edit-mode command bar, then save."):format(table.concat(summary, ", ")))
+end
+
 function Island.build()
 	-- Parent-checked rather than nil-checked: Studio's command bar caches
 	-- this module, so a delete-the-Map-and-re-bake in the same session
@@ -1207,6 +1403,9 @@ function Island.build()
 					folders[child.Name] = child
 				end
 			end
+			-- After the plots, so the pass can place around their REAL
+			-- centres, hand-moved or not.
+			dressNature(existing)
 			print(("[SquishyClicker] Adopted the baked world from the place file — %d plots wired."):format(#plots))
 			return
 		end
