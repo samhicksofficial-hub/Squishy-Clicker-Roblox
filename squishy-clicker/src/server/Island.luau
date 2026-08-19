@@ -763,6 +763,56 @@ local function buildStation(frame: CFrame, folder: Folder)
 	capsule.Parent = folder
 end
 
+-- ---------- the upgrade board stand ----------
+-- The PHYSICAL half of the plot's upgrade board: two posts and a blank
+-- plank, real geometry in the world (and in the baked file), holding the
+-- walk-in corner at a 45° greeting. The LIVE half — prices, buffs, the
+-- buy buttons — is the client's: PlotBoard.luau finds this stand by name
+-- and adornes its own SurfaceGui onto the plank, so every player reads
+-- their own numbers off the same wood. Dimensions and pose mirror
+-- PlotBoard's fallback exactly.
+local BOARD_SIDE = -14
+local BOARD_IN = 12
+
+local function buildBoardStand(centre: Vector3, folder: Folder)
+	local flat = Vector3.new(centre.X, 0, centre.Z)
+	if flat.Magnitude < 1 then
+		return
+	end
+	local outward = flat.Unit
+	local sideWorld = Vector3.new(-outward.Z, 0, outward.X)
+	local at = flat - outward * BOARD_IN + sideWorld * BOARD_SIDE
+	local facing = (-outward - sideWorld * math.sign(BOARD_SIDE)).Unit
+	local face = CFrame.lookAt(at + Vector3.new(0, 6, 0), at + Vector3.new(0, 6, 0) + facing)
+
+	for _, offset in { CFrame.new(-4.6, -2.4, 0.6), CFrame.new(4.6, -2.4, 0.6) } do
+		local post = Instance.new("Part")
+		post.Size = Vector3.new(0.7, 7, 0.7)
+		post.CFrame = face * offset
+		post.Color = COLOR.wood
+		post.Material = Enum.Material.Wood
+		post.Anchored = true
+		post.CanCollide = false
+		post.CanQuery = false
+		post.CanTouch = false
+		post.Parent = folder
+	end
+
+	local board = Instance.new("Part")
+	board.Name = "UpgradeBoard"
+	board.Size = Vector3.new(11, 6.4, 0.5)
+	board.CFrame = face
+	board.Color = Color3.fromRGB(92, 62, 40)
+	board.Material = Enum.Material.WoodPlanks
+	board.Anchored = true
+	board.CanCollide = false
+	-- Queryable ON PURPOSE: the client adornes its buy buttons here, and
+	-- buttons only hear clicks the mouse can actually hit.
+	board.CanQuery = true
+	board.CanTouch = false
+	board.Parent = folder
+end
+
 -- One plot: a raised pad with a fence, a sign, and a cannon on it aimed out
 -- over the water. The cannon is the interactive bit — everything else is
 -- there to make the pad feel like somewhere rather than a square of floor.
@@ -866,6 +916,8 @@ local function buildPlot(index: number): Plot
 	-- name, found by name in a baked world.
 	local signGui = sign.Parent :: Instance
 	signGui.Name = "PlotSign"
+
+	buildBoardStand(centre, folder)
 
 	return {
 		index = index,
@@ -1084,6 +1136,11 @@ local function adoptPlots(map: Folder): boolean
 			owner = nil,
 		})
 
+		-- A baked world from before the stands existed gets one grown in;
+		-- a world that already carries its stand keeps it exactly as is.
+		if not folder:FindFirstChild("UpgradeBoard", true) then
+			buildBoardStand(plotCentre, folder)
+		end
 	end
 
 	-- ---------- the plot capsules ----------

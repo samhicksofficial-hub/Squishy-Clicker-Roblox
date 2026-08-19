@@ -1163,8 +1163,8 @@ do
 			-- The folder rides along so Flight can find the hand-placed
 			-- capsule model inside this plot.
 			Flight.setPlot(centre, plot)
-			-- The upgrade board stands itself up beside the same cannon.
-			PlotBoard.setPlot(centre)
+			-- The upgrade board finds its baked stand in the same folder.
+			PlotBoard.setPlot(centre, plot)
 			-- The guide trail now knows where home is.
 			GuidePath.setPlot(centre)
 		end

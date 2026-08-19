@@ -123,22 +123,10 @@ end
 
 -- Build (or rebuild) the stand at this plot. Called with the same centre
 -- Flight.setPlot gets, whenever the plot attribute names this player.
-function PlotBoard.setPlot(centre: Vector3)
-	local flat = Vector3.new(centre.X, 0, centre.Z)
-	if flat.Magnitude < 1 then
-		return
-	end
-	local outward = flat.Unit
-	local sideWorld = Vector3.new(-outward.Z, 0, outward.X)
-
-	-- The gui is parented to PlayerGui, NOT the folder — destroying only
-	-- the stand on a rebuild would strand the old gui there forever.
-	if folder then
-		folder:Destroy()
-	end
-	if surface then
-		surface:Destroy()
-	end
+-- The geometry FALLBACK: a client-local stand, used only when the world
+-- carries no baked one (a place that predates the server-built stands).
+-- The baked stand in Island.luau mirrors these exact dimensions.
+local function buildLocalStand(flat: Vector3, outward: Vector3, sideWorld: Vector3): BasePart
 	local stand = Instance.new("Folder")
 	stand.Name = "PlotBoard"
 	stand.Parent = workspace
@@ -173,7 +161,11 @@ function PlotBoard.setPlot(centre: Vector3)
 	-- receive clicks if the mouse can HIT the Adornee, and woodPart's
 	-- CanQuery=false (right for the posts) made every click sail through.
 	board.CanQuery = true
+	return board
+end
 
+-- Hang the live screen on a board part — baked or fallback alike.
+local function dressBoard(board: BasePart)
 	-- The gui lives under PlayerGui with the board as Adornee — parented to
 	-- the part itself, buttons stop receiving input (the same lesson the
 	-- capsule badge learned about ViewportFrames).
@@ -271,6 +263,55 @@ function PlotBoard.setPlot(centre: Vector3)
 	})
 
 	repaint()
+end
+
+-- Bumped per plot adoption so a stale stand-finder can never dress an
+-- old plot's board over the new one's.
+local boardToken = 0
+
+function PlotBoard.setPlot(centre: Vector3, plotFolder: Instance?)
+	local flat = Vector3.new(centre.X, 0, centre.Z)
+	if flat.Magnitude < 1 then
+		return
+	end
+	local outward = flat.Unit
+	local sideWorld = Vector3.new(-outward.Z, 0, outward.X)
+
+	-- The gui is parented to PlayerGui, NOT the folder — destroying only
+	-- the stand on a rebuild would strand the old gui there forever.
+	if folder then
+		folder:Destroy()
+		folder = nil
+	end
+	if surface then
+		surface:Destroy()
+		surface = nil
+	end
+
+	-- HYBRID: the stand itself is real geometry now — baked into the
+	-- world by Island.luau, visible in edit mode, shared by everyone —
+	-- and this client only hangs its own live screen on it. The poller
+	-- rides out replication (geometry lands after the plot attribute, the
+	-- same race the capsule learned about); a world with no baked stand
+	-- gets the old client-local one as a fallback.
+	boardToken += 1
+	local token = boardToken
+	task.spawn(function()
+		for _ = 1, 16 do
+			if token ~= boardToken then
+				return
+			end
+			local board = plotFolder and plotFolder:FindFirstChild("UpgradeBoard", true)
+			if board and board:IsA("BasePart") then
+				dressBoard(board)
+				return
+			end
+			task.wait(0.5)
+		end
+		if token == boardToken then
+			dressBoard(buildLocalStand(flat, outward, sideWorld))
+		end
+	end)
 end
 
 function PlotBoard.update(state: any)
