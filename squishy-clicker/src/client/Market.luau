@@ -63,11 +63,12 @@ function Market.mount(gui: GuiObject)
 	local panel = UI.panel({
 		parent = gui,
 		name = "SquishyMarket",
-		-- Sized to the left lane alone: the preview is its OWN window now,
-		-- floated off the panel's right edge. Nudged left of centre so the
-		-- pair together sit centred-ish on screen.
-		size = UDim2.new(0, 622, 0, 620),
-		position = UDim2.new(0.5, -110, 0.5, 0),
+		-- Wide enough that the pink frame and brown body ENCLOSE the
+		-- inspector card too: the card keeps its own paper-white face, but
+		-- it lives inside the market's walls rather than floating beside
+		-- them.
+		size = UDim2.new(0, 980, 0, 620),
+		position = UDim2.new(0.5, 0, 0.5, 0),
 		icon = "🥟",
 		title = "SQUISHY MARKET",
 		top = UI.color.pink,
@@ -411,20 +412,19 @@ function Market.mount(gui: GuiObject)
 	}) :: ScrollingFrame
 	UI.corner(12, grid)
 
-	-- ITS OWN WINDOW: a tall portrait card floated off the panel's right
-	-- edge, a sibling of the body under the same root — so it pops, shows
-	-- and hides with the market while standing apart from it, exactly like
-	-- an inspector beside a list. Three layers: the card shell, a
-	-- scrolling info area, and a FIXED action bar pinned to the bottom so
-	-- the buttons never scroll out from under the thumb.
+	-- The INSPECTOR CARD: a tall portrait card in the body's right lane,
+	-- paper-white against the market's brown so it still reads as its own
+	-- window — inside the frame, not floating beside it. Three layers: the
+	-- card shell, a scrolling info area, and a FIXED action bar pinned to
+	-- the bottom so the buttons never scroll out from under the thumb.
 	local detailCard = UI.make("Frame", {
-		Size = UDim2.new(0, 350, 1, -78),
-		Position = UDim2.new(1, 16, 0, 66),
-		AnchorPoint = Vector2.new(0, 0),
+		Size = UDim2.new(0, 350, 1, -16),
+		Position = UDim2.new(1, -8, 0, 8),
+		AnchorPoint = Vector2.new(1, 0),
 		BackgroundColor3 = CARD,
 		Active = true,
 		ZIndex = Z + 2,
-		Parent = panel.root,
+		Parent = panel.body,
 	}) :: Frame
 	UI.corner(16, detailCard)
 	UI.stroke(detailCard, 4)
@@ -967,9 +967,12 @@ function Market.mount(gui: GuiObject)
 	for order, category in Squishies.categories do
 		local tab = UI.button({
 			parent = tabRow,
-			size = UDim2.new(0, 116, 0, 34),
+			-- Sized so all six tabs FIT the 594 lane (6×92 + 5×8 = 592):
+			-- at 116 the row overflowed and Oddities clipped through the
+			-- panel border.
+			size = UDim2.new(0, 92, 0, 34),
 			text = category,
-			textSize = 15,
+			textSize = 13,
 			top = UI.color.blue,
 			bottom = UI.color.blueDeep,
 			zIndex = Z + 2,
