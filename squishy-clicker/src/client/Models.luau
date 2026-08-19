@@ -892,7 +892,12 @@ function Models.buildSquishy(
 	})
 	sparkles.LightEmission = 0.9
 	sparkles.Acceleration = Vector3.new(0, -4, 0)
-	sparkles.Enabled = false
+	-- ON by default for sparkle squishies: this used to start false and
+	-- wait for the context to flip it, but only the cushion and the reveal
+	-- ever did — summons, the capsule occupant and the flight toy walked
+	-- around glitterless. Contexts that manage the emitter (the reveal
+	-- hiding it in the tub, the cushion softening its rate) still override.
+	sparkles.Enabled = sparkle
 	sparkles.Parent = primary
 
 	-- GOLD is treasure everywhere, not only on the track. A sparkle
