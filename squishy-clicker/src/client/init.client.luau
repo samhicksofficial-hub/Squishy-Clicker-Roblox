@@ -900,7 +900,10 @@ local function playReveal(squishyId: string)
 	local token = viewToken
 	task.delay(2.3, function()
 		if token == viewToken then
-			Scene.setView("main")
+			-- Back to the SQUISHER, not out to the island: unboxing is part
+			-- of the clicker loop, and the player who just opened one is
+			-- the player about to click for (or unbox) the next.
+			Scene.setView("clicker")
 		end
 	end)
 end
