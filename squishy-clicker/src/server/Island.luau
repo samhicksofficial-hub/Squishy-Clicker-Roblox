@@ -291,6 +291,119 @@ local function buildGround()
 	studded(plaza)
 end
 
+-- ---------- the range on the water ----------
+-- The rainbow target from the shared-range era, back exactly as it was —
+-- painted on the OCEAN now, since the plain it used to cover became the sea.
+-- Filled bands from the beach edge out to the last ring, rainbow near to
+-- far, each with its distance printed FLAT on it once per plot bearing.
+-- The ghost launches (client/Ghosts.luau) splash down on the band their
+-- shot's expected distance names, through the same Config.rangeRadius, so
+-- the bands are a scoreboard everyone on the island reads at a glance.
+--
+-- Filled rather than thin stripes, because a solid band is the thing that
+-- reads at a thousand studs — a nine-stud line seen almost edge-on is a
+-- scratch. Printed on the water rather than floated above it, because
+-- floating signs draw at a fixed pixel size however far away they are.
+-- Each band floats a few hundredths of a stud above its inner neighbour —
+-- the island's own no-shared-heights rule — so the half-stud overlap where
+-- bands meet can never z-fight. Parts are named "RangeBand", NOT "Sea" or
+-- "Grass", so neither the drowning sweep nor the world repaint touches them.
+--
+-- Runs in BOTH world modes: the generated build calls it like any other
+-- ground pass, and the baked-world adoption grows the target in at startup
+-- until a re-bake saves it — the Range folder is the already-dressed marker
+-- either way, so the bands can never double-stack.
+local function buildRangeBands(parent: Instance)
+	if parent:FindFirstChild("Range") then
+		return
+	end
+	local markers = Instance.new("Folder")
+	markers.Name = "Range"
+	markers.Parent = parent
+
+	local bands = Config.RangeBands
+	-- The sea's top face sits at Y.plain - 4 (see buildGround); the bands
+	-- lie just above it, like the old ones lay on the plain.
+	local seaTop = Y.plain - 4
+
+	local inner = ISLAND_RADIUS -- the first band starts at the shoreline
+	for order, band in bands do
+		local outer = Config.rangeRadius(band.studs)
+		local depth = outer - inner
+		if depth > 1 then
+			-- Rainbow near to far, so "how far did it get" is answerable at
+			-- a glance by which colour it splashed down on.
+			local color = Color3.fromHSV((order - 1) / #bands * 0.86, 0.72, 1)
+			local mid = (inner + outer) * 0.5
+			local stripY = seaTop + 0.7 + order * 0.05
+
+			-- Segment count scales with circumference: a fixed count would
+			-- make the inner rings needlessly dense and the outer ones
+			-- coarse enough to show as a polygon.
+			local segments = math.clamp(math.floor(mid / 7), 48, 160)
+			local width = 2 * math.pi * mid / segments + 3
+
+			for index = 1, segments do
+				local angle = (index / segments) * math.pi * 2
+				local at = Vector3.new(math.cos(angle) * mid, stripY, math.sin(angle) * mid)
+				local strip = block(
+					Vector3.new(depth + 1, 1.2, width),
+					CFrame.new(at) * CFrame.Angles(0, -angle, 0),
+					color,
+					markers
+				)
+				strip.Name = "RangeBand"
+				studded(decor(strip))
+			end
+
+			-- The number, lying on the band, once per plot bearing so
+			-- whichever way a cannon points there is a figure under it. Sat
+			-- near the band's OUTER edge: that is the line the distance
+			-- actually means, and the edge a ghost splashes across.
+			for slot = 1, Island.PLOT_COUNT do
+				local angle = (slot - 1) / Island.PLOT_COUNT * math.pi * 2
+				local textRadius = outer - math.min(depth * 0.42, 34)
+				local at = Vector3.new(math.cos(angle) * textRadius, stripY + 1, math.sin(angle) * textRadius)
+
+				-- X runs radially, Z runs along the band, so the text reads
+				-- across the ring the way a real distance marker does.
+				local plateDepth = math.min(depth * 0.7, 56)
+				local plate = block(
+					Vector3.new(plateDepth, 0.6, plateDepth * 3.4),
+					CFrame.new(at) * CFrame.Angles(0, -angle, 0),
+					color,
+					markers
+				)
+				plate.Name = "RangeBand"
+				plate.Transparency = 1 -- the plate is only a surface to print on
+				decor(plate)
+
+				local surface = Instance.new("SurfaceGui")
+				surface.Face = Enum.NormalId.Top
+				-- Low, because the text has to be huge in world terms to be
+				-- read from the island a thousand studs away.
+				surface.PixelsPerStud = 12
+				surface.Parent = plate
+
+				local label = Instance.new("TextLabel")
+				label.Size = UDim2.fromScale(1, 1)
+				label.BackgroundTransparency = 1
+				label.Font = Enum.Font.FredokaOne
+				label.Text = ("%s Studs"):format(band.name)
+				label.TextColor3 = Color3.fromRGB(255, 255, 255)
+				label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
+				label.TextStrokeTransparency = 0
+				label.TextScaled = true
+				-- Printed to be read from the island looking OUT, not from
+				-- the horizon looking back.
+				label.Rotation = 180
+				label.Parent = surface
+			end
+		end
+		inner = outer
+	end
+end
+
 -- ---------- paths ----------
 -- One spoke out to each plot, plus a ring road joining them. Laid as a run of
 -- overlapping blocks rather than one long rotated slab, so a path can bend
@@ -1437,6 +1550,22 @@ function Island.build()
 	adoptSkybox()
 	adoptSkyEffects()
 
+	-- The place file carries stowaways from the template it was made from: a
+	-- Baseplate and its SpawnLocation. The baseplate is why the painted range
+	-- VANISHED — its top sits at Y0 while the sea and every rainbow band lie
+	-- 26 studs below it, so the entire target sat under the floor, and the
+	-- "dark grey expanse" around the island was the baseplate itself. This
+	-- sweep runs in BOTH world modes now: it used to sit after the baked
+	-- world's adoption returned, so a baked place kept its baseplate forever
+	-- and it hid the sea bands exactly the way it once hid the painted range.
+	-- (A SpawnLocation caught here is the template's, never ours: IslandSpawn
+	-- lives INSIDE the Map folder, out of this top-level sweep's reach.)
+	for _, child in workspace:GetChildren() do
+		if (child:IsA("BasePart") and child.Name == "Baseplate") or child:IsA("SpawnLocation") then
+			child:Destroy()
+		end
+	end
+
 	-- A Map folder already in Workspace is a BAKED world: the place file
 	-- owns the geometry and this run only adopts it.
 	local existing = workspace:FindFirstChild("Map")
@@ -1463,6 +1592,9 @@ function Island.build()
 			-- After the plots, so the pass can place around their REAL
 			-- centres, hand-moved or not.
 			dressNature(existing)
+			-- A baked world from before the range gets it grown in; a
+			-- world already carrying its Range folder keeps it as is.
+			buildRangeBands(existing)
 			print(("[SquishyClicker] Adopted the baked world from the place file — %d plots wired."):format(#plots))
 			return
 		end
@@ -1475,26 +1607,13 @@ function Island.build()
 		existing.Name = "Map (unadopted)"
 	end
 
-	-- The place file carries stowaways from the template it was made from: a
-	-- Baseplate and its SpawnLocation. The baseplate is why the painted range
-	-- VANISHED — its top sits at Y0 while the plain and every rainbow band
-	-- lie 22 studs below it, so the entire target was under the floor, and
-	-- the "dark studded expanse" players saw was the baseplate itself. This
-	-- game generates its whole world; leftover floors are never welcome.
-	-- (A SpawnLocation caught here is the template's, never ours: IslandSpawn
-	-- is built inside the Map folder after this sweep.)
-	for _, child in workspace:GetChildren() do
-		if (child:IsA("BasePart") and child.Name == "Baseplate") or child:IsA("SpawnLocation") then
-			child:Destroy()
-		end
-	end
-
 	root = Instance.new("Folder")
 	root.Name = "Map"
 
 	group("Plots")
 
 	buildGround()
+	buildRangeBands(root)
 	buildPaths()
 	buildScenery()
 	buildSpawn()

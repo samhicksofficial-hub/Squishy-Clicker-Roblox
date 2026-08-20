@@ -695,10 +695,64 @@ local function corridorPart(size: Vector3, color: Color3, material: Enum.Materia
 	return part
 end
 
+-- ---------- the ocean theme ----------
+-- The corridor dressed as the island's own painted range, for the shared-
+-- shot illusion: the floor wears the ring band the shot's REAL distance is
+-- inside — the same ladder and the same HSV rainbow the island paints (see
+-- buildRangeBands in Island.luau) — open water runs to the horizon either
+-- side, and the haze ahead is tinted the colour of the ring coming up.
+-- The shooter's view and everyone else's ghost view then tell ONE story: a
+-- squishy flying out over the rings, off the plaza. Config.CorridorTheme
+-- picks this or the old canyon biomes.
+local OCEAN_THEME = Config.CorridorTheme == "ocean"
+local SEA_COLOR = Color3.fromRGB(96, 196, 234) -- the island's own water
+local SEA_DARK = Color3.fromRGB(78, 174, 216)
+-- How far the water reaches either side of the floor strip. Past it is sky,
+-- which the chase camera's forward frame never shows.
+local APRON_WIDTH = 340
+
+-- One colour per band, from the SAME formula the island paints with — the
+-- two must agree, or the ring underfoot stops matching the ring the ghost
+-- is crossing.
+local BAND_COLORS: { Color3 } = {}
+for order = 1, #Config.RangeBands do
+	BAND_COLORS[order] = Color3.fromHSV((order - 1) / #Config.RangeBands * 0.86, 0.72, 1)
+end
+
+-- Which band a real distance is inside; one past the end means the open
+-- ocean beyond the last ring.
+local function bandIndexAt(d: number): number
+	for order, band in Config.RangeBands do
+		if d < band.studs then
+			return order
+		end
+	end
+	return #Config.RangeBands + 1
+end
+
+-- Floor light, floor dark, and the water either side — the apron leans the
+-- band's colour toward the sea, so it reads as the ring seen through open
+-- water rather than as more road.
+local function oceanPalette(d: number): (Color3, Color3, Color3)
+	local color: Color3? = BAND_COLORS[bandIndexAt(d)]
+	if not color then
+		return SEA_COLOR, SEA_DARK, SEA_DARK
+	end
+	return color, color:Lerp(Color3.new(0, 0, 0), 0.12), color:Lerp(SEA_COLOR, 0.42)
+end
+
+-- The distances the milestone ladder already announces with a bounty popup,
+-- so the ring callouts below never double up on them.
+local milestoneAt: { [number]: boolean } = {}
+for _, milestone in Config.DistanceMilestones do
+	milestoneAt[milestone.at] = true
+end
+
 type MarkerSet = { panel: BasePart, label: TextLabel, index: number }
 
 local corridorTiles: { BasePart } = {}
 local corridorWalls: { { left: BasePart, right: BasePart, leftLip: BasePart, rightLip: BasePart } } = {}
+local corridorAprons: { { left: BasePart, right: BasePart } } = {}
 local corridorMarkers: { MarkerSet } = {}
 local CORRIDOR_POOL = 20
 
@@ -714,21 +768,37 @@ do
 		tile.TopSurface = Enum.SurfaceType.Studs
 		corridorTiles[index] = tile
 
-		-- Walls with lip caps: the island's Canyon/CanyonLip recipe, so the
-		-- corridor reads as the same universe.
-		local function wallPair(): (BasePart, BasePart)
-			local wall = corridorPart(
-				Vector3.new(tileLength, wallHeight, 6),
-				corridorTheme.canyon,
-				Enum.Material.Sandstone
-			)
-			local lip = corridorPart(Vector3.new(tileLength, 4, 8), corridorTheme.grassDark, Enum.Material.Plastic)
-			lip.TopSurface = Enum.SurfaceType.Studs
-			return wall, lip
+		-- The water either side, ocean theme only: wide flat planes seated a
+		-- little below the floor strip's top, so the lane keeps a readable
+		-- edge while the view to each side is sea instead of sky.
+		if OCEAN_THEME then
+			local function apron(): BasePart
+				return corridorPart(Vector3.new(tileLength, 1, APRON_WIDTH), SEA_COLOR, Enum.Material.SmoothPlastic)
+			end
+			corridorAprons[index] = { left = apron(), right = apron() }
 		end
-		local left, leftLip = wallPair()
-		local right, rightLip = wallPair()
-		corridorWalls[index] = { left = left, right = right, leftLip = leftLip, rightLip = rightLip }
+
+		-- Walls with lip caps: the island's Canyon/CanyonLip recipe, so the
+		-- corridor reads as the same universe. Only built when Config says
+		-- the corridor wears walls — with them off (the shared-shot
+		-- illusion; see CorridorSideWalls) the flight plays over an open
+		-- floor with sky either side, and every consumer of this table
+		-- guards on the entry existing.
+		if Config.CorridorSideWalls then
+			local function wallPair(): (BasePart, BasePart)
+				local wall = corridorPart(
+					Vector3.new(tileLength, wallHeight, 6),
+					corridorTheme.canyon,
+					Enum.Material.Sandstone
+				)
+				local lip = corridorPart(Vector3.new(tileLength, 4, 8), corridorTheme.grassDark, Enum.Material.Plastic)
+				lip.TopSurface = Enum.SurfaceType.Studs
+				return wall, lip
+			end
+			local left, leftLip = wallPair()
+			local right, rightLip = wallPair()
+			corridorWalls[index] = { left = left, right = right, leftLip = leftLip, rightLip = rightLip }
+		end
 
 		-- A marker: the distance painted flat on the road, like airport
 		-- runway numbers. The part itself is invisible — a SurfaceGui
@@ -830,6 +900,8 @@ end
 -- The band the squishy is currently IN, for the "entering the desert!"
 -- announcement the moment a new one starts scrolling underfoot.
 local currentBiomeAt = 0
+-- And the RING band, for the ocean theme's crossing callouts.
+local currentBandIndex = 1
 
 -- Ground-owned FX ride the treadmill: a splat must recede with the floor it
 -- landed on, or it appears to glide forward against the scroll. Each entry
@@ -1613,6 +1685,7 @@ function Flight.play(plan: {
 	slamManualPending = false
 	touchAt = nil
 	currentBiomeAt = 0
+	currentBandIndex = 1
 
 	-- The milestones this account has NOT yet earned, straight from the
 	-- server with their positions — the popup fires at the sign the moment
@@ -1821,19 +1894,36 @@ RunService.RenderStepped:Connect(function(dt)
 			local centreD = (tileIndex + 0.5) * tileLength
 			local base = corridorAt(centreD, 0)
 			-- Painted from the biome THIS tile's distance lies in, so a new
-			-- land scrolls in tile by tile across its boundary.
+			-- land scrolls in tile by tile across its boundary — or, ocean
+			-- theme, from the ring band the tile's real distance is inside,
+			-- so a new ring scrolls in exactly the same way.
 			local floorA, floorB, wallColor, lipColor = biomePalette(biomeAt(centreD))
+			local apronColor = SEA_DARK
+			if OCEAN_THEME then
+				floorA, floorB, apronColor = oceanPalette(centreD)
+			end
 			tile.Color = tileIndex % 2 == 0 and floorA or floorB
 			tile.CFrame = CFrame.new(base - Vector3.new(0, 1, 0))
+			local aprons = corridorAprons[slot]
+			if aprons then
+				aprons.left.Color = apronColor
+				aprons.right.Color = apronColor
+				aprons.left.CFrame =
+					CFrame.new(base + SIDE * -(width / 2 + APRON_WIDTH / 2) - Vector3.new(0, 0.85, 0))
+				aprons.right.CFrame =
+					CFrame.new(base + SIDE * (width / 2 + APRON_WIDTH / 2) - Vector3.new(0, 0.85, 0))
+			end
 			local walls = corridorWalls[slot]
-			walls.left.Color = wallColor
-			walls.right.Color = wallColor
-			walls.leftLip.Color = lipColor
-			walls.rightLip.Color = lipColor
-			walls.left.CFrame = CFrame.new(base + SIDE * (-width / 2 - 3) + Vector3.new(0, wallHeight / 2, 0))
-			walls.right.CFrame = CFrame.new(base + SIDE * (width / 2 + 3) + Vector3.new(0, wallHeight / 2, 0))
-			walls.leftLip.CFrame = CFrame.new(base + SIDE * (-width / 2 - 3) + Vector3.new(0, wallHeight + 2, 0))
-			walls.rightLip.CFrame = CFrame.new(base + SIDE * (width / 2 + 3) + Vector3.new(0, wallHeight + 2, 0))
+			if walls then
+				walls.left.Color = wallColor
+				walls.right.Color = wallColor
+				walls.leftLip.Color = lipColor
+				walls.rightLip.Color = lipColor
+				walls.left.CFrame = CFrame.new(base + SIDE * (-width / 2 - 3) + Vector3.new(0, wallHeight / 2, 0))
+				walls.right.CFrame = CFrame.new(base + SIDE * (width / 2 + 3) + Vector3.new(0, wallHeight / 2, 0))
+				walls.leftLip.CFrame = CFrame.new(base + SIDE * (-width / 2 - 3) + Vector3.new(0, wallHeight + 2, 0))
+				walls.rightLip.CFrame = CFrame.new(base + SIDE * (width / 2 + 3) + Vector3.new(0, wallHeight + 2, 0))
+			end
 		end
 		-- Slots the window did not claim go to the PARK. Left alone they
 		-- stand wherever they were last put — including the birth park at
@@ -1844,11 +1934,18 @@ RunService.RenderStepped:Connect(function(dt)
 			if not usedSlots[slot] then
 				local park = CFrame.new(CORRIDOR_PARK)
 				corridorTiles[slot].CFrame = park
+				local aprons = corridorAprons[slot]
+				if aprons then
+					aprons.left.CFrame = park
+					aprons.right.CFrame = park
+				end
 				local walls = corridorWalls[slot]
-				walls.left.CFrame = park
-				walls.right.CFrame = park
-				walls.leftLip.CFrame = park
-				walls.rightLip.CFrame = park
+				if walls then
+					walls.left.CFrame = park
+					walls.right.CFrame = park
+					walls.leftLip.CFrame = park
+					walls.rightLip.CFrame = park
+				end
 			end
 		end
 
@@ -1890,6 +1987,15 @@ RunService.RenderStepped:Connect(function(dt)
 		-- ahead of the desert, the near-black of space ahead of space.
 		local hazeBiome = biomeAt(shot.flown + Config.CorridorViewAhead)
 		local haze = hazeBiome.haze or Color3.fromRGB(206, 226, 246)
+		if OCEAN_THEME then
+			-- The haze ahead is the NEXT ring's colour, washed toward sky —
+			-- so the ring coming up shows itself before its floor arrives,
+			-- the way the island's painted bands recede into the distance.
+			local coming: Color3? = BAND_COLORS[bandIndexAt(shot.flown + Config.CorridorViewAhead)]
+			haze = if coming
+				then coming:Lerp(Color3.new(1, 1, 1), 0.5)
+				else Color3.fromRGB(206, 226, 246)
+		end
 		corridorCap.Color = haze
 		corridorCap.CFrame = CFrame.new(
 			CORRIDOR_ORIGIN + FORWARD * Config.CorridorViewAhead + Vector3.new(0, wallHeight / 2, 0)
@@ -2158,9 +2264,26 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end
 
-	-- Entering a new biome announces itself the moment the new land starts
-	-- scrolling underfoot — the flight's "you got somewhere" beat.
-	if flying then
+	-- The "you got somewhere" beat. Ocean theme: crossing a ring's painted
+	-- edge calls the ring out — skipping the edges the milestone ladder
+	-- already announces with a bounty popup of its own. Biome theme:
+	-- entering a new land announces itself as the new floor scrolls in.
+	if flying and OCEAN_THEME then
+		local nowBand = bandIndexAt(shot.flown)
+		if nowBand ~= currentBandIndex then
+			local crossed = Config.RangeBands[nowBand - 1]
+			currentBandIndex = nowBand
+			if crossed and not milestoneAt[crossed.studs] then
+				floatPopup(
+					at + Vector3.new(0, 16, 0),
+					("💠 Past the %s ring!"):format(crossed.name),
+					BAND_COLORS[nowBand] or SEA_COLOR
+				)
+				comboPing.PlaybackSpeed = 0.7
+				comboPing:Play()
+			end
+		end
+	elseif flying then
 		local nowBiome = biomeAt(shot.flown)
 		if nowBiome.at ~= currentBiomeAt then
 			currentBiomeAt = nowBiome.at

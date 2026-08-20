@@ -238,6 +238,26 @@ local Config = {
 	CorridorMarkerCount = 14, -- road numbers per EXPECTED flight; spacing snaps to a 1/2.5/5 ladder of REAL studs
 	CorridorCutDelay = 0.35, -- seconds of island ignition (smoke, flash, bang) before the hard cut to the corridor
 
+	-- The canyon walls either side of the corridor. OFF is the shared-shot
+	-- ILLUSION: back on the island, everyone else watches a GHOST of this
+	-- same launch arc out over the range bands (see Range* below), so the
+	-- shooter's own view losing its walls makes the two stories agree —
+	-- everybody, shooter included, is watching a squishy fly over open
+	-- water. The pooled wall parts are simply never built while false; the
+	-- floor, the road numbers, the fog and the biome repaints all stay.
+	CorridorSideWalls = false,
+
+	-- What the corridor is dressed as. "ocean" plays the flight over the
+	-- SAME rainbow target painted around the island: the floor wears the
+	-- ring band the shot's real distance is inside (same ladder, same
+	-- colours — see Range* below), open water runs to the horizon either
+	-- side, and the haze ahead is tinted the colour of the ring coming up.
+	-- With the ghosts skipping over the island's rings at the same moments,
+	-- the shooter's view and everyone else's tell ONE story — you really
+	-- are firing off the island. "biomes" restores the old canyon lands
+	-- (desert, frostlands, volcano, deep space).
+	CorridorTheme = "ocean",
+
 	-- ----- Corridor biomes -----
 	-- The land CHANGES as a flight gets far: each band begins at a real
 	-- distance and repaints the floor, the canyon walls and the haze ahead.
@@ -497,6 +517,50 @@ local Config = {
 	-- so the feed is the lobby's whole window onto other people's shots.
 	LobbyFeedSize = 6,
 
+	-- ===== The range on the water, and the ghost launches =====
+	-- The rainbow target from the shared-range era, BACK — painted on the
+	-- ocean now, since the plain it used to cover became the sea. Filled,
+	-- contiguous bands from the beach edge outward, rainbow near to far,
+	-- with the distance printed flat on each band, exactly as it was.
+	--
+	-- The GHOSTS give the bands their job again: the moment anybody fires,
+	-- everyone ELSE sees a ghost of their squishy blast out of that
+	-- player's cannon, skip across the water, and splash down on the band
+	-- its expected distance names. The shooter meanwhile plays their real,
+	-- private corridor flight exactly as before — the illusion of a shared
+	-- range, at none of the old shared range's cost. Island.luau paints the
+	-- bands and client/Ghosts.luau flies the ghosts, both through
+	-- Config.rangeRadius below, so a ghost always lands on the band its
+	-- distance means.
+	--
+	-- The mapping is LOGARITHMIC, and it has to be: distances run from a
+	-- couple of hundred studs to seven figures, and no linear scale shows
+	-- both ends of that. On a log scale each band is a power of ten and
+	-- every upgrade moves you a visible step.
+	RangeNearRadius = 300, -- world studs from the island centre to the first band's edge
+	RangeFarRadius = 1000, -- ...and to the last one (the sea disc itself ends at 1020)
+	RangeNearStuds = 100, -- the game distance the first band means
+	RangeFarStuds = 1000000, -- ...and the last
+
+	-- The bands themselves. Rainbow, near to far, so "how far did it get" is
+	-- answerable at a glance by which colour it splashed down on.
+	RangeBands = {
+		{ studs = 100, name = "100" },
+		{ studs = 250, name = "250" },
+		{ studs = 500, name = "500" },
+		{ studs = 1000, name = "1K" },
+		{ studs = 5000, name = "5K" },
+		{ studs = 10000, name = "10K" },
+		{ studs = 50000, name = "50K" },
+		{ studs = 100000, name = "100K" },
+		{ studs = 1000000, name = "1M" },
+	},
+
+	-- How many other players' ghosts may be in the air at once (the oldest
+	-- is dropped for the newest), and how big a ghost squishy is drawn.
+	LobbyMaxGhosts = 4,
+	GhostScale = 3,
+
 	-- ===== Sprinting =====
 	-- Hold Shift to run. Client-side, like all character movement; nothing
 	-- on the island is speed-gated, so there is nothing to validate.
@@ -558,5 +622,28 @@ local Config = {
 	-- so we use a fresh datastore rather than colliding with old saves.
 	DataStoreName = "SquishyClicker_v2",
 }
+
+-- How far out from the island centre a given game distance sits, in world
+-- studs. Logarithmic — see RangeNearRadius for why.
+--
+-- This lives here as a function rather than as a formula copied into the
+-- island and again into the ghosts, because those two agreeing is the entire
+-- point: if they drift, a ghost splashes down on the "10K" band having flown
+-- four hundred studs and the range stops meaning anything.
+function Config.rangeRadius(studs: number): number
+	local near, far = Config.RangeNearStuds, Config.RangeFarStuds
+	if studs <= 0 then
+		return 0
+	end
+	if studs < near then
+		-- Below the first band there is no room for a decade, so the last
+		-- stretch into the shore is drawn straight.
+		return studs / near * Config.RangeNearRadius
+	end
+
+	local span = math.log(far / near, 10)
+	local along = math.clamp(math.log(studs / near, 10) / span, 0, 1)
+	return Config.RangeNearRadius + along * (Config.RangeFarRadius - Config.RangeNearRadius)
+end
 
 return Config

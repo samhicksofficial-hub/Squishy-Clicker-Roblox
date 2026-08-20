@@ -31,6 +31,8 @@ local Cannon = require(script:WaitForChild("Cannon"))
 local Market = require(script:WaitForChild("Market"))
 local PlotBoard = require(script:WaitForChild("PlotBoard"))
 local GuidePath = require(script:WaitForChild("GuidePath"))
+-- Other players' launches, drawn as ghosts over the range bands.
+local Ghosts = require(script:WaitForChild("Ghosts"))
 -- Required up here as well as inside the plot wiring below, because refresh()
 -- needs it to keep the flying squishy matched to the equipped one.
 local ClientFlight = require(script:WaitForChild("Flight"))
@@ -1129,6 +1131,9 @@ end)
 mount("Squishy Market", function()
 	Market.mount(gui)
 	Market.update(state)
+end)
+mount("Ghost launches", function()
+	Ghosts.mount()
 end)
 
 -- ---------- the cannon on your plot ----------

@@ -122,6 +122,16 @@ local LaunchBroadcast = Instance.new("RemoteEvent")
 LaunchBroadcast.Name = "LaunchBroadcast"
 LaunchBroadcast.Parent = Remotes
 
+-- Somebody FIRED. Goes to every client the moment a shot leaves the barrel:
+-- the flight's physics, its expected distance and whose cannon it left —
+-- and deliberately nothing about balances or payouts. Everyone ELSE draws a
+-- ghost of the squishy arcing out over the range bands from that plot
+-- (client/Ghosts.luau); the shooter is in their private corridor flying the
+-- real thing and ignores it. The feed line at settle is what it scored.
+local GhostLaunch = Instance.new("RemoteEvent")
+GhostLaunch.Name = "GhostLaunch"
+GhostLaunch.Parent = Remotes
+
 -- Client asks to add one click to the shared steamer. No payload at all.
 local ClickShared = Instance.new("RemoteEvent")
 ClickShared.Name = "ClickShared"
@@ -1270,6 +1280,31 @@ LaunchShot.OnServerEvent:Connect(function(player, power, angle)
 		magnet = magnet,
 		milestones = unearned,
 	})
+
+	-- And the island's GHOST of this shot, to everyone at once. Fired at
+	-- launch rather than settle — the ghost is the shot happening, not the
+	-- score — and it carries the same physics the shooter got, no seed and
+	-- no balances: the ghost flies the no-event flight, so there is nothing
+	-- in here worth faking or reading. Each client skips its own.
+	local plot = Island.plotOf(player)
+	if plot then
+		GhostLaunch:FireAllClients({
+			userId = player.UserId,
+			name = player.DisplayName,
+			clickerId = data.clickerId,
+			origin = plot.centre,
+			vx = vx,
+			vy = vy,
+			gravity = phys.gravity,
+			restitution = phys.restitution,
+			bounceFriction = phys.bounceFriction,
+			minBounceSpeed = phys.minBounceSpeed,
+			rollSeconds = phys.rollSeconds,
+			endSpeed = phys.endSpeed,
+			maxSeconds = phys.maxSeconds,
+			expected = expected,
+		})
+	end
 end)
 
 -- ---------- the claim ----------
