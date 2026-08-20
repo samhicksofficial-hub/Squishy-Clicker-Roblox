@@ -143,6 +143,11 @@ stationGui.Name = "CapsuleBadge"
 stationGui.Size = UDim2.new(4, 0, 4, 0)
 stationGui.MaxDistance = 160
 stationGui.LightInfluence = 0 -- full brightness; an icon in shadow reads as broken
+-- BillboardGui inherits ResetOnSpawn from LayerCollector and it DEFAULTS
+-- TRUE. This badge is built ONCE at require time, so a respawn deleted it
+-- for the rest of the session — and the core loop of this game is firing
+-- yourself out of a cannon. Same fault the upgrade board's screen had.
+stationGui.ResetOnSpawn = false
 stationGui.Adornee = stationAnchor
 stationGui.Parent = player:WaitForChild("PlayerGui")
 

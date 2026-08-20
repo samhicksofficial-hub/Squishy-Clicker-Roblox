@@ -192,6 +192,14 @@ local function dressBoard(board: BasePart)
 	-- bottom as bare wood.
 	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
 	gui.PixelsPerStud = 40
+	-- SurfaceGui inherits ResetOnSpawn from LayerCollector and it DEFAULTS
+	-- TRUE, so every respawn quietly deleted this board's whole screen —
+	-- and nothing rebuilds it, because setPlot only runs when the plot
+	-- attribute changes. In a game whose core loop is firing yourself out
+	-- of a cannon, that meant the upgrade board was bare wood from the
+	-- first flight onward. The HUD has always set this (init.client.luau);
+	-- the two guis parented straight to PlayerGui never did.
+	gui.ResetOnSpawn = false
 	gui.Adornee = board
 	gui.Parent = player:WaitForChild("PlayerGui")
 	surface = gui
