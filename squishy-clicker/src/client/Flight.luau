@@ -202,9 +202,48 @@ end
 -- than destroyed — those parts are the server's.
 local capsuleSeat: Vector3? = nil
 local capsuleHeight = 4 -- world height the occupant is scaled to stand at
+-- The occupant is forced FULLY opaque, and it is not a taste call. The pod
+-- shell is Material.Glass, and Roblox's glass does not render transparent
+-- objects behind it AT ALL — not dimly, not at all. Measured in Studio: a
+-- pure red cube inside this pod is completely invisible at Transparency
+-- 0.08 and completely visible at 0. The jelly cubes import at 0.4, which
+-- is exactly why a cube squishy read as an empty capsule while the same
+-- cube stood plainly visible on the grass beside it.
+local CAPSULE_OCCUPANT_TRANSPARENCY = 0
 -- Bumped per plot adoption, so a stale capsule poller from a previous
 -- adoption can never wire an old plot's capsule over the new one's.
 local capsuleToken = 0
+
+-- Floor, roof and horizontal centre of a model, in WORLD axes.
+--
+-- Not Model:GetBoundingBox(), which returns a box aligned to the model's
+-- own frame — and the hand-placed capsule's parts are rolled 90°, so its
+-- box came back rotated (0, 180, 90) and `boundsSize.Y` was the pod's WIDTH
+-- (9.0) rather than its height (7.85). Everything downstream inherited the
+-- error: the occupant was scaled off the wrong axis and seated 0.6 studs
+-- below the pod floor. Corners of every part, projected onto world Y, is
+-- the measurement that cannot care how the model is turned.
+local function worldBox(pod: Model): (number, number, number, number)
+	local low = Vector3.new(math.huge, math.huge, math.huge)
+	local high = -low
+	for _, descendant in pod:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			local cf, size = descendant.CFrame, descendant.Size
+			for _, sx in { -0.5, 0.5 } do
+				for _, sy in { -0.5, 0.5 } do
+					for _, sz in { -0.5, 0.5 } do
+						local corner = (cf * CFrame.new(size.X * sx, size.Y * sy, size.Z * sz)).Position
+						low, high = low:Min(corner), high:Max(corner)
+					end
+				end
+			end
+		end
+	end
+	if low.X == math.huge then
+		return 0, 0, 0, 0 -- nothing has replicated yet; the caller keeps waiting
+	end
+	return low.Y, high.Y, (low.X + high.X) * 0.5, (low.Z + high.Z) * 0.5
+end
 
 local function findLoose(container: Instance, needle: string): Instance?
 	for _, descendant in container:GetDescendants() do
@@ -224,6 +263,8 @@ local function rebuildOccupant()
 	end
 	if capsuleSeat then
 		occupant = Models.buildSquishy(stage, modelSpec.shape, modelSpec.color, modelSpec.sparkle, modelSpec.scale)
+		-- Seen THROUGH the pod's glass, which culls anything translucent.
+		Models.setMaxTransparency(occupant :: Models.SquishyModel, CAPSULE_OCCUPANT_TRANSPARENCY)
 	end
 end
 
@@ -1270,14 +1311,14 @@ function Flight.setPlot(centre: Vector3, plotFolder: Instance?)
 					end
 				end
 				if capsule then
-					local boundsCF, boundsSize = capsule:GetBoundingBox()
+					local floorY, roofY, midX, midZ = worldBox(capsule)
+					local podHeight = roofY - floorY
 					-- A model whose parts haven't replicated yet measures
 					-- zero; keep waiting for the real thing.
-					if boundsSize.Magnitude > 1 then
-						local floorY = boundsCF.Position.Y - boundsSize.Y * 0.5
-						capsuleSeat = Vector3.new(boundsCF.Position.X, floorY + boundsSize.Y * 0.14, boundsCF.Position.Z)
-						capsuleHeight = boundsSize.Y * 0.42
-						stationAnchor.Position = boundsCF.Position + Vector3.new(0, boundsSize.Y * 0.5 + 2.5, 0)
+					if podHeight > 1 then
+						capsuleSeat = Vector3.new(midX, floorY + podHeight * 0.14, midZ)
+						capsuleHeight = podHeight * 0.42
+						stationAnchor.Position = Vector3.new(midX, roofY + 2.5, midZ)
 
 						local slime = findLoose(capsule, "slime")
 						if slime then

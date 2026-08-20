@@ -932,4 +932,21 @@ function Models.buildSquishy(
 	}
 end
 
+-- Firm up a squishy that is going to be read THROUGH glass. Roblox's
+-- Material.Glass does not draw transparent objects behind it — it culls
+-- them outright — so a jelly cube, which imports at Transparency 0.4, was
+-- simply absent from inside the launch capsule while standing plainly
+-- visible on the grass beside it. Called only by the display contexts that
+-- have glass in front of them; everywhere else a jelly cube stays jelly.
+function Models.setMaxTransparency(model: SquishyModel, limit: number)
+	for _, piece in model.rig.pieces do
+		-- Only ever MORE opaque: a piece already solid stays solid, and a
+		-- deliberately invisible one (the face billboard's anchor) is left
+		-- alone by starting from what the piece already is.
+		if piece.inst.Transparency > limit and piece.inst.Transparency < 1 then
+			piece.inst.Transparency = limit
+		end
+	end
+end
+
 return Models
