@@ -883,7 +883,8 @@ end
 -- buy buttons — is the client's: PlotBoard.luau finds this stand by name
 -- and adornes its own SurfaceGui onto the plank, so every player reads
 -- their own numbers off the same wood. Dimensions and pose mirror
--- PlotBoard's fallback exactly.
+-- PlotBoard's fallback exactly. The plot's name sign caps it — see
+-- attachPlotSign below.
 local BOARD_SIDE = -14
 local BOARD_IN = 12
 
@@ -924,6 +925,80 @@ local function buildBoardStand(centre: Vector3, folder: Folder)
 	board.CanQuery = true
 	board.CanTouch = false
 	board.Parent = folder
+
+	return board
+end
+
+-- The board PART named UpgradeBoard, not the Model that may be wrapping it:
+-- a stand grouped by hand in Studio answers FindFirstChild("UpgradeBoard")
+-- with the group, and everything downstream wants the plank itself.
+local function findBoardPart(folder: Instance): BasePart?
+	for _, descendant in folder:GetDescendants() do
+		if descendant.Name == "UpgradeBoard" and descendant:IsA("BasePart") then
+			return descendant
+		end
+	end
+	return nil
+end
+
+-- ---------- the plot's name sign ----------
+-- Nailed to the TOP of the upgrade board: a header plank capping the wood,
+-- with the owner's name painted straight onto it. It used to be its own
+-- free-standing post with the label floating 32 studs overhead so it would
+-- clear the cannon — which read as a bare stick on the pad and a name
+-- hanging unattached in the sky. One structure carries both now: you walk
+-- up to the board to read whose plot it is and what the upgrades cost.
+--
+-- A SurfaceGui, not a BillboardGui, precisely so it stays ON the wood at
+-- the board's 45° greeting angle instead of swivelling to face every
+-- camera. The gui keeps the name PlotSign and keeps a TextLabel as its
+-- child: the adoption path and the claim/release bookkeeping both find the
+-- sign by that name and write the owner's name into that label.
+local SIGN_HEADER = "UpgradeBoardHeader"
+local SIGN_HEIGHT = 2
+
+local function attachPlotSign(board: BasePart): TextLabel
+	local header = Instance.new("Part")
+	header.Name = SIGN_HEADER
+	header.Size = Vector3.new(board.Size.X + 1.2, SIGN_HEIGHT, 0.9)
+	-- Sat on the board's top edge, and pushed back so the two front faces
+	-- finish flush — a header standing proud of the board would cast a lip
+	-- of shadow across the prices.
+	header.CFrame = board.CFrame * CFrame.new(0, (board.Size.Y + SIGN_HEIGHT) * 0.5, (0.9 - board.Size.Z) * 0.5)
+	header.Color = COLOR.wood
+	header.Material = Enum.Material.Wood
+	header.Anchored = true
+	header.CanCollide = false
+	header.CanQuery = false
+	header.CanTouch = false
+	-- Beside the board rather than at the plot root, so a stand that has been
+	-- grouped in Studio keeps its header inside that group.
+	header.Parent = board.Parent
+
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "PlotSign"
+	gui.Face = Enum.NormalId.Front
+	-- The MODE, not just the number: a SurfaceGui left on its default
+	-- 800×600 canvas ignores PixelsPerStud, which on a plank this wide
+	-- would letterbox the name into the top third of the wood.
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 40
+	gui.MaxDistance = 260
+	gui.Parent = header
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, -16, 1, -8)
+	label.Position = UDim2.new(0, 8, 0, 4)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.Text = "Empty Plot"
+	label.TextColor3 = Color3.fromRGB(230, 226, 220)
+	label.TextStrokeColor3 = Color3.fromRGB(48, 34, 28)
+	label.TextStrokeTransparency = 0
+	label.TextScaled = true
+	label.Parent = gui
+
+	return label
 end
 
 -- One plot: a raised pad with a fence, a sign, and a cannon on it aimed out
@@ -1012,25 +1087,12 @@ local function buildPlot(index: number): Plot
 	prompt.Enabled = false -- until somebody owns this plot
 	prompt.Parent = station
 
-	-- The name post stands in the plot's inward CORNER, tucked against the
-	-- fence — it used to stand mid-plot on the centre line, which put a bare
-	-- post in the middle of the station area once the capsule moved in.
-	local sideWorld = frame:VectorToWorldSpace(Vector3.zAxis)
-	-- The label floats well above the post so the name clears the 26-stud
-	-- cannon instead of hovering across its barrel from across the plaza.
-	local sign = signPost(
-		centre + Vector3.new(0, GROUND_Y + 1.6, 0) - outward * (half - 3) + sideWorld * (half - 3),
-		"Empty Plot",
-		Color3.fromRGB(230, 226, 220),
-		folder,
-		32
-	)
-	-- Named for the ADOPTION path: the billboard that carries the owner's
-	-- name, found by name in a baked world.
-	local signGui = sign.Parent :: Instance
-	signGui.Name = "PlotSign"
-
-	buildBoardStand(centre, folder)
+	-- The name rides the upgrade board rather than a post of its own: one
+	-- structure in the walk-in corner instead of a bare stick at one corner
+	-- and a label hanging over the cannon. The gui inside is named PlotSign
+	-- for the ADOPTION path, which finds the owner's label by that name.
+	local board = buildBoardStand(centre, folder)
+	local sign = attachPlotSign(board :: BasePart)
 
 	return {
 		index = index,
@@ -1164,6 +1226,52 @@ local function adoptSkyEffects()
 	end
 end
 
+-- The name sign, for a plot that came out of the place file rather than out
+-- of buildPlot. A world baked since the sign moved onto the board hands its
+-- header straight back; anything older is carrying the RETIRED shape — a
+-- bare 7-stud post at the far corner with the label hanging 32 studs over
+-- it — and that gets torn out and re-nailed to the board. Doing the repair
+-- here rather than asking for a re-bake means an old place file opens with
+-- the sign already fixed.
+local function adoptPlotSign(folder: Instance, board: BasePart): TextLabel
+	local existing = folder:FindFirstChild("PlotSign", true)
+	local host = existing and existing.Parent
+
+	if existing and host and host.Name == SIGN_HEADER then
+		local label = existing:FindFirstChildOfClass("TextLabel")
+		if label then
+			return label :: TextLabel
+		end
+	end
+
+	if host and host:IsA("BasePart") then
+		-- The old post is unnamed, so it is matched on SHAPE: the one
+		-- 0.6×7×0.6 stick standing under the label's anchor. The board's own
+		-- legs are 0.7 thick and stand elsewhere, so they survive this.
+		local at = host.Position
+		for _, part in folder:GetDescendants() do
+			if
+				part ~= host
+				and part:IsA("BasePart")
+				and (part.Size - Vector3.new(0.6, 7, 0.6)).Magnitude < 0.05
+				and Vector3.new(part.Position.X - at.X, 0, part.Position.Z - at.Z).Magnitude < 1.5
+			then
+				part:Destroy()
+			end
+		end
+		host:Destroy() -- takes the gui with it
+	elseif existing then
+		existing:Destroy()
+	end
+
+	local strandedHeader = folder:FindFirstChild(SIGN_HEADER, true)
+	if strandedHeader then
+		strandedHeader:Destroy()
+	end
+
+	return attachPlotSign(board)
+end
+
 -- ---------- adopting a baked world ----------
 -- The world can be BAKED: run Island.build() once from Studio's command bar
 -- in EDIT mode, and the whole map is constructed as ordinary saved parts —
@@ -1211,14 +1319,12 @@ local function adoptPlots(map: Folder): boolean
 
 		local station = folder:FindFirstChild("Station", true)
 		local prompt = station and station:FindFirstChildOfClass("ProximityPrompt")
-		local signGui = folder:FindFirstChild("PlotSign", true)
-		local sign = signGui and signGui:FindFirstChildOfClass("TextLabel")
 
-		if not (centre and prompt and sign) then
+		if not (centre and prompt) then
 			warn(
 				("[SquishyClicker] %s in the baked world is missing its %s — that plot is skipped. Delete the Map folder and re-bake to repair it."):format(
 					folder.Name,
-					not centre and "PlotPad" or not prompt and "Station prompt" or "PlotSign"
+					not centre and "PlotPad" or "Station prompt"
 				)
 			)
 			continue
@@ -1226,7 +1332,20 @@ local function adoptPlots(map: Folder): boolean
 
 		local plotCentre = centre :: Vector3
 		local plotPrompt = prompt :: ProximityPrompt
-		local plotSign = sign :: TextLabel
+
+		-- A baked world from before the stands existed gets one grown in;
+		-- a world that already carries its stand keeps it exactly as is.
+		local board = findBoardPart(folder) or buildBoardStand(plotCentre, folder)
+		if not board then
+			warn(
+				("[SquishyClicker] %s in the baked world has no UpgradeBoard and sits too near the island centre to grow one — that plot is skipped."):format(
+					folder.Name
+				)
+			)
+			continue
+		end
+
+		local plotSign = adoptPlotSign(folder, board :: BasePart)
 
 		-- Re-stamped rather than trusted: the client aims flights off this
 		-- attribute, and a hand-moved plot must fire from where it stands
@@ -1248,12 +1367,6 @@ local function adoptPlots(map: Folder): boolean
 			prompt = plotPrompt,
 			owner = nil,
 		})
-
-		-- A baked world from before the stands existed gets one grown in;
-		-- a world that already carries its stand keeps it exactly as is.
-		if not folder:FindFirstChild("UpgradeBoard", true) then
-			buildBoardStand(plotCentre, folder)
-		end
 	end
 
 	-- ---------- the plot capsules ----------

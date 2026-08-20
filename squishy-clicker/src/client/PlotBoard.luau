@@ -35,8 +35,8 @@ local BuyPower = Remotes:WaitForChild("BuyPower") :: RemoteEvent
 local C = UI.color
 
 -- Where the stand sits, relative to the plot: the FRONT-LEFT corner as a
--- player walks in from the path (the name sign holds the front-right one),
--- angled 45° to greet them on the way in.
+-- player walks in from the path, angled 45° to greet them on the way in.
+-- The plot's name sign is nailed across its top (Island.attachPlotSign).
 local BOARD_SIDE = -14 -- along the pad's side axis; negative = the walk-in left
 local BOARD_IN = 12 -- inward of the plot centre, toward the entrance path
 
@@ -119,6 +119,20 @@ local function repaint()
 		state.collectionBonus or 1,
 		Format.abbreviate(state.worldMultiplier or 1)
 	)
+end
+
+-- The board PART named UpgradeBoard, not the Model that may be wrapping it.
+-- FindFirstChild("UpgradeBoard", true) answers with the GROUP on a stand
+-- that has been grouped by hand in Studio, and a group is not a BasePart —
+-- which is how seven of eight plots quietly timed out waiting for a board
+-- that was standing right there, then built a duplicate on top of it.
+local function findBoardPart(plot: Instance): BasePart?
+	for _, descendant in plot:GetDescendants() do
+		if descendant.Name == "UpgradeBoard" and descendant:IsA("BasePart") then
+			return descendant
+		end
+	end
+	return nil
 end
 
 -- Build (or rebuild) the stand at this plot. Called with the same centre
@@ -301,8 +315,8 @@ function PlotBoard.setPlot(centre: Vector3, plotFolder: Instance?)
 			if token ~= boardToken then
 				return
 			end
-			local board = plotFolder and plotFolder:FindFirstChild("UpgradeBoard", true)
-			if board and board:IsA("BasePart") then
+			local board = plotFolder and findBoardPart(plotFolder)
+			if board then
 				dressBoard(board)
 				return
 			end
