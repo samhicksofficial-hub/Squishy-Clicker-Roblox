@@ -17,5 +17,8 @@
 .vscode/
 .DS_Store
 
+# Personal MCP wiring (contains a user-specific Studio install path)
+.mcp.json
+
 # Rokit-installed tool binaries (rokit.toml is the source of truth)
 # (Rokit stores tools globally, not in-project, so nothing to ignore here by default)
