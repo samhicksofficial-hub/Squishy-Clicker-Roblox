@@ -699,16 +699,16 @@ end
 -- The corridor dressed as the island's own painted range, for the shared-
 -- shot illusion: the floor wears the ring band the shot's REAL distance is
 -- inside — the same ladder and the same HSV rainbow the island paints (see
--- buildRangeBands in Island.luau) — open water runs to the horizon either
--- side, and the haze ahead is tinted the colour of the ring coming up.
--- The shooter's view and everyone else's ghost view then tell ONE story: a
--- squishy flying out over the rings, off the plaza. Config.CorridorTheme
--- picks this or the old canyon biomes.
+-- buildRangeBands in Island.luau) — that SAME band runs flat and level to
+-- the horizon either side, and the haze ahead is tinted the colour of the
+-- ring coming up. The shooter's view and everyone else's ghost view then
+-- tell ONE story: a squishy flying out over the rings, off the plaza.
+-- Config.CorridorTheme picks this or the old canyon biomes.
 local OCEAN_THEME = Config.CorridorTheme == "ocean"
 local SEA_COLOR = Color3.fromRGB(96, 196, 234) -- the island's own water
 local SEA_DARK = Color3.fromRGB(78, 174, 216)
--- How far the water reaches either side of the floor strip. Past it is sky,
--- which the chase camera's forward frame never shows.
+-- How far the ring reaches either side of the lane. Past it is sky, which
+-- the chase camera's forward frame never shows.
 local APRON_WIDTH = 340
 
 -- One colour per band, from the SAME formula the island paints with — the
@@ -730,15 +730,17 @@ local function bandIndexAt(d: number): number
 	return #Config.RangeBands + 1
 end
 
--- Floor light, floor dark, and the water either side — the apron leans the
--- band's colour toward the sea, so it reads as the ring seen through open
--- water rather than as more road.
-local function oceanPalette(d: number): (Color3, Color3, Color3)
+-- The band underfoot, light and dark. The two shades alternate tile by tile
+-- and the aprons take whichever the tile beside them took, so the stripe
+-- runs the FULL width of the view — which is what a concentric ring looks
+-- like from inside it, and what sells the flight as happening on the range.
+-- Past the last ring there is nothing painted, so it is open water.
+local function oceanPalette(d: number): (Color3, Color3)
 	local color: Color3? = BAND_COLORS[bandIndexAt(d)]
 	if not color then
-		return SEA_COLOR, SEA_DARK, SEA_DARK
+		return SEA_COLOR, SEA_DARK
 	end
-	return color, color:Lerp(Color3.new(0, 0, 0), 0.12), color:Lerp(SEA_COLOR, 0.42)
+	return color, color:Lerp(Color3.new(0, 0, 0), 0.12)
 end
 
 -- The distances the milestone ladder already announces with a bounty popup,
@@ -768,12 +770,20 @@ do
 		tile.TopSurface = Enum.SurfaceType.Studs
 		corridorTiles[index] = tile
 
-		-- The water either side, ocean theme only: wide flat planes seated a
-		-- little below the floor strip's top, so the lane keeps a readable
-		-- edge while the view to each side is sea instead of sky.
+		-- The ring either side, ocean theme only. Built as the SAME slab the
+		-- lane is — same thickness, same studs, same paint (see the tile
+		-- loop) — because a ring band is an annulus and a shot flying
+		-- straight out from the island has the same band under it for
+		-- hundreds of studs left and right. It used to be sea-tinted and
+		-- seated a third of a stud low to give the lane a readable edge,
+		-- which is exactly what broke the illusion: it drew a ROAD across
+		-- the range instead of putting the flight on the range.
 		if OCEAN_THEME then
 			local function apron(): BasePart
-				return corridorPart(Vector3.new(tileLength, 1, APRON_WIDTH), SEA_COLOR, Enum.Material.SmoothPlastic)
+				local part =
+					corridorPart(Vector3.new(tileLength, 2, APRON_WIDTH), SEA_COLOR, Enum.Material.Plastic)
+				part.TopSurface = Enum.SurfaceType.Studs
+				return part
 			end
 			corridorAprons[index] = { left = apron(), right = apron() }
 		end
@@ -1898,20 +1908,24 @@ RunService.RenderStepped:Connect(function(dt)
 			-- theme, from the ring band the tile's real distance is inside,
 			-- so a new ring scrolls in exactly the same way.
 			local floorA, floorB, wallColor, lipColor = biomePalette(biomeAt(centreD))
-			local apronColor = SEA_DARK
 			if OCEAN_THEME then
-				floorA, floorB, apronColor = oceanPalette(centreD)
+				floorA, floorB = oceanPalette(centreD)
 			end
 			tile.Color = tileIndex % 2 == 0 and floorA or floorB
 			tile.CFrame = CFrame.new(base - Vector3.new(0, 1, 0))
 			local aprons = corridorAprons[slot]
 			if aprons then
-				aprons.left.Color = apronColor
-				aprons.right.Color = apronColor
-				aprons.left.CFrame =
-					CFrame.new(base + SIDE * -(width / 2 + APRON_WIDTH / 2) - Vector3.new(0, 0.85, 0))
-				aprons.right.CFrame =
-					CFrame.new(base + SIDE * (width / 2 + APRON_WIDTH / 2) - Vector3.new(0, 0.85, 0))
+				-- The tile's own paint, not a tint of it: one unbroken band
+				-- from horizon to horizon. Seated a hundredth of a stud low
+				-- and lapped a stud UNDER the lane — flush enough that no
+				-- step shows, overlapped enough that no hairline of sky
+				-- opens along the join, and never sharing an exact height
+				-- with the tile it meets (the island's z-fighting rule).
+				aprons.left.Color = tile.Color
+				aprons.right.Color = tile.Color
+				local out = width / 2 + APRON_WIDTH / 2 - 1
+				aprons.left.CFrame = CFrame.new(base + SIDE * -out - Vector3.new(0, 1.01, 0))
+				aprons.right.CFrame = CFrame.new(base + SIDE * out - Vector3.new(0, 1.01, 0))
 			end
 			local walls = corridorWalls[slot]
 			if walls then

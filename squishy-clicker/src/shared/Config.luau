@@ -250,7 +250,7 @@ local Config = {
 	-- What the corridor is dressed as. "ocean" plays the flight over the
 	-- SAME rainbow target painted around the island: the floor wears the
 	-- ring band the shot's real distance is inside (same ladder, same
-	-- colours — see Range* below), open water runs to the horizon either
+	-- colours — see Range* below) flat and level to the horizon either
 	-- side, and the haze ahead is tinted the colour of the ring coming up.
 	-- With the ghosts skipping over the island's rings at the same moments,
 	-- the shooter's view and everyone else's tell ONE story — you really
