@@ -810,15 +810,34 @@ end
 
 type MarkerSet = { panel: BasePart, label: TextLabel, index: number }
 
+-- One piece of a tile's canyon: its part plus where it stands relative to
+-- the tile's floor centre — x along the track, y up, out along ±SIDE
+-- (signed, so one list carries both sides). `paint` names which biome
+-- colour it wears each frame; `shade` darkens successive rock bands so the
+-- terraces read as depth; `hidden` parks a piece the tile didn't roll
+-- (most tiles have no tree).
+type WallPiece = {
+	part: BasePart,
+	x: number,
+	y: number,
+	out: number,
+	paint: "rock" | "lip" | "trunk" | "leaf",
+	shade: number,
+	hidden: boolean,
+}
+-- `parked` short-circuits the park passes: on the rings every slot's
+-- canyon is parked EVERY frame, and re-writing three hundred CFrames that
+-- haven't moved is the kind of quiet cost that adds up at 60fps.
+type WallSet = { pieces: { WallPiece }, builtFor: number?, parked: boolean }
+
 local corridorTiles: { BasePart } = {}
-local corridorWalls: { { left: BasePart, right: BasePart, leftLip: BasePart, rightLip: BasePart } } = {}
+local corridorWalls: { WallSet } = {}
 local corridorAprons: { { left: BasePart, right: BasePart } } = {}
 local corridorMarkers: { MarkerSet } = {}
 local CORRIDOR_POOL = 20
 
 do
 	local width = Config.CorridorFloorWidth
-	local wallHeight = Config.CorridorWallHeight
 	local tileLength = Config.CorridorTileLength
 
 	for index = 1, CORRIDOR_POOL do
@@ -846,27 +865,38 @@ do
 			corridorAprons[index] = { left = apron(), right = apron() }
 		end
 
-		-- Walls with lip caps: the island's Canyon/CanyonLip recipe, so the
-		-- corridor reads as the same universe. Only built when Config says
-		-- the corridor wears walls — with them off (the shared-shot
-		-- illusion; see CorridorSideWalls) the flight plays over an open
-		-- floor with sky either side, and every consumer of this table
-		-- guards on the entry existing.
-		if Config.CorridorSideWalls then
-			local function wallPair(): (BasePart, BasePart)
-				local wall = corridorPart(
-					Vector3.new(tileLength, wallHeight, 6),
-					corridorTheme.canyon,
-					Enum.Material.Sandstone
-				)
-				local lip = corridorPart(Vector3.new(tileLength, 4, 8), corridorTheme.grassDark, Enum.Material.Plastic)
+		-- The canyon, TERRACED: each side of a tile is a stepped cliff —
+		-- three rock bands, each set back deeper than the one below, each
+		-- capped with a studded lip, some ledges carrying a chunky block
+		-- tree — instead of the old single 170-stud slab, which read as
+		-- sheet metal against an island built entirely of steps and studs.
+		-- The parts are a fixed budget per slot, born here at dummy sizes
+		-- and parked; profileWalls sizes them to whatever tile the slot is
+		-- reassigned to. Walls exist only OFF the range (see onRange): the
+		-- opening of a flight plays over the island's painted target, where
+		-- a canyon would break the story — the lands past the handover are
+		-- where the cliffs rise, and flying out of open sea into a walled
+		-- valley is the arrival.
+		local pieces: { WallPiece } = {}
+		for _ = 1, 2 do -- two sides
+			for _ = 1, 3 do -- three terraces: rock band + lip cap
+				local rock = corridorPart(Vector3.one, corridorTheme.canyon, Enum.Material.Plastic)
+				table.insert(pieces, { part = rock, x = 0, y = 0, out = 0, paint = "rock" :: "rock", shade = 0, hidden = true })
+				local lip = corridorPart(Vector3.one, corridorTheme.grassDark, Enum.Material.Plastic)
 				lip.TopSurface = Enum.SurfaceType.Studs
-				return wall, lip
+				table.insert(pieces, { part = lip, x = 0, y = 0, out = 0, paint = "lip" :: "lip", shade = 0, hidden = true })
 			end
-			local left, leftLip = wallPair()
-			local right, rightLip = wallPair()
-			corridorWalls[index] = { left = left, right = right, leftLip = leftLip, rightLip = rightLip }
+			-- One optional tree: trunk plus two stacked leaf blocks, the
+			-- island's own blocky recipe.
+			local trunk = corridorPart(Vector3.one, Color3.fromRGB(150, 104, 62), Enum.Material.Wood)
+			table.insert(pieces, { part = trunk, x = 0, y = 0, out = 0, paint = "trunk" :: "trunk", shade = 0, hidden = true })
+			for _ = 1, 2 do
+				local leaf = corridorPart(Vector3.one, corridorTheme.grassDark, Enum.Material.Plastic)
+				leaf.TopSurface = Enum.SurfaceType.Studs
+				table.insert(pieces, { part = leaf, x = 0, y = 0, out = 0, paint = "leaf" :: "leaf", shade = 0, hidden = true })
+			end
 		end
+		corridorWalls[index] = { pieces = pieces, builtFor = nil, parked = true }
 
 		-- A marker: the distance painted flat on the road, like airport
 		-- runway numbers. The part itself is invisible — a SurfaceGui
@@ -894,6 +924,82 @@ do
 		label.TextScaled = true
 		label.Parent = surface
 		corridorMarkers[index] = { panel = panel, label = label, index = -1 }
+	end
+end
+
+-- Size and place one slot's canyon for one tile. Heights, setbacks and the
+-- tree are rolled from the TILE INDEX, not the slot: the same stretch of
+-- track always grows the same skyline however the pool slots get reused,
+-- and flying the same distance twice shows the same cliffs. Geometry only —
+-- painting stays in the frame loop with everything else, so the terraces
+-- change colour mid-tile at a biome boundary exactly as the floor does.
+local function profileWalls(set: WallSet, tileIndex: number)
+	set.builtFor = tileIndex
+	local tileLength = Config.CorridorTileLength
+	local baseOut = Config.CorridorFloorWidth / 2 + 3
+	local index = 0
+
+	for _, sideSign in { -1, 1 } do
+		local rng = Random.new(tileIndex * 7349 + sideSign * 131)
+		-- The ledges this side grew, so the tree can stand on a real one.
+		local ledges: { { y: number, out: number, depth: number } } = {}
+		local y = 0
+		local setback = 0
+
+		for terrace = 1, 3 do
+			-- The bottom band is the tallest, so the canyon reads as rising
+			-- out of the ground rather than as a stack of equal bricks.
+			local height = rng:NextNumber(6, 12) + (if terrace == 1 then 5 else 0)
+			local depth = 8
+
+			index += 1
+			local rock = set.pieces[index]
+			rock.part.Size = Vector3.new(tileLength, height, depth)
+			rock.x, rock.y = 0, y + height / 2
+			rock.out = sideSign * (baseOut + setback + depth / 2)
+			rock.shade = (terrace - 1) * 0.08
+			rock.hidden = false
+
+			-- The cap overhangs the rock a little toward the lane and runs
+			-- back far enough to floor the ledge the next band steps back
+			-- from — the reference silhouette: green shelf, rock, shelf.
+			local lipDepth = depth + rng:NextNumber(6, 9)
+			index += 1
+			local lip = set.pieces[index]
+			lip.part.Size = Vector3.new(tileLength, 2.2, lipDepth)
+			lip.x, lip.y = 0, y + height + 1.1
+			lip.out = sideSign * (baseOut + setback - 1.2 + lipDepth / 2)
+			lip.hidden = false
+			table.insert(ledges, { y = y + height + 2.2, out = lip.out, depth = lipDepth })
+
+			y += height + 2.2
+			setback += rng:NextNumber(6, 10)
+		end
+
+		-- Roughly every other tile-side grows a tree on one of its ledges.
+		local hasTree = rng:NextNumber() < 0.5
+		local ledge = ledges[rng:NextInteger(1, #ledges)]
+		local treeX = rng:NextNumber(-tileLength / 2 + 6, tileLength / 2 - 6)
+		local trunkHeight = rng:NextNumber(3.5, 5.5)
+		local leafSide = rng:NextNumber(5, 7)
+
+		index += 1
+		local trunk = set.pieces[index]
+		trunk.part.Size = Vector3.new(1.8, trunkHeight, 1.8)
+		trunk.x, trunk.y, trunk.out = treeX, ledge.y + trunkHeight / 2, ledge.out
+		trunk.hidden = not hasTree
+
+		local leafY = ledge.y + trunkHeight
+		for layer = 1, 2 do
+			local side = leafSide * (if layer == 1 then 1 else 0.62)
+			local thickness = if layer == 1 then 3.4 else 2.6
+			index += 1
+			local leaf = set.pieces[index]
+			leaf.part.Size = Vector3.new(side, thickness, side)
+			leaf.x, leaf.y, leaf.out = treeX, leafY + thickness / 2, ledge.out
+			leaf.hidden = not hasTree
+			leafY += thickness
+		end
 	end
 end
 
@@ -1988,16 +2094,43 @@ RunService.RenderStepped:Connect(function(dt)
 				aprons.left.CFrame = CFrame.new(base + SIDE * -out - Vector3.new(0, 1.01, 0))
 				aprons.right.CFrame = CFrame.new(base + SIDE * out - Vector3.new(0, 1.01, 0))
 			end
+			-- The canyon rises only OFF the range: over the rings this slot's
+			-- cliff parks, and the first walled tile scrolls in at the
+			-- handover — leaving open sea for a terraced valley IS the
+			-- arrival in the lands.
 			local walls = corridorWalls[slot]
 			if walls then
-				walls.left.Color = wallColor
-				walls.right.Color = wallColor
-				walls.leftLip.Color = lipColor
-				walls.rightLip.Color = lipColor
-				walls.left.CFrame = CFrame.new(base + SIDE * (-width / 2 - 3) + Vector3.new(0, wallHeight / 2, 0))
-				walls.right.CFrame = CFrame.new(base + SIDE * (width / 2 + 3) + Vector3.new(0, wallHeight / 2, 0))
-				walls.leftLip.CFrame = CFrame.new(base + SIDE * (-width / 2 - 3) + Vector3.new(0, wallHeight + 2, 0))
-				walls.rightLip.CFrame = CFrame.new(base + SIDE * (width / 2 + 3) + Vector3.new(0, wallHeight + 2, 0))
+				if onRange(centreD) then
+					if not walls.parked then
+						walls.parked = true
+						local park = CFrame.new(CORRIDOR_PARK)
+						for _, piece in walls.pieces do
+							piece.part.CFrame = park
+						end
+					end
+				else
+					walls.parked = false
+					if walls.builtFor ~= tileIndex then
+						profileWalls(walls, tileIndex)
+					end
+					local park = CFrame.new(CORRIDOR_PARK)
+					for _, piece in walls.pieces do
+						if piece.hidden then
+							piece.part.CFrame = park
+						else
+							if piece.paint == "rock" then
+								piece.part.Color = if piece.shade > 0
+									then wallColor:Lerp(Color3.new(0, 0, 0), piece.shade)
+									else wallColor
+							elseif piece.paint ~= "trunk" then -- lip and leaf wear the cap colour
+								piece.part.Color = lipColor
+							end
+							piece.part.CFrame = CFrame.new(
+								base + FORWARD * piece.x + SIDE * piece.out + Vector3.new(0, piece.y, 0)
+							)
+						end
+					end
+				end
 			end
 		end
 		-- Slots the window did not claim go to the PARK. Left alone they
@@ -2015,11 +2148,11 @@ RunService.RenderStepped:Connect(function(dt)
 					aprons.right.CFrame = park
 				end
 				local walls = corridorWalls[slot]
-				if walls then
-					walls.left.CFrame = park
-					walls.right.CFrame = park
-					walls.leftLip.CFrame = park
-					walls.rightLip.CFrame = park
+				if walls and not walls.parked then
+					walls.parked = true
+					for _, piece in walls.pieces do
+						piece.part.CFrame = park
+					end
 				end
 			end
 		end

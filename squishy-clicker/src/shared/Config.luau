@@ -238,14 +238,15 @@ local Config = {
 	CorridorMarkerCount = 14, -- road numbers per EXPECTED flight; spacing snaps to a 1/2.5/5 ladder of REAL studs
 	CorridorCutDelay = 0.35, -- seconds of island ignition (smoke, flash, bang) before the hard cut to the corridor
 
-	-- The canyon walls either side of the corridor. OFF is the shared-shot
-	-- ILLUSION: back on the island, everyone else watches a GHOST of this
-	-- same launch arc out over the range bands (see Range* below), so the
-	-- shooter's own view losing its walls makes the two stories agree —
-	-- everybody, shooter included, is watching a squishy fly over open
-	-- water. The pooled wall parts are simply never built while false; the
-	-- floor, the road numbers, the fog and the biome repaints all stay.
-	CorridorSideWalls = false,
+	-- The canyon walls either side of the corridor follow the RANGE
+	-- HANDOVER (CorridorRangeUntil, below) rather than a switch of their
+	-- own: over the painted rings there are no walls at all, because back
+	-- on the island everyone else watches a GHOST of this same launch arc
+	-- out over the range bands (see Range* below) and open water is the
+	-- one story both views can share — then the biome lands past the
+	-- handover rise as terraced cliffs, so leaving the sea for a walled
+	-- valley IS the arrival. The terraces themselves are built and rolled
+	-- per tile in Flight.luau (profileWalls).
 
 	-- What the corridor is dressed as. "ocean" plays the flight over the
 	-- SAME rainbow target painted around the island: the floor wears the
