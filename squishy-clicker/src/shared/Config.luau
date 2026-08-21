@@ -258,6 +258,18 @@ local Config = {
 	-- (desert, frostlands, volcano, deep space).
 	CorridorTheme = "ocean",
 
+	-- How far the painted rings run before the biome lands take over. The
+	-- rings are the ILLUSION and the illusion has a range: for the opening
+	-- of a flight you really are still out over the island's own target,
+	-- with the ghosts skipping the same rings at the same moments, and
+	-- that is worth every stud. Past it the shot has genuinely left the
+	-- island behind and the lands are the reward for getting there — which
+	-- is why this sits exactly on the first biome's start (The Desert, at
+	-- 1000, see CorridorBiomes) so the rings hand over to the sand on the
+	-- stud the ladder already calls a milestone. Set to 0 for biomes from
+	-- the first stud; set enormous to never leave the rings.
+	CorridorRangeUntil = 1000,
+
 	-- ----- Corridor biomes -----
 	-- The land CHANGES as a flight gets far: each band begins at a real
 	-- distance and repaints the floor, the canyon walls and the haze ahead.

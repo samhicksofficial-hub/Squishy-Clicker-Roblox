@@ -765,6 +765,18 @@ for order = 1, #Config.RangeBands do
 	BAND_COLORS[order] = Color3.fromHSV((order - 1) / #Config.RangeBands * 0.86, 0.72, 1)
 end
 
+-- Is distance `d` still out over the island's painted target? The corridor
+-- wears the rings for the OPENING of every flight and the biome lands past
+-- that, rather than one dressing for the whole endless track. The near half
+-- of the story has to be literally true — a shot 300 studs out really is
+-- over the 500 ring, and everyone back on the island is watching a ghost
+-- skip that same ring at that same moment — while a shot deep into the
+-- thousands has plainly left, and the lands out there are what it flew for.
+-- The handover distance is Config.CorridorRangeUntil.
+local function onRange(d: number): boolean
+	return OCEAN_THEME and d < Config.CorridorRangeUntil
+end
+
 -- Which band a real distance is inside; one past the end means the open
 -- ocean beyond the last ring.
 local function bandIndexAt(d: number): number
@@ -1953,8 +1965,11 @@ RunService.RenderStepped:Connect(function(dt)
 			-- land scrolls in tile by tile across its boundary — or, ocean
 			-- theme, from the ring band the tile's real distance is inside,
 			-- so a new ring scrolls in exactly the same way.
+			-- Ring or land, decided PER TILE — so the sand does not swap in
+			-- around the squishy, it scrolls up to meet it and the handover
+			-- crosses underfoot exactly like a biome boundary does.
 			local floorA, floorB, wallColor, lipColor = biomePalette(biomeAt(centreD))
-			if OCEAN_THEME then
+			if onRange(centreD) then
 				floorA, floorB = oceanPalette(centreD)
 			end
 			tile.Color = tileIndex % 2 == 0 and floorA or floorB
@@ -2045,13 +2060,18 @@ RunService.RenderStepped:Connect(function(dt)
 		-- The static depth dressing rides at fixed offsets from the origin,
 		-- hazed in the colour of the biome it is looking INTO — desert air
 		-- ahead of the desert, the near-black of space ahead of space.
-		local hazeBiome = biomeAt(shot.flown + Config.CorridorViewAhead)
+		local lookAhead = shot.flown + Config.CorridorViewAhead
+		local hazeBiome = biomeAt(lookAhead)
 		local haze = hazeBiome.haze or Color3.fromRGB(206, 226, 246)
-		if OCEAN_THEME then
+		-- Judged at the LOOK-AHEAD, not underfoot, which is what makes the
+		-- handover announce itself: the desert's warm air hangs on the
+		-- horizon for a whole view-length before the first sand tile
+		-- arrives, exactly as a coming ring's colour does.
+		if onRange(lookAhead) then
 			-- The haze ahead is the NEXT ring's colour, washed toward sky —
 			-- so the ring coming up shows itself before its floor arrives,
 			-- the way the island's painted bands recede into the distance.
-			local coming: Color3? = BAND_COLORS[bandIndexAt(shot.flown + Config.CorridorViewAhead)]
+			local coming: Color3? = BAND_COLORS[bandIndexAt(lookAhead)]
 			haze = if coming
 				then coming:Lerp(Color3.new(1, 1, 1), 0.5)
 				else Color3.fromRGB(206, 226, 246)
@@ -2324,11 +2344,14 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end
 
-	-- The "you got somewhere" beat. Ocean theme: crossing a ring's painted
-	-- edge calls the ring out — skipping the edges the milestone ladder
-	-- already announces with a bounty popup of its own. Biome theme:
-	-- entering a new land announces itself as the new floor scrolls in.
-	if flying and OCEAN_THEME then
+	-- The "you got somewhere" beat, and it changes register with the ground.
+	-- Out on the rings, crossing a ring's painted edge calls the ring out —
+	-- skipping the edges the milestone ladder already announces with a
+	-- bounty popup of its own. Past them, entering a new land announces
+	-- itself as the new floor scrolls in; the first of those fires on the
+	-- stud the rings hand over, so leaving the island's target IS the
+	-- arrival in the desert.
+	if flying and onRange(shot.flown) then
 		local nowBand = bandIndexAt(shot.flown)
 		if nowBand ~= currentBandIndex then
 			local crossed = Config.RangeBands[nowBand - 1]
