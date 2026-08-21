@@ -404,6 +404,121 @@ local function buildRangeBands(parent: Instance)
 	end
 end
 
+-- ---------- the horizon mesas ----------
+-- A ring of blocky terraced mesas standing in the outer sea past the last
+-- range band, closing the skyline the way distant land does. PARTS, not
+-- Terrain: the whole game is chunky slabs and studs, and the sculpted
+-- smooth-terrain hills that used to hold this ring read as a different
+-- game pasted onto the horizon. The recipe is the reference-photo one the
+-- corridor's canyon walls already wear — brown rock drums stepping in as
+-- they rise, a studded grass cap overhanging each, a sand skirt at the
+-- waterline, block trees on the tops — so the island, the flight and the
+-- horizon are one construction language.
+--
+-- Two rows at different radii, the outer one taller, purely for parallax:
+-- from the plaza the far row slides behind the near one and the horizon
+-- reads as depth rather than as a fence. Deterministic (fixed seed) so a
+-- re-bake grows the same skyline. Runs in both world modes exactly like
+-- buildRangeBands: the Horizon folder is the already-built marker.
+local function buildHorizon(parent: Instance)
+	if parent:FindFirstChild("Horizon") then
+		return
+	end
+	local horizon = Instance.new("Folder")
+	horizon.Name = "Horizon"
+	horizon.Parent = parent
+
+	local seaTop = Y.plain - 4
+	local rng = Random.new(19)
+	-- Deeper than the island's own palette on purpose: the sky pack's
+	-- Atmosphere desaturates hard at a thousand studs, and mesas painted in
+	-- island colours washed to white up there — green caps and trees left
+	-- hovering over invisible rock. These read as the island's browns and
+	-- greens AFTER the haze has taken its cut.
+	local CLIFF = Color3.fromRGB(128, 88, 54)
+	local CLIFF_DARK = Color3.fromRGB(108, 74, 46)
+	local CAP = Color3.fromRGB(140, 216, 76)
+	local LEAF = Color3.fromRGB(84, 176, 64)
+	local TRUNK = Color3.fromRGB(120, 82, 50)
+
+	-- One mesa: sand skirt, two or three shrinking rock drums each capped
+	-- with an overhanging studded grass slab, and a tree or two on top.
+	local function mesa(bearing: number, radius: number, tall: number)
+		local at = Vector3.new(math.cos(bearing) * radius, 0, math.sin(bearing) * radius)
+		local yaw = CFrame.Angles(0, -bearing + rng:NextNumber(-0.2, 0.2), 0)
+		local function place(size: Vector3, top: number, color: Color3): Part
+			return decor(
+				block(size, CFrame.new(at + Vector3.new(0, slabAt(top, size.Y), 0)) * yaw, color, horizon)
+			) :: Part
+		end
+
+		-- Sizes: radial depth shallow, tangent width broad, so the ring
+		-- reads as a wall of land rather than a circle of towers.
+		local width = rng:NextNumber(120, 210)
+		local depth = rng:NextNumber(60, 95)
+
+		place(Vector3.new(depth + 34, 10, width + 34), seaTop + 2.5, COLOR.sand).Name = "Horizon"
+
+		local drums = if tall > 95 then 3 else 2
+		local level = seaTop + 2.5
+		local remaining = tall
+		for drum = 1, drums do
+			local height = if drum == drums then remaining else remaining * rng:NextNumber(0.42, 0.55)
+			remaining -= height
+			local color = if drum % 2 == 1 then CLIFF else CLIFF_DARK
+			place(Vector3.new(depth, height, width), level + height, color).Name = "Horizon"
+			local cap = place(Vector3.new(depth + 7, 4.5, width + 7), level + height + 4.5, CAP)
+			studded(cap).Name = "Horizon"
+			level += height + 4.5
+			width *= rng:NextNumber(0.68, 0.8)
+			depth *= rng:NextNumber(0.72, 0.84)
+		end
+
+		-- Trees, scaled up from the corridor's: at a thousand studs a
+		-- corridor-sized tree is a speck.
+		for _ = 1, rng:NextInteger(0, 2) do
+			local along = rng:NextNumber(-width * 0.35, width * 0.35)
+			local trunkHeight = rng:NextNumber(9, 14)
+			local treeAt = at + yaw:VectorToWorldSpace(Vector3.new(0, 0, along))
+			local trunk = decor(block(
+				Vector3.new(4, trunkHeight, 4),
+				CFrame.new(treeAt + Vector3.new(0, level + trunkHeight * 0.5, 0)) * yaw,
+				TRUNK,
+				horizon
+			))
+			trunk.Material = Enum.Material.Wood
+			trunk.Name = "Horizon"
+			local leafY = level + trunkHeight
+			local leafSide = rng:NextNumber(18, 25)
+			for layer = 1, 2 do
+				local side = leafSide * (if layer == 1 then 1 else 0.6)
+				local thickness = if layer == 1 then 9 else 6
+				local leaf = decor(block(
+					Vector3.new(side, thickness, side),
+					CFrame.new(treeAt + Vector3.new(0, leafY + thickness * 0.5, 0)) * yaw,
+					LEAF,
+					horizon
+				))
+				studded(leaf).Name = "Horizon"
+				leafY += thickness
+			end
+		end
+	end
+
+	-- The inner row, then the taller outer row phase-shifted half a step so
+	-- its mesas stand in the near row's gaps.
+	local innerCount = 30
+	for step = 1, innerCount do
+		local bearing = (step / innerCount) * math.pi * 2 + rng:NextNumber(-0.04, 0.04)
+		mesa(bearing, rng:NextNumber(1090, 1160), rng:NextNumber(55, 115))
+	end
+	local outerCount = 26
+	for step = 1, outerCount do
+		local bearing = ((step + 0.5) / outerCount) * math.pi * 2 + rng:NextNumber(-0.05, 0.05)
+		mesa(bearing, rng:NextNumber(1230, 1320), rng:NextNumber(110, 190))
+	end
+end
+
 -- ---------- paths ----------
 -- One spoke out to each plot, plus a ring road joining them. Laid as a run of
 -- overlapping blocks rather than one long rotated slab, so a path can bend
@@ -1708,6 +1823,9 @@ function Island.build()
 			-- A baked world from before the range gets it grown in; a
 			-- world already carrying its Range folder keeps it as is.
 			buildRangeBands(existing)
+			-- Same deal for the horizon mesas: grown into an older bake,
+			-- kept as saved if the place already carries its Horizon folder.
+			buildHorizon(existing)
 			print(("[SquishyClicker] Adopted the baked world from the place file — %d plots wired."):format(#plots))
 			return
 		end
@@ -1727,6 +1845,7 @@ function Island.build()
 
 	buildGround()
 	buildRangeBands(root)
+	buildHorizon(root)
 	buildPaths()
 	buildScenery()
 	buildSpawn()
